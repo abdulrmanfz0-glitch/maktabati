@@ -2,7 +2,7 @@ import { DEMO_BOOK, DEMO_MD } from './demo-data.js';
 import { runIngest } from '../ingest/client.js';
 import { EXPORT_VERSION, planLibraryImport, validateItem } from '../core/library.js';
 import { isPasteTooLarge, needsLowMemoryWarning } from '../core/limits.js';
-import { AI_DEFAULTS, basePolicy, keylessAllowed, estimateMessagesTokens, fitRequest, parseSSE, shouldRetry, retryDelayMs, validateCard } from '../core/ai.js';
+import { AI_DEFAULTS, basePolicy, keylessAllowed, estimateMessagesTokens, fitRequest, parseSSE, shouldRetry, retryDelayMs, validateCard, createTimeoutGuard, linkAbort } from '../core/ai.js';
 import { findNormalizedRange } from '../core/text.js';
 
 (function(){
@@ -2223,7 +2223,7 @@ function initTips(){
 
 /* ---------- AI: config + client ---------- */
 const AIK = 'maktabati:ai';
-const AI_DEF = { base:'https://api.deepseek.com', model:'deepseek-chat', key:'', max:AI_DEFAULTS.maxTokens, ctx:AI_DEFAULTS.contextWindow };
+const AI_DEF = { base:'https://api.deepseek.com', model:'deepseek-chat', key:'', max:AI_DEFAULTS.maxTokens, ctx:AI_DEFAULTS.contextWindow, first:AI_DEFAULTS.firstByteTimeoutMs };
 function aiCfg(){ try{ return Object.assign({}, AI_DEF, JSON.parse(localStorage.getItem(AIK) || '{}')); }catch(e){ return Object.assign({}, AI_DEF); } }
 function aiSave(c){ try{ localStorage.setItem(AIK, JSON.stringify(c)); }catch(e){ localFail('ai'); } }
 const aiReady = () => {
@@ -2271,19 +2271,19 @@ async function aiCall(o){
   if (estimated + max > ctx) throw { context:true, estimated:estimated, budget:ctx };
   const body = { model:c.model, messages, stream:!!o.stream, temperature:o.json ? 0.2 : 0.7, max_tokens:max };
   const ctrl = new AbortController();
-  let timer = null, timedOut = false, out = '';
-  const onAbort = () => { try{ ctrl.abort(o.signal.reason); }catch(e){ ctrl.abort(); } };
-  if (o.signal){ if (o.signal.aborted) onAbort(); else o.signal.addEventListener('abort', onAbort, { once:true }); }
-  const arm = ms => { clearTimeout(timer); timer = setTimeout(() => { timedOut = true; try{ ctrl.abort(new DOMException('Timeout', 'TimeoutError')); }catch(e){ ctrl.abort(); } }, ms); };
+  let out = '';
+  const firstMs = Math.max(5000, Math.min(300000, Number(c.first) || AI_DEFAULTS.firstByteTimeoutMs));
+  const guard = createTimeoutGuard({ firstMs, idleMs:AI_DEFAULTS.idleStreamTimeoutMs, onTimeout:() => { try{ ctrl.abort(new DOMException('Timeout', 'TimeoutError')); }catch(e){ ctrl.abort(); } } });
+  const unlink = linkAbort(o.signal, ctrl);
   const headers = { 'Content-Type':'application/json' };
   if (c.key) headers.Authorization = 'Bearer ' + c.key;
   try{
     for (let attempt = 0; ; attempt++){
-      arm(AI_DEFAULTS.firstByteTimeoutMs);
+      guard.first();
       let res;
       try{ res = await fetch(endpoint(c.base), { method:'POST', headers, body:JSON.stringify(body), signal:ctrl.signal }); }
-      catch(e){ if (timedOut) throw { timeout:true }; if (e && e.name === 'AbortError') throw e; throw { network:true, cause:e }; }
-      clearTimeout(timer);
+      catch(e){ if (guard.timedOut) throw { timeout:true }; if (e && e.name === 'AbortError') throw e; throw { network:true, cause:e }; }
+      guard.clear();
       if (!res.ok){
         const detail = await readProviderError(res);
         if (shouldRetry(res.status) && attempt < AI_DEFAULTS.maxRetries){
@@ -2293,20 +2293,20 @@ async function aiCall(o){
         throw { status:res.status, detail };
       }
       if (!o.stream){
-        arm(AI_DEFAULTS.idleStreamTimeoutMs);
+        guard.idle();
         let j;
-        try{ j = await res.json(); }catch(e){ if (timedOut) throw { timeout:true }; throw { status:res.status, detail:'رد غير صالح من المزوّد.' }; }
-        clearTimeout(timer);
+        try{ j = await res.json(); }catch(e){ if (guard.timedOut) throw { timeout:true }; throw { status:res.status, detail:'رد غير صالح من المزوّد.' }; }
+        guard.clear();
         if (j && j.error) throw { status:res.status, detail:String((j.error.message || j.error) || 'AI error') };
         return (j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
       }
       if (!res.body) throw { status:res.status, detail:'المزوّد ما أرسل جسم الرد.' };
-      arm(AI_DEFAULTS.idleStreamTimeoutMs);
+      guard.idle();
       const rd = res.body.getReader(), dec = new TextDecoder();
       let buf = '';
       for (;;){
         const r = await rd.read();
-        arm(AI_DEFAULTS.idleStreamTimeoutMs);
+        guard.idle();
         if (r.done) break;
         buf += dec.decode(r.value, { stream:true });
         const s = parseSSE(buf); buf = s.rest;
@@ -2326,12 +2326,12 @@ async function aiCall(o){
       return out;
     }
   } catch(e){
-    if (timedOut) throw { timeout:true };
+    if (guard.timedOut) throw { timeout:true };
     if (e && (e.status !== undefined || e.cfg || e.context || e.insecure || e.network || e.name === 'AbortError')) throw e;
     throw { network:true, cause:e };
   } finally {
-    clearTimeout(timer);
-    if (o.signal) o.signal.removeEventListener('abort', onAbort);
+    guard.clear();
+    unlink();
   }
 }
 const parseJSON = t => { const m = String(t || '').match(/[\[{][\s\S]*[\]}]/); if (!m) return null; try{ return JSON.parse(m[0]); }catch(e){ return null; } };
@@ -2906,6 +2906,7 @@ function tabAi(){
     '<label class="flabel" for="sKey">المفتاح</label><div style="display:flex; gap:.4rem"><input class="inp" id="sKey" type="password" value="' + esc(c.key) + '" dir="ltr" style="text-align:left" autocomplete="off" spellcheck="false"><button class="gbtn" id="sShow" type="button">أظهر</button></div>' +
     '<details style="margin-top:.75rem"><summary style="cursor:pointer; font-weight:600; min-height:44px; display:flex; align-items:center">خيارات متقدمة</summary>' +
     inp('sMax', 'أقصى توكنز للرد', c.max, '1200', 'number') + inp('sCtx', 'نافذة السياق (توكنز)', c.ctx, '64000', 'number') +
+    inp('sFirst', 'مهلة أول رد (ثانية)', Math.round((Number(c.first) || AI_DEFAULTS.firstByteTimeoutMs) / 1000), '90', 'number') +
     '<p class="hint" style="margin:0 0 .5rem">الافتراضي مناسب لـdeepseek-chat. النافذة تشمل التعليمات والسياق والرد.</p></details>' +
     '<div class="pbtns"><button class="pbtn" id="sSave">احفظ</button><button class="gbtn" id="sTest">جرّب الاتصال</button><button class="linkbtn" id="sClear" style="color:var(--m-fg)">امسح المفتاح</button></div><div id="sMsg"></div>' +
     '<h2 class="pf-h">أسلوب الرد</h2>' +
@@ -3015,7 +3016,8 @@ function renderProfile(tab){
     const read = () => ({
       base:$('#sBase').value.trim(), model:$('#sModel').value.trim(), key:$('#sKey').value.trim(),
       max:Math.max(1, Math.min(8000, +($('#sMax') && $('#sMax').value) || AI_DEFAULTS.maxTokens)),
-      ctx:Math.max(1024, Math.min(1000000, +($('#sCtx') && $('#sCtx').value) || AI_DEFAULTS.contextWindow))
+      ctx:Math.max(1024, Math.min(1000000, +($('#sCtx') && $('#sCtx').value) || AI_DEFAULTS.contextWindow)),
+      first:Math.max(5, Math.min(300, +($('#sFirst') && $('#sFirst').value) || 90)) * 1000
     });
     const msg = (h, ok) => { $('#sMsg').innerHTML = '<div class="msg' + (ok ? ' ok' : '') + '">' + h + '</div>'; };
     $('#sShow').onclick = () => { const k = $('#sKey'); k.type = k.type === 'password' ? 'text' : 'password'; $('#sShow').textContent = k.type === 'password' ? 'أظهر' : 'أخفِ'; };

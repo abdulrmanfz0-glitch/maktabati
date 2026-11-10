@@ -5,10 +5,39 @@ export const AI_DEFAULTS = Object.freeze({
   maxTokens: 1200,
   cardTokens: 700,
   contextWindow: 64000,
-  firstByteTimeoutMs: 30000,
+  firstByteTimeoutMs: 90000,
   idleStreamTimeoutMs: 20000,
   maxRetries: 2
 });
+
+/**
+ * Timer guard used by aiCall. It owns one timer at a time: first-byte, then
+ * stream-idle. The caller clears it in finally. Injected timers make it testable.
+ */
+export function createTimeoutGuard({ firstMs = AI_DEFAULTS.firstByteTimeoutMs, idleMs = AI_DEFAULTS.idleStreamTimeoutMs, onTimeout, setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
+  let timer = null, timedOut = false;
+  const clear = () => { if (timer !== null){ clearTimer(timer); timer = null; } };
+  const arm = ms => {
+    clear();
+    timer = setTimer(() => { timer = null; timedOut = true; if (onTimeout) onTimeout(); }, ms);
+  };
+  return {
+    first: () => arm(firstMs),
+    idle: () => arm(idleMs),
+    clear,
+    get timedOut(){ return timedOut; },
+    get pending(){ return timer !== null; }
+  };
+}
+
+/** Link an outer AbortSignal (Stop, closeChat, deleteConv) to an inner controller. */
+export function linkAbort(parent, ctrl) {
+  if (!parent || !ctrl) return () => {};
+  const onAbort = () => { try{ ctrl.abort(parent.reason); }catch(e){ ctrl.abort(); } };
+  if (parent.aborted) onAbort();
+  else parent.addEventListener('abort', onAbort, { once:true });
+  return () => { try{ parent.removeEventListener('abort', onAbort); }catch(e){} };
+}
 
 const isObj = v => !!v && typeof v === 'object' && !Array.isArray(v);
 const isStr = v => typeof v === 'string';

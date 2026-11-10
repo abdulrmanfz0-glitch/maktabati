@@ -1,8 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   AI_DEFAULTS, basePolicy, keylessAllowed, estimateMessagesTokens,
-  fitRequest, parseSSE, shouldRetry, retryDelayMs, validateCard, clipAround
+  fitRequest, parseSSE, shouldRetry, retryDelayMs, validateCard, clipAround,
+  createTimeoutGuard, linkAbort
 } from '../../apps/web/src/core/ai.js';
+
+afterEach(() => { vi.useRealTimers(); });
 
 describe('base URL and key policy', () => {
   it('allows an empty key only for localhost or 127.0.0.1', () => {
@@ -77,6 +80,50 @@ describe('SSE parser', () => {
   it('returns provider error objects', () => {
     const r = parseSSE('data: {"error":{"message":"insufficient balance"}}\n');
     expect(r.events).toEqual([{ error:'insufficient balance' }]);
+  });
+});
+
+describe('first-byte and stream-idle timeouts', () => {
+  it('defaults to 90s for the first byte and waits the full period', () => {
+    vi.useFakeTimers();
+    let fired = 0;
+    const g = createTimeoutGuard({ onTimeout:() => fired++ });
+    g.first();
+    vi.advanceTimersByTime(89_999);
+    expect(fired).toBe(0);
+    expect(g.pending).toBe(true);
+    vi.advanceTimersByTime(1);
+    expect(fired).toBe(1);
+    expect(g.timedOut).toBe(true);
+    expect(g.pending).toBe(false);
+  });
+
+  it('uses a 20s idle timeout and resets when a chunk arrives', () => {
+    vi.useFakeTimers();
+    let fired = 0;
+    const g = createTimeoutGuard({ onTimeout:() => fired++ });
+    g.idle();
+    vi.advanceTimersByTime(19_999);
+    expect(fired).toBe(0);
+    g.idle();
+    vi.advanceTimersByTime(19_999);
+    expect(fired).toBe(0);
+    vi.advanceTimersByTime(1);
+    expect(fired).toBe(1);
+  });
+
+  it('Stop aborts during a pending first byte without firing the timeout', () => {
+    vi.useFakeTimers();
+    const outer = new AbortController(), inner = new AbortController();
+    let fired = 0;
+    const g = createTimeoutGuard({ onTimeout:() => fired++ });
+    const unlink = linkAbort(outer.signal, inner);
+    g.first();
+    outer.abort();
+    expect(inner.signal.aborted).toBe(true);
+    g.clear(); unlink();
+    vi.advanceTimersByTime(90_000);
+    expect(fired).toBe(0);
   });
 });
 
