@@ -1,6 +1,6 @@
 # Maktabati (مكتبتي)
 
-[![CI](https://github.com/OWNER/maktabati/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/maktabati/actions/workflows/ci.yml)
+[![CI](https://github.com/abdulrmanfz0-glitch/maktabati/actions/workflows/ci.yml/badge.svg)](https://github.com/abdulrmanfz0-glitch/maktabati/actions/workflows/ci.yml)
 
 An Arabic-first reading environment. Bring your own PDF, EPUB, Markdown, or
 plain-text book, read it in a comfortable reader, highlight and annotate it,

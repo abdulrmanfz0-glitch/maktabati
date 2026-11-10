@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security report
-    url: https://github.com/OWNER/maktabati/security/advisories/new
+    url: https://github.com/abdulrmanfz0-glitch/maktabati/security/advisories/new
     about: Do not open a public issue for key, XSS, or data-leak reports.
   - name: Questions and usage help
-    url: https://github.com/OWNER/maktabati/discussions
+    url: https://github.com/abdulrmanfz0-glitch/maktabati/discussions
     about: Ask setup or provider questions here.

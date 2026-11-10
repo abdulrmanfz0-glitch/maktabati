@@ -46,5 +46,5 @@ All notable changes are recorded here. This project follows
 - AGPL-3.0-only license, third-party notices and license texts, CSP, and
   remote-image blocking.
 
-[Unreleased]: https://github.com/OWNER/maktabati/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/OWNER/maktabati/releases/tag/v0.1.0
+[Unreleased]: https://github.com/abdulrmanfz0-glitch/maktabati/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/abdulrmanfz0-glitch/maktabati/releases/tag/v0.1.0
