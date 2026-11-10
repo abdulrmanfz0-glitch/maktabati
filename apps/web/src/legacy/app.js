@@ -1,6 +1,7 @@
 import { DEMO_BOOK, DEMO_MD } from './demo-data.js';
 import { runIngest } from '../ingest/client.js';
 import { EXPORT_VERSION, planLibraryImport, validateItem } from '../core/library.js';
+import { isPasteTooLarge, needsLowMemoryWarning } from '../core/limits.js';
 
 (function(){
 'use strict';
@@ -2882,6 +2883,7 @@ const ING_ISSUE = {
 const ING_ERR = {
   encrypted:'الملف محمي بكلمة مرور. افتحه في برنامج ثاني واحفظ نسخة بدون حماية، ثم ارفعها.',
   'invalid-pdf':'ما قدرت أفتح الملف. يمكن يكون تالف.', 'invalid-epub':'ما قدرت أفتح الملف. يمكن يكون تالف.', empty:'الملف فاضي.',
+  'epub-limit':'ملف EPUB كبير جدًا بعد فك الضغط، أو فيه ملفات مضغوطة بشكل مشبوه. ما حفظت شي.',
   worker:'ما قدرت أشغّل محوّل الملفات في هالمتصفح.'
 };
 const ingIssues = list => arr(list).filter(i => i && i.severity === 'major').map(i => ING_ISSUE[i.code] || 'ملاحظة على جودة التحويل.').filter((t, k, a) => a.indexOf(t) === k);
@@ -2998,9 +3000,23 @@ const fileTitle = f => f ? f.name.replace(/\.(pdf|epub|md|markdown|txt|json)$/i,
 const junkTitle = t => !t || /^(untitled|بدون عنوان|document\d*|microsoft word\b.*|.*\.(docx?|pdf|indd|tex|odt))$/i.test(String(t).trim());
 
 /* ---- the flow ---- */
+function confirmLowMemory(f){
+  return new Promise(res => {
+    openModal('<div class="mhead"><h3>ملف كبير على جهاز بذاكرة محدودة</h3>' + closeBtn + '</div>' +
+      '<p style="margin:0 0 .7rem; line-height:1.75">هالملف حجمه ' + Math.round(f.size / 1e6) + ' ميجابايت، وجهازك يبلّغ بذاكرة ' + navigator.deviceMemory + ' جيجابايت. التحويل قد يبطئ التاب أو يستهلك مساحة كبيرة.</p>' +
+      '<div class="sh-actions"><button class="pbtn" id="lmGo">كمّل على مسؤوليتي</button><button class="gbtn" data-close>إلغاء</button></div>');
+    let done = false;
+    const off = e => { if (e.target.closest('[data-close]') || e.target === $('#modal')) finish(false); };
+    const finish = v => { if (done) return; done = true; $('#modal').removeEventListener('click', off); closeModal(true); res(v); };
+    $('#lmGo').onclick = () => finish(true);
+    $('#modal').addEventListener('click', off);
+  });
+}
 async function handleUpload(src){
   const f = src.file || null, pasted = !f;
   if (f && f.size > UP_MAX){ toast(tx('الملف كبير جدًا. ما تغيّر شي.')); return; }
+  if (!f && isPasteTooLarge(src.text)){ toast(tx('النص الملصوق كبير جدًا. اختصره أو ارفعه كملف.')); return; }
+  if (f && needsLowMemoryWarning(f.size, navigator.deviceMemory) && !(await confirmLowMemory(f))) return;
   let bytes;
   try{ bytes = f ? new Uint8Array(await f.arrayBuffer()) : new TextEncoder().encode(src.text); }catch(e){ toast(tx('ما قدرت أقرأ الملف')); return; }
   const sn = sniff(bytes, pasted), name = fileTitle(f);

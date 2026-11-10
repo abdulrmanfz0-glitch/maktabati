@@ -11,6 +11,36 @@ import { abortError } from './vision.js';
 const MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', svg: 'image/svg+xml', webp: 'image/webp' };
 const REF = /([^]+)/g;
 
+/* EPUB archives are zip files, so they can be zip bombs. These limits are
+   deliberately generous for real books but small enough that one archive
+   cannot exhaust a phone: 5,000 files, 64 MB per file, 256 MB uncompressed
+   total, and at most 100:1 compression for entries above 1 MB. */
+export const EPUB_LIMITS = Object.freeze({
+  maxEntries: 5000,
+  maxEntryBytes: 64 * 1024 * 1024,
+  maxTotalBytes: 256 * 1024 * 1024,
+  maxRatio: 100,
+  ratioMinBytes: 1024 * 1024
+});
+
+export function checkZipLimits(entries, limits = EPUB_LIMITS) {
+  const list = entries instanceof Map ? [...entries.values()] : Array.isArray(entries) ? entries : Object.values(entries || {});
+  let count = 0, total = 0;
+  for (const e of list) {
+    if (!e || e.dir) continue;
+    count++;
+    if (count > limits.maxEntries) return { ok:false, code:'epub-limit', reason:'entries', message:'The EPUB contains too many files.' };
+    const d = e._data || {};
+    const u = Number(d.uncompressedSize), c = Number(d.compressedSize);
+    if (!Number.isFinite(u) || u < 0) return { ok:false, code:'epub-limit', reason:'unknown-size', message:'The EPUB has a file with an unknown size.' };
+    if (u > limits.maxEntryBytes) return { ok:false, code:'epub-limit', reason:'entry-size', message:'A file inside the EPUB is too large after decompression.' };
+    total += u;
+    if (total > limits.maxTotalBytes) return { ok:false, code:'epub-limit', reason:'total-size', message:'The EPUB is too large after decompression.' };
+    if (u > limits.ratioMinBytes && c > 0 && u / c > limits.maxRatio) return { ok:false, code:'epub-limit', reason:'ratio', message:'The EPUB has a suspicious compression ratio.' };
+  }
+  return { ok:true, entries:count, total };
+}
+
 export function resolvePath(base, href) {
   const out = [];
   (base + decodeURIComponent(String(href).split('#')[0])).split('/').forEach(p => { if (p === '..') out.pop(); else if (p && p !== '.') out.push(p); });
@@ -60,6 +90,8 @@ export async function* ingestEpub(bytes, options = {}) {
   if (!bytes || !bytes.length) throw new IngestError('empty', 'The file is empty.');
   let zip;
   try { zip = await JSZip.loadAsync(bytes); } catch (e) { throw new IngestError('invalid-epub', 'This file could not be read as an EPUB (it may be damaged).'); }
+  const lim = checkZipLimits(zip.files);
+  if (!lim.ok) throw new IngestError(lim.code, lim.message);
   if (zip.file('META-INF/encryption.xml')) {
     const enc = await zip.file('META-INF/encryption.xml').async('string');
     if (/EncryptedData/.test(enc) && !/obfuscation|font/i.test(enc)) throw new IngestError('encrypted', 'This EPUB is DRM-protected and cannot be read.');
