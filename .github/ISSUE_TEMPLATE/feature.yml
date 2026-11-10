@@ -1,0 +1,49 @@
+name: Feature request
+description: Suggest an improvement for Maktabati
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Maktabati is local-first and Arabic-first. Features that add telemetry,
+        rewards for consumption, or server-side book storage are out of scope.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard or missing today? Who is it for?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Reader
+        - Library / import
+        - AI / providers
+        - Study / review
+        - Sounds
+        - Accessibility
+        - Performance
+        - Docs / tooling
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Project constraints
+      options:
+        - label: This keeps books and study data on the device.
+          required: true
+        - label: This does not add telemetry, points, or streaks.
+          required: true

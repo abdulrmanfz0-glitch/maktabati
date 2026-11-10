@@ -1,5 +1,7 @@
 # Maktabati (مكتبتي)
 
+[![CI](https://github.com/OWNER/maktabati/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/maktabati/actions/workflows/ci.yml)
+
 An Arabic-first reading environment. Bring your own PDF, EPUB, Markdown, or
 plain-text book, read it in a comfortable reader, highlight and annotate it,
 review what you read, play ambient sounds, and discuss the book with an AI
@@ -187,6 +189,22 @@ the whole app is inlined by `vite-plugin-singlefile`.
   replies render as links/alt text.
 - **The AI key is visible to JavaScript on the same origin.** Use a
   spending-limited key and a dedicated origin; see `SECURITY.md`.
+
+## Contributing
+
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a PR. CI runs
+`npm test`, `npm run build`, the smoke suite, and the AI failure suite on Node
+22.13. Local performance checks use:
+
+```bash
+npm run dev -- --host 127.0.0.1
+npm run bench:ui -- http://127.0.0.1:5173/
+```
+
+The methodology and current numbers are in
+[`docs/performance.md`](docs/performance.md). Planned work is in
+[`ROADMAP.md`](ROADMAP.md); recent changes are in
+[`CHANGELOG.md`](CHANGELOG.md).
 
 ## License
 
