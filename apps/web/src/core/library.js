@@ -118,6 +118,13 @@ export function validateItem(it, path, errors) {
   const chapters = it.chapters == null ? [] : it.chapters;
   chapters.forEach((c, i) => checkChapter(c, path + '.chapters[' + i + ']', errors));
   if (it.intro != null) checkIntro(it.intro, path + '.intro', errors);
+  if (it.conclusion != null) {
+    if (!isObj(it.conclusion)) err(errors, path + '.conclusion', 'الخاتمة يجب أن تكون كائنًا.');
+    else {
+      if (it.conclusion.ideas != null && !strArr(it.conclusion.ideas)) err(errors, path + '.conclusion', 'حقل ideas يجب أن يكون قائمة نصوص.');
+      if (it.conclusion.applyPrompt != null && !isStr(it.conclusion.applyPrompt)) err(errors, path + '.conclusion', 'حقل applyPrompt يجب أن يكون نصًا.');
+    }
+  }
   if (it.createdAt != null && !isNum(it.createdAt)) err(errors, path, 'حقل createdAt يجب أن يكون رقمًا.');
   if (it.progress != null && (!isNum(it.progress) || it.progress < 0 || it.progress > 1)) err(errors, path, 'حقل progress يجب أن يكون رقمًا بين 0 و1.');
   if (it.lastOpened != null && !isNum(it.lastOpened)) err(errors, path, 'حقل lastOpened يجب أن يكون رقمًا.');
