@@ -507,18 +507,29 @@ function bkCover(it, o){
 function fitCovers(root){
   (root || document).querySelectorAll('.bcv-title').forEach(t => {
     const box = t.parentElement; if (!box.clientHeight) return;
-    let k = +t.dataset.k || 11;
+    const k0 = +t.dataset.k || 11, boxH = box.clientHeight;
     t.style.webkitLineClamp = 'unset'; t.style.maxHeight = 'none';
-    for (let i = 0; i < 30; i++){
+    const fits = k => {
       t.style.setProperty('--k', k);
       const fs = parseFloat(getComputedStyle(t).fontSize) || 16, h = t.offsetHeight;
-      if (h <= box.clientHeight + 1 && h / (fs * 1.4) <= 4.2) break;
-      k -= .6; if (k < 5.4) break;
+      return h <= boxH + 1 && h / (fs * 1.4) <= 4.2;
+    };
+    if (!fits(k0)){
+      let lo = 5.4, hi = k0, best = lo;
+      for (let i = 0; i < 6; i++){
+        const mid = (lo + hi) / 2;
+        if (fits(mid)){ best = mid; lo = mid; } else hi = mid;
+      }
+      t.style.setProperty('--k', best);
     }
     t.style.webkitLineClamp = ''; t.style.maxHeight = '';
   });
 }
-function fitSoon(root){ if (!root) return; fitCovers(root); if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { if (!root.hidden) fitCovers(root); }); }
+function fitSoon(root){
+  if (!root) return;
+  if (document.fonts && document.fonts.status !== 'loaded') document.fonts.ready.then(() => { if (!root.hidden) fitCovers(root); });
+  else fitCovers(root);
+}
 const estText = (n, books, chars) => {
   const input = Math.ceil(chars / 1.5) + n * 600;
   const output = n * AI_DEFAULTS.cardTokens;
@@ -1772,7 +1783,10 @@ function renderMap(){
   }
   if (!allSaved){
     if (anySaved) nodes.forEach(n => { if (n.saved) n.hold = true; });
-    let al = 1; for (let i = 0; i < 320; i++){ tick(al); al *= .985; }
+    // Dense libraries need less settling than small maps; the layout is stable
+    // after fewer iterations and the O(n²) pair loop is the main cost.
+    const steps = nodes.length > 800 ? 90 : nodes.length > 400 ? 140 : nodes.length > 180 ? 220 : 320;
+    let al = 1; for (let i = 0; i < steps; i++){ tick(al); al *= .985; }
     nodes.forEach(n => { n.hold = false; n.vx = n.vy = 0; }); saveM();
   }
 
@@ -2484,12 +2498,18 @@ function passagesTxt(hits){
   return '\n\nمقاطع من البحث المحلي تطابق السؤال:\n' + hits.map(h => { const ci = keyCh(h.key); return '— ' + plain(h.it.title) + '، ' + (ci < 0 ? 'المقدّمة' : 'الفصل ' + (ci + 1) + (MEM().status ? ' (' + STL[chStatus(h.it, ci)] + ')' : '')) + ' [' + h.it.id + '|' + Math.max(1, ci + 1) + ']' + (h.kind === 'hl' ? ' — من تظليلاتي' : h.kind === 'card' ? ' — بطاقة الفصل' : '') + ':\n' + short(h.text, 600); }).join('\n\n');
 }
 function glossaryTxt(){ if (!MEM().gloss) return ''; const g = termGroups(); return g.length ? '\n\nقاموسي: ' + g.slice(0, 80).map(t => t.ar + (t.def ? ' = ' + short(t.def, 80) : '')).join('؛ ') : ''; }
-function libraryMap(q){
+function libraryMap(q, knownHits){
   const items = allItems().sort((a, b) => (b.lastOpened || 0) - (a.lastOpened || 0));
-  const full = items.map(it => bookMemory(it, true)).join('\n\n');
-  if (full.length <= 24000) return full;
-  const hit = new Set(searchHits(q, 12).map(h => h.it.id));
-  return items.map(it => bookMemory(it, hit.has(it.id))).join('\n\n');
+  const out = []; let len = 0;
+  for (const it of items){
+    const m = bookMemory(it, true);
+    if (len + m.length + 2 > 24000){
+      const hit = new Set((knownHits || searchHits(q, 12)).map(h => h.it.id));
+      return items.map(x => bookMemory(x, hit.has(x.id))).join('\n\n');
+    }
+    out.push(m); len += m.length + 2;
+  }
+  return out.join('\n\n');
 }
 function currentCi(it){
   if (RD && RD.it === it){
@@ -2773,8 +2793,9 @@ function buildMessages(C){
   const parts = [];
   let focus = last.attach || '';
   if (scopeOf(C) === 'lib') {
-    parts.push({ id:'library_map', label:'', text:'خريطة المكتبة:\n' + libraryMap(q) });
-    const passages = passagesTxt(searchHits(q, 8)); if (passages) parts.push({ id:'passages', label:'', text:passages });
+    const hits = searchHits(q, 12);
+    parts.push({ id:'library_map', label:'', text:'خريطة المكتبة:\n' + libraryMap(q, hits) });
+    const passages = passagesTxt(hits.slice(0, 8)); if (passages) parts.push({ id:'passages', label:'', text:passages });
     const gloss = glossaryTxt(); if (gloss) parts.push({ id:'glossary', label:'', text:gloss });
   } else {
     const it = itemById(C.conv.bookId), bc = bookContext(it, C.full);
@@ -4097,6 +4118,13 @@ function renderTpl(){
 
 /* ----- events ----- */
 /* DEV ONLY: console hook for checking layouts; no UI path uses it */
+if (import.meta.env.DEV) window.__bench = {
+  context(q = 'لخّص أهم فكرة في كتبي') {
+    const t = performance.now();
+    const msgs = buildMessages({ conv:{ msgs:[{ role:'user', content:q }], bookId:null }, full:false });
+    return { ms:performance.now() - t, chars:msgs.reduce((n, m) => n + m.content.length, 0), messages:msgs.length };
+  }
+};
 if (import.meta.env.DEV) window.__rt = { get st(){ return RT; }, reflow:rtReflow, flip:rtFlip, turn:rtTurn, set:rtSet, tool:rtTool, menu:rtMenu, ov:rtOv,
   add(it){ mem.items.set(it.id, it); }, demo:() => DEMO_BOOK, rm(id){ del('items', id); [...mem.kv.keys()].filter(k => k.startsWith(id)).forEach(k => del('kv', k)); delete rtP().books[id]; profSave(); } };
 function rtInit(){
