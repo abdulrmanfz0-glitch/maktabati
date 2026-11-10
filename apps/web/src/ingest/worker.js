@@ -4,11 +4,13 @@
 // Every message of ours carries mk:1. pdf.worker.mjs, imported for in-thread parsing, also attaches
 // to this worker's port and posts its own messages (for example "ready"); both sides ignore those.
 //
-// in : { mk:1, id, bytes: ArrayBuffer, kind?: 'pdf'|'epub'|'md'|'txt' }   |   { id, cancel: true }
+// in : { mk:1, id, bytes: ArrayBuffer, kind?: 'pdf'|'epub'|'md'|'txt'|'import-json' }   |   { id, cancel: true }
 // out: { id, type:'progress', stage, page, pages }
 //      { id, type:'result', book, report, assets: [{ path, mime, bytes }] }   (asset buffers transferred)
+//      { id, type:'validated', data, errors }   (library import parse/validation)
 //      { id, type:'error', code, message }
 import { ingest, detectKind } from '@maktabati/ingest';
+import { validateLibrary } from '../core/library.js';
 
 const jobs = new Map();
 let lexP = null;
@@ -26,6 +28,14 @@ self.onmessage = async e => {
   const ctrl = new AbortController(); jobs.set(m.id, ctrl);
   try {
     const bytes = new Uint8Array(m.bytes);
+    if (m.kind === 'import-json') {
+      let data = null;
+      try{ data = JSON.parse(new TextDecoder().decode(bytes)); }
+      catch(e){ self.postMessage({ mk:1, id:m.id, type:'validated', data:null, errors:['ما قدرت أقرأ الملف كـJSON.'] }); return; }
+      const v = validateLibrary(data);
+      self.postMessage({ mk:1, id:m.id, type:'validated', data:v.ok ? data : null, errors:v.errors });
+      return;
+    }
     const kind = detectKind(bytes, m.kind);
     const options = { signal: ctrl.signal };
     if (kind === 'pdf') {

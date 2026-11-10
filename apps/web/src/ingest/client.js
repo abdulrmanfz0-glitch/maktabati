@@ -13,7 +13,7 @@ async function getWorker() {
     const p = pending.get(m.id); if (!p) return;
     if (m.type === 'progress') { if (p.onProgress) p.onProgress(m); return; }
     pending.delete(m.id);
-    if (m.type === 'result') p.resolve(m);
+    if (m.type === 'result' || m.type === 'validated') p.resolve(m);
     else { const err = new Error(m.message); err.code = m.code; p.reject(err); }
   };
   worker.onerror = e => { const err = new Error(e.message || 'worker failed'); err.code = 'worker'; for (const p of pending.values()) p.reject(err); pending.clear(); worker = null; };

@@ -2044,8 +2044,17 @@ function reportImportErrors(errors){
 async function importLib(f){
   if (!f) return;
   if (f.size > 250e6){ toast(tx('الملف كبير جدًا. ما تغيّر شي.')); return; } /* exports carry figures as data: URLs, so a library with images can be large */
-  let d;
-  try{ d = JSON.parse(await f.text()); }catch(e){ toast('ما قدرت أقرأ الملف'); return; }
+  let d = null;
+  try{
+    const v = await runIngest(f, { kind:'import-json' });
+    if (v && v.type === 'validated'){
+      if (!v.data){ reportImportErrors(v.errors || ['الملف غير صالح.']); return; }
+      d = v.data;
+    }
+  }catch(e){ /* worker unavailable: fall back to the main thread below */ }
+  if (!d){
+    try{ d = JSON.parse(await f.text()); }catch(e){ toast('ما قدرت أقرأ الملف'); return; }
+  }
   if (d && Array.isArray(d.items)){
     const existing = { items:allItems(), annos:[...mem.annos.values()], kv:new Map(mem.kv) };
     const plan = planLibraryImport(d, existing, dataURLToBlob);
