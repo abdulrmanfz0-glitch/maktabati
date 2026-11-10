@@ -305,7 +305,7 @@ The goal is the same behavior, split into modules, built by Vite into (a) a norm
 
 - [ ] Export the real library from its current origin (`EXP-01`) and keep the JSON outside git. `exports/` is already in `.gitignore`.
 - [ ] Run the full `CHECKLIST.md` once against the original file and record the results. This is the baseline.
-- [ ] Approve the dependencies: `vite`, `vite-plugin-singlefile`, and `vitest` (dev only). Dexie and zod are Phase 1 items in PLAN.md, but I suggest adding them **after** the split is verified. They change storage and validation code, and that is behavior risk.
+- [ ] Approve the dependencies: `vite`, `vite-plugin-singlefile`, and `vitest` (dev only). Dexie and zod were proposed Phase 1 items in the superseded plan, but I suggest adding them **after** the split is verified. They change storage and validation code, and that is behavior risk.
 
 ### Step 1: Unbundle, with no code changes
 
@@ -344,7 +344,7 @@ Each step moves one group, makes it a module with explicit imports and exports, 
 
 1. **HTML snapshot tests.** Most renderers are pure functions of `(item, kv)` that return HTML strings: `readerHTML`, `chapterHTML`, `screenHTML`, `card`, `mapHTML`, `bookMemory`, `buildMessages`. Before moving a group, record their output for the demo data plus your exported library, and fail the build if it changes. This catches most regressions without clicking.
 2. **Data round trip.** Import your export, then export again. The two files must be equal apart from `exported` and ordering.
-3. **Manual checks.** Run the [SMOKE] items after every step, and the rows listed for the module you moved. Run the full `CHECKLIST.md` at the end of Phase 1. This also meets PLAN.md's success criterion: the single-file build works like the original, with the library, highlights, and cards all present.
+3. **Manual checks.** Run the [SMOKE] items after every step, and the rows listed for the module you moved. Run the full `CHECKLIST.md` at the end of Phase 1. This also meets the original phase-plan success criterion: the single-file build works like the original, with the library, highlights, and cards all present.
 4. **One commit per step**, so any regression can be reverted on its own.
 
-**Time box.** PLAN.md sets 2 weeks. If step 10 (reader) goes beyond that, stop, and ship with the reader still a single module.
+**Time box.** The original phase plan set 2 weeks. If step 10 (reader) goes beyond that, stop, and ship with the reader still a single module.
