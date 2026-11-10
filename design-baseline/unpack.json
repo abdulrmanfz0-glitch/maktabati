@@ -1,0 +1,102 @@
+{
+  "source": "My Library.html",
+  "templateSha256": "4cfdfc129d55c93c8433f6717299520a471d126b8ba3418cae395ea426df7c36",
+  "encodeExact": true,
+  "inject": "<script src=\"scripts/resources.js\" data-unpacked=\"resources\"></script>",
+  "refs": {},
+  "blocks": [
+    {
+      "file": "scripts/head-1.js",
+      "open": "<script>",
+      "close": "</script>",
+      "tag": "<script src=\"scripts/head-1.js\" data-unpacked=\"scripts/head-1.js\"></script>",
+      "refs": {}
+    },
+    {
+      "file": "scripts/head-2.js",
+      "open": "<script>",
+      "close": "</script>",
+      "tag": "<script src=\"scripts/head-2.js\" data-unpacked=\"scripts/head-2.js\"></script>",
+      "refs": {}
+    },
+    {
+      "file": "styles/fonts.css",
+      "open": "<style>",
+      "close": "</style>",
+      "tag": "<link rel=\"stylesheet\" href=\"styles/fonts.css\" data-unpacked=\"styles/fonts.css\">",
+      "refs": {
+        "../fonts/amiri-400-arabic.woff2": "a0c0cbff-dbde-44b9-a617-6ec96aab958f",
+        "../fonts/amiri-400-latin-ext.woff2": "b3e5321f-a784-45d8-beb8-12e660363063",
+        "../fonts/amiri-400-latin.woff2": "6dd84b28-5b60-47e4-8afc-e956580c4c01",
+        "../fonts/amiri-700-arabic.woff2": "fb3e115e-5161-4355-a511-be75fd62a866",
+        "../fonts/amiri-700-latin-ext.woff2": "acc26dd8-ba68-4ff5-8c17-e66207ef79d8",
+        "../fonts/amiri-700-latin.woff2": "0290d8c9-69f3-44ba-a1e3-84b183dc91cf",
+        "../fonts/aref-ruqaa-700-arabic.woff2": "ab885028-2b5f-4900-9b4f-80e1cd4b7ad7",
+        "../fonts/aref-ruqaa-700-latin-ext.woff2": "d3b0f491-dced-467d-a03c-108805e62014",
+        "../fonts/aref-ruqaa-700-latin.woff2": "6873dfd6-f144-4a8b-919c-67248d9ef711",
+        "../fonts/ibm-plex-sans-arabic-400-arabic.woff2": "2eef27d9-15c1-40c1-b2ef-0fe7040e8ef6",
+        "../fonts/ibm-plex-sans-arabic-400-cyrillic-ext.woff2": "9f3a28d9-61ca-4fc6-b706-58e11cae4db7",
+        "../fonts/ibm-plex-sans-arabic-400-latin-ext.woff2": "d32bc56e-7dfc-43f7-a2ad-c4a07c4f7374",
+        "../fonts/ibm-plex-sans-arabic-400-latin.woff2": "ce2f5b17-0a3b-4fd8-9dde-cb6e5f293d8b",
+        "../fonts/ibm-plex-sans-arabic-500-arabic.woff2": "dd6a8e79-f3f0-4497-bb0f-96d010ae832b",
+        "../fonts/ibm-plex-sans-arabic-500-cyrillic-ext.woff2": "f83b387f-f610-4d92-bae2-bf81f0846dfc",
+        "../fonts/ibm-plex-sans-arabic-500-latin-ext.woff2": "0f2ff64c-9394-41c5-88db-cd68f0e52d87",
+        "../fonts/ibm-plex-sans-arabic-500-latin.woff2": "21b36309-56c2-41ad-9b23-c6e639e3d779",
+        "../fonts/ibm-plex-sans-arabic-600-arabic.woff2": "4051df2d-9c3a-407d-a6f0-485d30785b85",
+        "../fonts/ibm-plex-sans-arabic-600-cyrillic-ext.woff2": "e5bdbb4a-9672-4b98-9b10-c72e97a14dde",
+        "../fonts/ibm-plex-sans-arabic-600-latin-ext.woff2": "c22a9591-47a9-4c73-9d01-150fe7b484af",
+        "../fonts/ibm-plex-sans-arabic-600-latin.woff2": "e1dd07fa-0fba-452e-b381-78972134de1b",
+        "../fonts/noto-naskh-arabic-400-700-arabic.woff2": "5b366a13-7cfc-4de3-998d-395fea1dba3f",
+        "../fonts/noto-naskh-arabic-400-700-math.woff2": "79dfb161-5f34-4350-b5d1-99db7860ce6e",
+        "../fonts/noto-naskh-arabic-400-700-symbols.woff2": "00737952-f21e-48f3-bcbb-230c68753560",
+        "../fonts/noto-naskh-arabic-400-700-latin-ext.woff2": "47f8e6b1-3984-42f6-811e-12f88d63a01a",
+        "../fonts/noto-naskh-arabic-400-700-latin.woff2": "0cd01d35-32b6-4a69-a6b3-5ef5d9f33bc3"
+      }
+    },
+    {
+      "file": "styles/app.css",
+      "open": "<style>",
+      "close": "</style>",
+      "tag": "<link rel=\"stylesheet\" href=\"styles/app.css\" data-unpacked=\"styles/app.css\">",
+      "refs": {}
+    },
+    {
+      "file": "scripts/app.js",
+      "open": "<script>",
+      "close": "</script>",
+      "tag": "<script src=\"scripts/app.js\" data-unpacked=\"scripts/app.js\"></script>",
+      "refs": {}
+    }
+  ],
+  "assets": {
+    "45aed378-b283-4466-8b62-e8c3839bb845": "vendor/jszip.js",
+    "f23c1972-ef3b-47d3-905a-280f10cc9232": "vendor/pdfjs.js",
+    "84c818c0-ffd8-41ea-8728-86647c6a6151": "vendor/pdfworker.js",
+    "a0c0cbff-dbde-44b9-a617-6ec96aab958f": "fonts/amiri-400-arabic.woff2",
+    "b3e5321f-a784-45d8-beb8-12e660363063": "fonts/amiri-400-latin-ext.woff2",
+    "6dd84b28-5b60-47e4-8afc-e956580c4c01": "fonts/amiri-400-latin.woff2",
+    "fb3e115e-5161-4355-a511-be75fd62a866": "fonts/amiri-700-arabic.woff2",
+    "acc26dd8-ba68-4ff5-8c17-e66207ef79d8": "fonts/amiri-700-latin-ext.woff2",
+    "0290d8c9-69f3-44ba-a1e3-84b183dc91cf": "fonts/amiri-700-latin.woff2",
+    "ab885028-2b5f-4900-9b4f-80e1cd4b7ad7": "fonts/aref-ruqaa-700-arabic.woff2",
+    "d3b0f491-dced-467d-a03c-108805e62014": "fonts/aref-ruqaa-700-latin-ext.woff2",
+    "6873dfd6-f144-4a8b-919c-67248d9ef711": "fonts/aref-ruqaa-700-latin.woff2",
+    "2eef27d9-15c1-40c1-b2ef-0fe7040e8ef6": "fonts/ibm-plex-sans-arabic-400-arabic.woff2",
+    "9f3a28d9-61ca-4fc6-b706-58e11cae4db7": "fonts/ibm-plex-sans-arabic-400-cyrillic-ext.woff2",
+    "d32bc56e-7dfc-43f7-a2ad-c4a07c4f7374": "fonts/ibm-plex-sans-arabic-400-latin-ext.woff2",
+    "ce2f5b17-0a3b-4fd8-9dde-cb6e5f293d8b": "fonts/ibm-plex-sans-arabic-400-latin.woff2",
+    "dd6a8e79-f3f0-4497-bb0f-96d010ae832b": "fonts/ibm-plex-sans-arabic-500-arabic.woff2",
+    "f83b387f-f610-4d92-bae2-bf81f0846dfc": "fonts/ibm-plex-sans-arabic-500-cyrillic-ext.woff2",
+    "0f2ff64c-9394-41c5-88db-cd68f0e52d87": "fonts/ibm-plex-sans-arabic-500-latin-ext.woff2",
+    "21b36309-56c2-41ad-9b23-c6e639e3d779": "fonts/ibm-plex-sans-arabic-500-latin.woff2",
+    "4051df2d-9c3a-407d-a6f0-485d30785b85": "fonts/ibm-plex-sans-arabic-600-arabic.woff2",
+    "e5bdbb4a-9672-4b98-9b10-c72e97a14dde": "fonts/ibm-plex-sans-arabic-600-cyrillic-ext.woff2",
+    "c22a9591-47a9-4c73-9d01-150fe7b484af": "fonts/ibm-plex-sans-arabic-600-latin-ext.woff2",
+    "e1dd07fa-0fba-452e-b381-78972134de1b": "fonts/ibm-plex-sans-arabic-600-latin.woff2",
+    "5b366a13-7cfc-4de3-998d-395fea1dba3f": "fonts/noto-naskh-arabic-400-700-arabic.woff2",
+    "79dfb161-5f34-4350-b5d1-99db7860ce6e": "fonts/noto-naskh-arabic-400-700-math.woff2",
+    "00737952-f21e-48f3-bcbb-230c68753560": "fonts/noto-naskh-arabic-400-700-symbols.woff2",
+    "47f8e6b1-3984-42f6-811e-12f88d63a01a": "fonts/noto-naskh-arabic-400-700-latin-ext.woff2",
+    "0cd01d35-32b6-4a69-a6b3-5ef5d9f33bc3": "fonts/noto-naskh-arabic-400-700-latin.woff2"
+  }
+}

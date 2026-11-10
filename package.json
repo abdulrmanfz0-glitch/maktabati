@@ -1,0 +1,31 @@
+{
+  "name": "maktabati",
+  "version": "0.1.0",
+  "description": "Arabic-first local reading environment with a built-in reader, study tools, ambient sounds, and a bring-your-own-key AI companion.",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/OWNER/maktabati.git"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "devDependencies": {
+    "vite": "^8.3.2",
+    "vite-plugin-singlefile": "^2.3.3",
+    "vitest": "^5.0.2"
+  },
+  "scripts": {
+    "dev": "vite apps/web",
+    "build": "npm run build:web && npm run build:single",
+    "build:web": "vite build apps/web",
+    "build:single": "vite build apps/web --mode worker && vite build apps/web --mode single",
+    "preview": "vite preview apps/web --outDir ../../dist/web",
+    "test": "vitest run"
+  }
+}

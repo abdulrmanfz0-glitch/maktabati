@@ -1,0 +1,19 @@
+node_modules/
+dist/
+.env
+.env.*
+*.key
+*.pdf
+*.epub
+book/
+exports/
+backups/
+# local agent instructions: contain a machine-specific path and stale state
+CLAUDE.md
+.DS_Store
+Thumbs.db
+tests/fixtures/golden/
+out/
+
+# original ambient recordings (downloaded by hand; only encoded loops are committed)
+sounds-src/

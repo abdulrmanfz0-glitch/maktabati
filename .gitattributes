@@ -1,0 +1,3 @@
+# Unpacked design files must stay byte-exact (tools/unpack-design.mjs --verify).
+design-baseline/** -text
+
