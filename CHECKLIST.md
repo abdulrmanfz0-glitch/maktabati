@@ -119,7 +119,7 @@ There is one upload action, «ارفع» (Upload). The user never picks a type: 
 - [ ] **UP-05 [SMOKE]** Drag a file from the desktop anywhere onto the app.
   **Expected:** a "Drop the file here" (أفلت الملف هنا) overlay, then the same flow.
 - [ ] **UP-06** Paste long text (400+ characters) while not typing in a field (outside the reader).
-  **Expected:** the preview opens for the pasted text. Short pastes are ignored. Pasting inside a text field works normally.
+  **Expected:** the preview opens for the pasted text. Short pastes are ignored. Pasting inside a text field works normally. Text above **2,000,000 characters** is rejected with a clear message.
 - [ ] **UP-07** Use the chat paperclip.
   **Expected:** the same flow.
 - [ ] **UP-08 [SMOKE]** Upload a «مكتبتي» export file (`maktabati-*.json`).
@@ -128,6 +128,10 @@ There is one upload action, «ارفع» (Upload). The user never picks a type: 
   **Expected:** "This file is already in your library", with "Open the existing copy" (goes to its book page) and "Add another copy". Books saved before this feature have no content hash and are not detected.
 - [ ] **UP-10** Upload a file of another kind (an image, a zip).
   **Expected:** "I cannot read this kind of file…". Nothing is stored.
+- [ ] **UP-11** Upload a very large or highly compressed EPUB (over 5,000 entries, over 64 MB for one entry, over 256 MB after decompression, or over 100:1 compression).
+  **Expected:** a clear Arabic EPUB-limit message; nothing is stored and the tab stays responsive.
+- [ ] **UP-12 [UNVERIFIED: device memory]** On a browser reporting 4 GB of device memory or less, upload a file above 25 MB.
+  **Expected:** a confirmation asks before processing; Cancel leaves the library unchanged.
 - [ ] **ADD-07 [UNVERIFIED: needs AI key]** Add an item while an AI key is saved.
   **Expected:** about 0.7s later the "Prepare for AI" modal is offered for that item.
 
@@ -331,6 +335,7 @@ These need a test item. Save this as `fixture.json` and import it with "Import l
   **Expected:**
   - An interface language switch.
   - The AI fields: API URL (default `https://api.deepseek.com`), Model (default `deepseek-chat`), and Key (hidden).
+  - Advanced options: max response tokens, context window, and first-byte timeout (defaults 1200, 64000, 90 seconds).
   - Save, Test connection, and Clear key buttons.
   - The "Prepare for AI" count: N of M chapters have a card.
 - [ ] **SETT-02** Click Show (أظهر) and Hide (أخفِ).
@@ -341,6 +346,10 @@ These need a test item. Save this as `fixture.json` and import it with "Import l
   **Expected:** "Connection works" with the model's reply, or an Arabic error explaining the cause: 401/403 means the key, 404 means the URL or model, and CORS means you should use a local server.
 - [ ] **SETT-05** Click "Clear key" (امسح المفتاح).
   **Expected:** the key is emptied and the page says "Key cleared".
+- [ ] **SETT-08 [UNVERIFIED: needs Ollama]** Set the base URL to `http://localhost:11434/v1`, leave the key empty, and test against Ollama.
+  **Expected:** the request is sent without an `Authorization` header. An empty key is rejected for any non-localhost base.
+- [ ] **SETT-09** Use a key with `http://` (non-local) base.
+  **Expected:** a clear refusal; no request is sent. HTTPS and localhost are allowed.
 - [ ] **SETT-06 [SMOKE]** In Profile → Look (المظهر واللغة), switch the language to English.
   **Expected:**
   - The page reloads.
@@ -368,6 +377,12 @@ These need a test item. Save this as `fixture.json` and import it with "Import l
   **Expected:** the reply stays general and does not spoil it. Only the current chapter's text is sent, plus chapter cards.
 - [ ] **AI-06** Click History, then an old conversation, then New chat.
   **Expected:** each works. Close with X, the scrim, or Escape.
+- [ ] **AI-07 [UNVERIFIED: network]** Use a provider/model that thinks for a long time before its first token, or a test server that stalls.
+  **Expected:** the app waits up to the configured first-byte timeout (90s default); a stream that goes silent for 20s is aborted with a timeout message. Stop aborts even during the first byte.
+- [ ] **AI-08 [UNVERIFIED: network]** Return 429/500/502/503/504 once, then success.
+  **Expected:** up to two retries with backoff and `Retry-After`; no retry after content starts. 402 shows a balance message, 401/403 an invalid-key message, and CORS/network shows the provider-support explanation.
+- [ ] **AI-09 [UNVERIFIED: long context]** Ask a question in a very long chapter or with a long history.
+  **Expected:** oldest messages are dropped first, then library/context parts, then chapter text around the current position; it never sends a request it knows exceeds the context window.
 
 ## 16. PDF and EPUB import (ingest engine)
 
@@ -388,6 +403,8 @@ PDF and EPUB files are converted by the ingest engine (`packages/ingest`) in a W
   **Expected:** footnote numbers open the popup (Modern) or appear at the bottom of the page (The Book, Manuscript). Figures show in all templates; they are stored on the device (IndexedDB) and travel inside exports as data URLs.
 - [ ] **PDF-06** Cancel during conversion.
   **Expected:** the window closes and nothing is stored.
+- [ ] **EPUB-01** Import an EPUB that exceeds the archive limits (entries, one entry, total uncompressed size, or compression ratio).
+  **Expected:** "ملف EPUB كبير جدًا…"; nothing is stored. A normal small EPUB still imports.
 - [ ] **EPUB-01** Import an EPUB.
   **Expected:** the same preview, with chapters from the EPUB table of contents, notes, and images.
 
@@ -407,6 +424,10 @@ PDF and EPUB files are converted by the ingest engine (`packages/ingest`) in a W
   **Expected:** the toast "The file isn't in the expected shape" (الملف مو بالشكل المتوقّع).
 - [ ] **IMP-04** Import a non-JSON file renamed to `.json`.
   **Expected:** the toast "Couldn't read the file" (ما قدرت أقرأ الملف).
+- [ ] **IMP-05** Import an export with `v:2`, `chapters:[null]`, a corrupt base64 figure, or a missing `app`.
+  **Expected:** a clear error list; nothing is written and the library is unchanged.
+- [ ] **IMP-06** Import an export containing only duplicates.
+  **Expected:** "Imported 0 items" with the skipped count; no duplicates are created.
 
 ## 18. Other
 
@@ -441,7 +462,7 @@ PDF and EPUB files are converted by the ingest engine (`packages/ingest`) in a W
 - [ ] **PF-04** AI tab: reply language, length, default mode, "Spoiler protection" (حماية من الحرق), and "Allow the whole book".
   **Expected:** spoiler protection is ON by default. The connection fields work as in section 14.
 - [ ] **PF-05** Privacy tab: the five "What the companion sees" switches, Export, Import, storage used, and the three wipe buttons.
-  **Expected:** "Delete all data" (احذف كل البيانات) needs the word احذف (or delete) typed before it works. Wiping does not touch the API key. After 30 days without an export, a backup reminder shows.
+  **Expected:** "Delete all data" (احذف كل البيانات) needs the word احذف (or delete) typed before it works. By default it removes books, annotations, conversations, and reading settings, but keeps the AI key, idea-map positions/pins, and sound mixes. The checkbox also removes the key, map layout, sound mixes, and every `maktabati:*`/`reader:*` setting. After 30 days without an export, a backup reminder shows.
 - [ ] **PF-06** About tab.
   **Expected:** version, a short description, and the font licenses.
 

@@ -77,6 +77,53 @@ There is no server-side AI proxy in this repository. If you need OpenAI,
 Anthropic, Gemini, or a key that never reaches the browser, you need to add a
 proxy (planned in `apps/api`, not implemented).
 
+## Limits, timeouts, and destructive actions
+
+### Upload and import
+
+- EPUB archives are rejected before extraction when they contain more than
+  **5,000 entries**, an entry larger than **64 MB** after decompression, more
+  than **256 MB total** after decompression, or a compression ratio above
+  **100:1** for an entry larger than 1 MB.
+- Pasted text is capped at **2,000,000 characters**. Files are capped at
+  **250 MB**.
+- On a device reporting **4 GB of memory or less**, a file larger than **25 MB**
+  asks for confirmation before it is processed.
+- Library import is atomic: validation, duplicate detection, and figure decoding
+  happen before one IndexedDB transaction. A bad file changes nothing.
+  Duplicate ids/content hashes are skipped. Unknown export versions are rejected;
+  files without a version are treated as version 1.
+- The JSON parse and `validateLibrary` check run in the ingest Worker when it is
+  available; a failed worker falls back to the main thread.
+
+### AI requests
+
+- First-byte timeout: **90 seconds** by default, editable in
+  **Profile → AI → Advanced options** (5–300 seconds).
+- Stream-idle timeout: **20 seconds** without a new chunk.
+- The Stop button, closing the chat, and deleting the conversation all abort the
+  same request.
+- Transient **429/500/502/503/504** responses are retried up to **2 times**
+  (3 attempts total) with 500 ms / 1 s backoff, honouring `Retry-After` up to 15
+  seconds. Retries stop once stream content has been shown.
+- Default response cap: **1,200 tokens** for chat and **700** for chapter cards.
+  Default context window: **64,000 tokens**; both are editable.
+- Before sending, the app estimates the request and trims in this order: oldest
+  history, then the library map/context sections, then the chapter text around
+  the current reading position or selection. It does not send a request it knows
+  will exceed the window.
+- Empty API keys are allowed only for `localhost`/`127.0.0.1` (for example
+  Ollama). The `Authorization` header is omitted when the key is empty. A key is
+  never sent to a non-HTTPS base URL unless it is localhost.
+
+### Deleting
+
+- **Delete all data** (without the checkbox) removes books, annotations,
+  conversations, and reading settings. It intentionally leaves the AI key, the
+  idea-map positions/pins, and sound mixes.
+- The checkbox in that dialog also removes the AI key, the idea-map layout, the
+  sound mixes, and every `maktabati:*` / `reader:*` setting.
+
 ## Build
 
 ```bash
@@ -164,6 +211,14 @@ Third-party components and assets are listed in
 - **الخصوصية:** الكتب والتظليلات في IndexedDB على جهازك، والمفتاح في
   `localStorage`. عند السؤال تُرسل المقاطع ذات الصلة إلى مزوّد الذكاء الذي
   اخترته. لا يوجد تتبّع. الصور الخارجية محجوبة وتظهر كروابط أو نص بديل.
+- **الحدود:** EPUB أكبر من 5,000 ملف، أو 64MB للملف الواحد، أو 256MB بعد فك
+  الضغط، أو نسبة ضغط أعلى من 100:1 يُرفض. النص الملصوق حتى 2 مليون حرف،
+  والملفات حتى 250MB، وفوق 25MB على جهاز بذاكرة 4GB أو أقل يظهر تأكيد.
+- **الذكاء:** مهلة أول رد 90 ثانية (قابلة للتعديل)، وسكون البث 20 ثانية.
+  يعيد المحاولة مرتين على 429/500/502/503/504، ويقصّ السياق عند الحاجة. مفتاح
+  فارغ مسموح لـlocalhost فقط، والمفتاح لا يُرسل إلى HTTP غير محلي.
+- **الحذف:** «احذف كل البيانات» الافتراضي يحذف الكتب والتظليلات والمحادثات
+  وإعدادات القراءة، ويُبقي المفتاح والخريطة والأصوات. خيار checkbox يحذفها كلها.
 - **البناء:** `npm run build` ينتج `dist/web` و`dist/single`؛ نسخة الملف
   الواحد تعمل بلا سيرفر لكن أصواتها الطبيعية غير مضمّنة.
 - **الترخيص:** AGPL-3.0-only، مع إشعارات الطرف الثالث في
