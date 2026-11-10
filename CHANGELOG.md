@@ -24,7 +24,10 @@ All notable changes are recorded here. This project follows
 
 ### Fixed
 
-- N/A in this entry; see 0.1.0 for the import, storage, AI, and UI fixes.
+- PDF import no longer leaves a space before Arabic combining marks, so shadda
+  and vowel marks stay attached to their letter, and joined paragraph text is
+  NFC-normalized. Existing imported PDFs keep their old text; re-import the PDF
+  to get the repaired text.
 
 ## [0.1.0] - 2026-11-10
 

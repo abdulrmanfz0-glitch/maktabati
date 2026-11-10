@@ -6,6 +6,7 @@ notes.
 | File | Purpose |
 |---|---|
 | [`performance.md`](performance.md) | UI benchmark harness, before/after numbers, caveats |
+| [`ingest-audit.md`](ingest-audit.md) | Read-only ingest audit with fixture evidence and open findings |
 | [`first-issues.md`](first-issues.md) | Small scoped tasks for new contributors |
 | [`backlog.md`](backlog.md) | Deferred ideas and known follow-ups |
 | [`ingest-design.md`](ingest-design.md) | PDF/EPUB ingest architecture |

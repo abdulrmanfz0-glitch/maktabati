@@ -21,6 +21,13 @@ describe('Arabic search folding', () => {
     expect(s.slice(r.start, r.end)).toContain('بِسْــمِ');
   });
 
+  it('maps a repaired PDF word with a combining mark', () => {
+    const s = 'كلمة لُغة داخل النص';
+    const r = findNormalizedRange(s, 'لغة');
+    expect(r).not.toBe(null);
+    expect(s.slice(r.start, r.end)).toBe('لُغة');
+  });
+
   it('returns null when the query is absent or empty', () => {
     expect(findNormalizedRange('نص', 'غير موجود')).toBe(null);
     expect(findNormalizedRange('نص', '')).toBe(null);

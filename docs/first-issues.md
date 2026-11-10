@@ -104,6 +104,104 @@ maintainer runs PDF/EPUB e2e with local fixtures and what may be committed.
 
 **Done when:** `CONTRIBUTING.md` and `tests/e2e/README.md` agree on the policy.
 
+## From the ingest audit
+
+These are the open findings from [`ingest-audit.md`](ingest-audit.md). The
+critical split-diacritics bug (A-01) is fixed; these remain.
+
+### A-02: unlinked footnote markers
+
+**Area:** ingest / structure · **Size:** M
+
+13 of 288 markers in the mixed book (`5150ac47`) have no linked note; their text
+stays in the body.
+
+**Done when:** a test fixture reproduces the unlinked sequence, or the report
+shows an explicit per-page warning instead of silently leaving notes in body.
+Do not change body text just to raise the link count.
+
+### A-03: mega-chapters and duplicate chapter titles
+
+**Area:** ingest / structure · **Size:** M
+
+One book (`f692654d`) has a **284k-character** chapter; two books have a
+duplicate chapter title.
+
+**Done when:** a 400k-character synthetic book splits at real section headings
+(or is flagged for review), and duplicate titles are disambiguated without
+dropping content.
+
+### A-04: uncaptioned and oversized figures
+
+**Area:** ingest / figures · **Size:** M
+
+49 of 162 figures have no caption; the first has no alt/caption; 7 assets are
+larger than 2000 px on a side.
+
+**Done when:** a figure with an adjacent caption gets it, a missing caption has a
+useful alt fallback, and display/export uses a bounded image size. Add one test
+for each case.
+
+### A-05: EPUB coverage and encoding
+
+**Area:** ingest / EPUB · **Size:** M
+
+No EPUB fixture exists; nested nav/NCX entries are ignored at depth >1; all
+documents are decoded as UTF-8. A real EPUB using **windows-1256** must be
+covered, not just UTF-8.
+
+**Done when:** a small legal EPUB fixture has nested TOC entries, a
+windows-1256 document, an SVG image, and an NCX-only variant; expected order and
+text pass.
+
+### A-06: mixed Arabic/Latin bidi punctuation
+
+**Area:** ingest / bidi · **Size:** M
+
+The mixed book has 124 Arabic/Latin lines and 3.4% of lines still close a
+bracket before opening it.
+
+**Done when:** a focused test covers mixed runs and punctuation, and the existing
+bracket vote does not regress on the all-Arabic fixtures.
+
+### A-07: U+FD3E/U+FD3F ornate parentheses
+
+**Area:** ingest / Arabic · **Size:** S
+
+One fixture leaves 46 ornate-parenthesis code points unnormalized.
+
+**Done when:** these map to ordinary parentheses only where the surrounding text
+is Arabic; a test covers both the ornate pair and a literal symbol use.
+
+### A-08: digit policy
+
+**Area:** ingest / Arabic · **Size:** S
+
+Arabic-Indic and Latin digits coexist in one book; there is no documented policy.
+
+**Done when:** README/ingest-rules state that author digits are preserved by
+default, and a test proves no silent conversion.
+
+### A-09: figure memory and size
+
+**Area:** ingest / performance · **Size:** L
+
+A 43 MB image-heavy PDF peaks at **509 MB** because 162 figures are decoded at
+full resolution. This is a phone-memory risk, not just an export-size issue.
+
+**Done when:** a benchmark compares full-resolution versus bounded figure output
+and the stored/export size drops without changing visible text.
+
+### A-10: corpus diversity
+
+**Area:** ingest / fixtures · **Size:** M
+
+All seven fixtures share one publisher, page size, and fingerprint; there is no
+scanned body or EPUB.
+
+**Done when:** at least three legally distributable files from other publishers
+run through `tools/bench-ingest.mjs` with their fingerprints recorded.
+
 ## How to claim one
 
 Open an issue with the title `first issue: <number and name>` and say which

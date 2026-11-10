@@ -35,6 +35,20 @@ export function mapForms(s) {
 export const stripTatweel = s => s.replace(/ـ/g, '');
 export const stripMarks = s => s.replace(RE_MARKS_G, '');
 
+// Built from RE_MARK so Quranic signs that are not combining (U+06DE ۞,
+// U+06E9 ۩, U+06E5/U+06E6) keep the space before them.
+const RE_SPACE_BEFORE_MARK = new RegExp('[ \\t\\u00A0]+(?=' + RE_MARK.source + ')', 'g');
+
+/**
+ * Repair marks that pdf.js left separated from their base letter.
+ * A combining mark never starts a word, so whitespace before one is always
+ * spurious. Whitespace after a mark is handled at item boundaries in
+ * joinItems, where the item geometry can prove the two touch.
+ */
+export function repairSplitMarks(s) {
+  return String(s).replace(RE_SPACE_BEFORE_MARK, '').normalize('NFC');
+}
+
 /** Match form of a string that may still contain presentation forms (for statistics). */
 const statForm = s => matchForm(mapForms(s));
 
@@ -75,6 +89,7 @@ export function attachMarks(items) {
     while (idx < chars.length && RE_MARK.test(chars[idx])) idx++;
     chars.splice(idx, 0, m.s.trim());
     best.s = chars.join('');
+    best._markJoined = true;
   }
   return rest;
 }
@@ -95,14 +110,23 @@ export function joinItems(items, base, opts = {}) {
     let s = it.markerText ?? it.s;
     if (k > 0) {
       const prev = items[k - 1];
-      let space;
+      let space, gap = Infinity;
       if (!useGap) space = true;
       else {
         const rtlPair = base === 1 && !(it.dirL && prev.dirL);
-        const gap = rtlPair ? prev.x - (it.x + it.w) : it.x - (prev.x + prev.w);
+        gap = rtlPair ? prev.x - (it.x + it.w) : it.x - (prev.x + prev.w);
         space = gap > gapEm * Math.max(it.size, prev.size);
       }
-      if (space && !/\s$/.test(out) && !/^\s/.test(s)) out += ' ';
+      const startsMark = RE_MARK.test(([...s.replace(/^\s+/, '')][0] || ''));
+      const prevEndsMark = RE_MARK.test(([...prev.s.replace(/\s+$/, '')].at(-1) || ''));
+      // A mark belongs to the preceding base letter. Never put a space in
+      // front of one, even when the next item starts with it.
+      if (space && !startsMark && !/\s$/.test(out) && !/^\s/.test(s)) out += ' ';
+      // Only a mark that was a separate pdf.js item and was attached here can
+      // own the leading space of the next item. A mark that is already inside
+      // the previous item's text may be a real word-ending mark; keep its
+      // word space even when the item boxes touch.
+      if (prevEndsMark && prev._markJoined && !space) s = s.replace(/^\s+/, '');
     }
     out += s;
   }
@@ -150,7 +174,7 @@ export function normalizePage(lines, opts = {}) {
     if (on(opts, 'nfkc-forms')) l.text = mapForms(l.text);
     if (on(opts, 'strip-tatweel')) l.text = stripTatweel(l.text);
     if (opts.stripMarks) l.text = stripMarks(l.text);
-    l.text = l.text.replace(/[ \t ]+/g, ' ').trim();
+    l.text = repairSplitMarks(l.text).replace(/[ \t ]+/g, ' ').trim();
   }
   return { lines: out.filter(l => l.text), reversed, stats };
 }
