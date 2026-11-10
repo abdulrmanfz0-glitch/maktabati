@@ -663,25 +663,62 @@ function mapClean(){
   if (M.links && typeof M.links === 'object') Object.keys(M.links).forEach(k => { if (k.split('~').some(x => !mem.annos.has(x))){ delete M.links[k]; n++; } });
   if (n) mapSave(M); return n;
 }
-function dropLinksTo(ids){ let n = 0; for (const a of [...mem.annos.values()]) if (Array.isArray(a.links) && a.links.some(l => ids.has(l))){ a.links = a.links.filter(l => !ids.has(l)); put('annos', a); n++; } return n; }
-function purgeBook(id){
+/* One transaction for a batch of puts/deletes across all three stores. */
+function batchWrite(b = {}){
+  const P = { items:b.putItems || [], annos:b.putAnnos || [], kv:b.putKv || [], delItems:b.delItems || [], delAnnos:b.delAnnos || [], delKv:b.delKv || [] };
+  const apply = () => {
+    P.items.forEach(i => mem.items.set(i.id, i)); P.delItems.forEach(id => mem.items.delete(id));
+    P.annos.forEach(a => mem.annos.set(a.id, a)); P.delAnnos.forEach(id => mem.annos.delete(id));
+    P.kv.forEach(x => mem.kv.set(x.k, x.v)); P.delKv.forEach(k => mem.kv.delete(k));
+  };
+  if (!idb){ apply(); notifyChange(); return Promise.resolve(false); }
+  return new Promise(resolve => {
+    let t;
+    try{ t = idb.transaction(['items','annos','kv'], 'readwrite'); }
+    catch(e){ storeFail(e); return resolve(false); }
+    let done = false;
+    const finish = ok => { if (done) return; done = true; if (ok){ apply(); notifyChange(); } else storeFail(t.error); resolve(ok); };
+    t.oncomplete = () => finish(true); t.onabort = t.onerror = () => finish(false);
+    try{
+      P.delItems.forEach(id => t.objectStore('items').delete(id));
+      P.delAnnos.forEach(id => t.objectStore('annos').delete(id));
+      P.delKv.forEach(k => t.objectStore('kv').delete(k));
+      P.items.forEach(i => t.objectStore('items').put(i));
+      P.annos.forEach(a => t.objectStore('annos').put(a));
+      P.kv.forEach(x => t.objectStore('kv').put(x));
+    }catch(e){ try{ t.abort(); }catch(_){} }
+  });
+}
+async function dropLinksTo(ids){
+  const updates = [];
+  for (const a of [...mem.annos.values()]) if (Array.isArray(a.links) && a.links.some(l => ids.has(l))){ a.links = a.links.filter(l => !ids.has(l)); updates.push(a); }
+  if (updates.length) await batchWrite({ putAnnos:updates });
+  return updates.length;
+}
+async function purgeBook(id){
   const F = bookFootprint(id), ids = new Set(F.annos.map(a => a.id));
-  F.annos.forEach(a => del('annos', a.id)); F.kvKeys.forEach(kvDel);
-  if (F.cardKeys.length){ F.cardKeys.forEach(k => delete F.cards[k]); kv.set('cards', F.cards); }
-  if (mem.items.has(id)) del('items', id);
-  if (ids.size) dropLinksTo(ids);
+  const cards = Object.assign({}, F.cards); F.cardKeys.forEach(k => delete cards[k]);
+  const updates = [];
+  if (ids.size) for (const a of mem.annos.values()) if (!ids.has(a.id) && Array.isArray(a.links) && a.links.some(l => ids.has(l))){ a.links = a.links.filter(l => !ids.has(l)); updates.push(a); }
+  const ok = await batchWrite({
+    delAnnos:[...ids], delKv:F.kvKeys, delItems:[id], putAnnos:updates,
+    putKv:F.cardKeys.length ? [{ k:'cards', v:cards }] : []
+  });
   mapClean();
   const P = prof(); if (P.dismissPrep && P.dismissPrep[id]){ delete P.dismissPrep[id]; profSave(); }
   if (P.tpl && P.tpl.books && P.tpl.books[id]){ delete P.tpl.books[id]; profSave(); }
+  return ok;
 }
 /* one-time sweep for records left behind by deletions in earlier versions */
-function cleanOrphans(){
+async function cleanOrphans(){
   const has = id => mem.items.has(id), n = { annos:0, kv:0, cards:0, links:0, map:0, prefs:0 };
-  [...mem.annos.values()].forEach(a => { if (a.itemId && !has(a.itemId)){ del('annos', a.id); n.annos++; } });
-  [...mem.kv.keys()].forEach(k => { const b = kvBookOf(k); if (b && !has(b)){ kvDel(k); n.kv++; } });
-  const cards = kv.get('cards', {}); Object.keys(cards).forEach(k => { if (!has(k.split('|')[0])){ delete cards[k]; n.cards++; } }); if (n.cards) kv.set('cards', cards);
-  const all = new Set(mem.annos.keys()), dead = new Set(); for (const a of mem.annos.values()) arr(a.links).forEach(l => { if (!all.has(l)) dead.add(l); });
-  if (dead.size) n.links = dropLinksTo(dead);
+  const delAnnos = [], delKv = [], putAnnos = [];
+  for (const a of mem.annos.values()) if (a.itemId && !has(a.itemId)){ delAnnos.push(a.id); n.annos++; }
+  for (const k of mem.kv.keys()){ const b = kvBookOf(k); if (b && !has(b)){ delKv.push(k); n.kv++; } }
+  const cards = Object.assign({}, kv.get('cards', {})); Object.keys(cards).forEach(k => { if (!has(k.split('|')[0])){ delete cards[k]; n.cards++; } });
+  const deadAnnos = new Set(delAnnos), all = new Set([...mem.annos.keys()].filter(id => !deadAnnos.has(id)));
+  for (const a of mem.annos.values()) if (!deadAnnos.has(a.id) && arr(a.links).some(l => !all.has(l))){ a.links = a.links.filter(l => all.has(l)); putAnnos.push(a); n.links++; }
+  await batchWrite({ delAnnos, delKv, putAnnos, putKv:n.cards ? [{ k:'cards', v:cards }] : [] });
   n.map = mapClean();
   const P = prof(); Object.keys(P.dismissPrep || {}).forEach(k => { if (!has(k)){ delete P.dismissPrep[k]; n.prefs++; } }); Object.keys((P.tpl && P.tpl.books) || {}).forEach(k => { if (!has(k)){ delete P.tpl.books[k]; n.prefs++; } }); if (n.prefs) profSave();
   return n;
@@ -694,11 +731,11 @@ async function exportBook(it){
   const a = document.createElement('a'); a.href = url; a.download = 'maktabati-book-' + dayKey(Date.now()) + '.json'; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 2000); toast(tx('صدّرت الكتاب'));
 }
-function doDelete(it){
+async function doDelete(it){
   if (CH && CH.conv && CH.conv.bookId === it.id) closeChat();
-  purgeBook(it.id); updateDue(); drawSide();
+  const ok = await purgeBook(it.id); updateDue(); drawSide();
   if (location.hash === '#/lib') refreshView(); else location.hash = '#/lib';
-  toast('انحذف من المكتبة');
+  toast(ok ? 'انحذف من المكتبة' : 'ما قدرنا نحذف الكتاب من التخزين');
 }
 function confirmDelete(it){
   const F = bookFootprint(it.id), hl = F.annos.filter(a => a.kind === 'hl').length, q = F.annos.filter(a => a.kind === 'quote').length;
@@ -967,7 +1004,7 @@ function setStatus(it, cid, s){
 function schedule(ids){
   const cards = kv.get('cards', {}); let ch = false;
   ids.forEach(id => { if (id && !cards[id]){ cards[id] = { stage:0, due:Date.now() + DAY }; ch = true; } });
-  if (ch) kv.set('cards', cards);
+  return ch ? kv.set('cards', cards) : Promise.resolve(true);
 }
 let io = null;
 function observe(it){
@@ -1043,7 +1080,7 @@ async function selAction(kind){
   if (HK[kind]){
     const a = { id:uid(), kind:'hl', hk:kind, itemId:it.id, bk:S.bk, text:S.quote, note:'', links:[], t:Date.now() };
     await put('annos', a); markHl(a); drawerNav(it);
-    if (kind === 'imp'){ schedule([hlKey(a)]); updateDue(); }
+    if (kind === 'imp'){ await schedule([hlKey(a)]); updateDue(); }
     toast(kind === 'imp' ? 'ظلّلتها «مهم»، وبترجع لك في المراجعة' : 'ظلّلتها «' + HK[kind].l + '»');
   }
   if (kind === 'term') termModal({ ar:S.quote }, it, S.bk);
@@ -1102,7 +1139,7 @@ function hlSheet(id){
     }
     if (act === 'link') linkPicker(a);
     if (act === 'quote') quoteModal(a, it);
-    if (act === 'del'){ await del('annos', a.id); dropCard(hlKey(a)); updateDue(); if (RD) drawerNav(RD.it); for (const x of annosOf('hl')) if (arr(x.links).includes(a.id)){ x.links = x.links.filter(l => l !== a.id); await put('annos', x); } $$('mark.hl[data-anno="' + a.id + '"]').forEach(m => m.replaceWith(...m.childNodes)); closeSheet(); toast('شلت التظليل'); }
+    if (act === 'del'){ await del('annos', a.id); await dropCard(hlKey(a)); updateDue(); if (RD) drawerNav(RD.it); for (const x of annosOf('hl')) if (arr(x.links).includes(a.id)){ x.links = x.links.filter(l => l !== a.id); await put('annos', x); } $$('mark.hl[data-anno="' + a.id + '"]').forEach(m => m.replaceWith(...m.childNodes)); closeSheet(); toast('شلت التظليل'); }
   };
 }
 function linkPicker(a){
@@ -2030,21 +2067,20 @@ async function importLib(f){
 }
 
 /* ---------- seed ---------- */
-function seed(){
+async function seed(){
   const now = Date.now();
   const book = Object.assign({}, DEMO_BOOK, { createdAt:now - 3 * DAY, progress:0 });
   const ex = mdToItem(DEMO_MD.join('\n'), 'explainer', ''); ex.id = 'demo-forgetting'; ex.createdAt = now - DAY;
-  put('items', book); put('items', ex);
-  [
+  const annos = [
     { id:'a-seed1', kind:'hl', itemId:book.id, bk:'0-1-1', text:'وهو أثمن ما يصل إلى الدماغ', note:'', links:[], t:now },
     { id:'a-seed2', kind:'hl', itemId:ex.id, bk:'0-2-0', text:'وهذا التعب هو ما يثبّتها', note:'نفس فكرة خطأ التنبّؤ: الجهد والمفاجأة يثبّتان المعلومة.', links:['a-seed1'], t:now },
     { id:'a-seed3', kind:'hl', itemId:book.id, bk:'0-2-1', text:'خبرة العمر كلّه تقول إنّ الوجوه بارزة', note:'', links:[], t:now },
     { id:'a-seed4', kind:'hl', itemId:ex.id, bk:'0-0-0', text:'ننسى أغلب ما تعلّمناه في الأيام الأولى', note:'', links:[], t:now },
     { id:'a-seed5', kind:'term', itemId:ex.id, bk:'0-2-0', ar:'خطأ التنبّؤ', en:'Prediction error', def:'الفرق بين ما توقّعناه وما حدث فعلًا.', t:now },
     { id:'a-seed6', kind:'term', itemId:ex.id, bk:'0-1-0', ar:'التكرار المتباعد', en:'Spaced repetition', def:'مراجعة على فترات تطول تدريجيًّا: يوم، ثم أسبوع، ثم شهر.', t:now }
-  ].forEach(a => put('annos', a));
+  ];
   const cards = {}; [0, 1, 2].forEach(si => cards[book.id + '|0|r' + si] = { stage:0, due:now - 1000 });
-  kv.set('cards', cards); kv.set('seeded', true);
+  await batchWrite({ putItems:[book, ex], putAnnos:annos, putKv:[{ k:'cards', v:cards }, { k:'seeded', v:true }] });
 }
 
 /* ---------- highlight kinds ---------- */
@@ -2052,12 +2088,12 @@ const HK = { imp:{ l:'مهم', sw:'#D6A659' }, unc:{ l:'ما فهمت', sw:'#6F9
 const HKS = ['imp', 'unc', 'q'];
 const hkOf = a => HK[a.hk] ? a.hk : 'imp';
 const hlKey = a => a.itemId + '|h|' + a.id;
-function dropCard(id){ const cards = kv.get('cards', {}); if (cards[id]){ delete cards[id]; kv.set('cards', cards); } }
+function dropCard(id){ const cards = kv.get('cards', {}); if (!cards[id]) return Promise.resolve(true); delete cards[id]; return kv.set('cards', cards); }
 const hkSeg = a => '<div class="seg" style="margin:0 0 .75rem">' + HKS.map(k => '<button data-hk="' + k + '" aria-pressed="' + (hkOf(a) === k) + '"><i class="sw" style="background:' + HK[k].sw + '"></i>' + HK[k].l + '</button>').join('') + '</div>';
 async function setHk(a, k){
   a.hk = k; await put('annos', a);
   $$('mark.hl[data-anno="' + a.id + '"]').forEach(m => m.dataset.hk = k);
-  if (k === 'imp') schedule([hlKey(a)]); else dropCard(hlKey(a));
+  if (k === 'imp') await schedule([hlKey(a)]); else await dropCard(hlKey(a));
   updateDue();
 }
 const bkPos = bk => { let m = /^i-(\d+)$/.exec(bk); if (m) return [-1, 0, +m[1]]; m = /^(\d+)-(\d+)-(\d+)$/.exec(bk); return m ? [+m[1], +m[2], +m[3]] : [1e4, 0, 0]; };
@@ -4314,9 +4350,9 @@ async function init(){
   }
   storageDown = !dbOpened || !loaded;
   if (storageDown) storageNotice('unavailable');
-  if (loaded && !mem.items.size && !kv.get('seeded', false)) seed();
-  if (!kv.get('hlCardsV1', false)){ schedule(annosOf('hl').filter(a => hkOf(a) === 'imp').map(hlKey)); kv.set('hlCardsV1', true); }
-  if (idb && mem.items.size && !kv.get('orphansV1', false)){ const on = cleanOrphans(); kv.set('orphansV1', { t:Date.now(), n:on }); console.info('[maktabati] orphan sweep', JSON.stringify(on)); }
+  if (loaded && !mem.items.size && !kv.get('seeded', false)) await seed();
+  if (!kv.get('hlCardsV1', false)){ await schedule(annosOf('hl').filter(a => hkOf(a) === 'imp').map(hlKey)); await kv.set('hlCardsV1', true); }
+  if (idb && mem.items.size && !kv.get('orphansV1', false)){ const on = await cleanOrphans(); await kv.set('orphansV1', { t:Date.now(), n:on }); console.info('[maktabati] orphan sweep', JSON.stringify(on)); }
 
   applyLang(); initSide(); initCover(); drawChip(); initSnd(); rtInit();
   applyTheme(document.documentElement.dataset.theme || 'light');
