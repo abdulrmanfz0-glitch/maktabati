@@ -35,6 +35,16 @@ export function mapForms(s) {
 export const stripTatweel = s => s.replace(/ـ/g, '');
 export const stripMarks = s => s.replace(RE_MARKS_G, '');
 
+/**
+ * Repair marks that pdf.js left separated from their base letter.
+ * A combining mark never starts a word, so whitespace before one is always
+ * spurious. Whitespace after a mark is handled at item boundaries in
+ * joinItems, where the item geometry can prove the two touch.
+ */
+export function repairSplitMarks(s) {
+  return String(s).replace(/[ \t\u00A0]+(?=[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED])/g, '').normalize('NFC');
+}
+
 /** Match form of a string that may still contain presentation forms (for statistics). */
 const statForm = s => matchForm(mapForms(s));
 
@@ -95,14 +105,22 @@ export function joinItems(items, base, opts = {}) {
     let s = it.markerText ?? it.s;
     if (k > 0) {
       const prev = items[k - 1];
-      let space;
+      let space, gap = Infinity;
       if (!useGap) space = true;
       else {
         const rtlPair = base === 1 && !(it.dirL && prev.dirL);
-        const gap = rtlPair ? prev.x - (it.x + it.w) : it.x - (prev.x + prev.w);
+        gap = rtlPair ? prev.x - (it.x + it.w) : it.x - (prev.x + prev.w);
         space = gap > gapEm * Math.max(it.size, prev.size);
       }
-      if (space && !/\s$/.test(out) && !/^\s/.test(s)) out += ' ';
+      const startsMark = RE_MARK.test(([...s.replace(/^\s+/, '')][0] || ''));
+      const prevEndsMark = RE_MARK.test(([...prev.s.replace(/\s+$/, '')].at(-1) || ''));
+      // A mark belongs to the preceding base letter. Never put a space in
+      // front of one, even when the next item starts with it.
+      if (space && !startsMark && !/\s$/.test(out) && !/^\s/.test(s)) out += ' ';
+      // When the mark ends the previous item and the items touch, pdf.js
+      // sometimes puts the following letter in an item that starts with a
+      // space. Drop only that synthetic space; a word-sized gap is kept.
+      if (prevEndsMark && !space) s = s.replace(/^\s+/, '');
     }
     out += s;
   }
@@ -150,7 +168,7 @@ export function normalizePage(lines, opts = {}) {
     if (on(opts, 'nfkc-forms')) l.text = mapForms(l.text);
     if (on(opts, 'strip-tatweel')) l.text = stripTatweel(l.text);
     if (opts.stripMarks) l.text = stripMarks(l.text);
-    l.text = l.text.replace(/[ \t ]+/g, ' ').trim();
+    l.text = repairSplitMarks(l.text).replace(/[ \t ]+/g, ' ').trim();
   }
   return { lines: out.filter(l => l.text), reversed, stats };
 }

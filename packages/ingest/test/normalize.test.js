@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mapForms, stripTatweel, stripControls, attachMarks, joinItems, normalizePage, reversalStats, MARK_OPEN, MARK_CLOSE, toAsciiDigits } from '../src/stages/normalize.js';
+import { mapForms, stripTatweel, stripControls, attachMarks, joinItems, normalizePage, reversalStats, repairSplitMarks, MARK_OPEN, MARK_CLOSE, toAsciiDigits } from '../src/stages/normalize.js';
 import { RE_PRES } from '../src/text.js';
 
 const U = (...cps) => String.fromCodePoint(...cps);
@@ -67,6 +67,42 @@ describe('joinItems', () => {
   it('rule off: always joins with a space', () => {
     const items = [it1('الك', 120, 20), it1('تا', 105, 20)];
     expect(joinItems(items, 1, { rules: { 'gap-space': false } })).toBe('الك تا');
+  });
+});
+
+describe('split Arabic diacritics from pdf.js', () => {
+  it('repairs a space before a combining mark in one item', () => {
+    const out = normalizePage([line([it1('ل ُغة', 50, 80)])], {});
+    expect(out.lines[0].text).toBe('لُغة');
+  });
+
+  it('repairs the five reported examples without touching real spaces', () => {
+    const cases = [
+      [[it1('ل', 160, 20), it1('ُ', 176, 4), it1('غة', 120, 40)], 'لُغة'],
+      [[it1('تترس', 160, 40), it1('ّ', 162, 4), it1('خ', 115, 45)], 'تترسّخ'],
+      [[it1('حس', 160, 40), it1('ّ', 162, 4), it1('اسة', 115, 45)], 'حسّاسة'],
+      [[it1('نتبن', 160, 40), it1('ّ', 162, 4), it1('اها', 115, 45)], 'نتبنّاها']
+    ];
+    for (const [items, after] of cases) {
+      const out = normalizePage([line(items)], {});
+      expect(out.lines[0].text).toBe(after);
+    }
+    // The fifth example has the shadda at the end of the first item and a
+    // leading space in the next item; only a touching gap may lose that space.
+    const joined = normalizePage([line([it1('يجدّ', 200, 30), it1(' فان', 170, 30)])], {});
+    expect(joined.lines[0].text).toBe('يجدّفان');
+  });
+
+  it('keeps a normal sentence with real word spaces unchanged', () => {
+    const s = 'هذا كتابٌ جديدٌ على الطاولة.';
+    const out = normalizePage([line([it1(s, 50, 220)])], {});
+    expect(out.lines[0].text).toBe(s);
+  });
+
+  it('applies NFC to the repaired text', () => {
+    const out = repairSplitMarks('ل ُغة');
+    expect(out).toBe('لُغة');
+    expect(out.normalize('NFC')).toBe(out);
   });
 });
 

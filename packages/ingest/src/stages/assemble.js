@@ -3,7 +3,7 @@
 // ids linked from [^id] markers, and figures with captions.
 import { on } from '../rules.js';
 import { makeBook, makeChapter, makeSection, finalizeBook } from '../model.js';
-import { MARK_OPEN, MARK_CLOSE } from './normalize.js';
+import { MARK_OPEN, MARK_CLOSE, repairSplitMarks } from './normalize.js';
 
 const RE_MARK_G = new RegExp(MARK_OPEN + '(\\d+)' + MARK_CLOSE, 'g');
 const RE_CAPTION = /^(شكل|الشكل|صورة|جدول|خريطة|رسم|figure|fig\.|table|plate)\b/i;
@@ -54,11 +54,11 @@ export function assemble(pages, stats, chapters, groups, ctx = {}, opts = {}) {
   const closePara = () => {
     if (!para) return;
     if (para.verse) {
-      para.text = para.text.split('  \n').map(x => x.replace(/\s+/g, ' ').trim()).filter(Boolean).join('  \n');
+      para.text = para.text.split('  \n').map(x => repairSplitMarks(x.replace(/\s+/g, ' ')).trim()).filter(Boolean).join('  \n');
       delete para.verse; m.verse++;
       para = null; return;
     }
-    para.text = para.text.replace(/\s+/g, ' ').trim();
+    para.text = repairSplitMarks(para.text.replace(/\s+/g, ' ')).trim();
     if (para.text) {
       m.paragraphs++;
       if (TERMINAL.test(para.text)) m.terminal++;
