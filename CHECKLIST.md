@@ -400,7 +400,7 @@ PDF and EPUB files are converted by the ingest engine (`packages/ingest`) in a W
   - Top-level fields `app:"maktabati"`, `v:1`, `exported`, `items`, `annos`, and `kv`.
   - Search the file for your API key. It must **not** be there.
 - [ ] **IMP-01 [SMOKE]** Click "Import library" and pick an export file.
-  **Expected:** the toast "Imported N items" (استوردت N عنصر), and the library re-renders. Records with the same id are overwritten. Nothing is deleted.
+  **Expected:** the toast "Imported N items" (استوردت N عنصر), and the library re-renders. Duplicate ids or content hashes are skipped and counted. Nothing is overwritten or deleted.
 - [ ] **IMP-02** Import a single-item JSON file (like `fixture.json` in section 8), from Profile → Privacy or through Upload (UP-08).
   **Expected:** the toast says it was added (انضاف «Fixture»).
 - [ ] **IMP-03** Import a JSON file with neither `items` nor `chapters`.

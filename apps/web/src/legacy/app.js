@@ -1,5 +1,6 @@
 import { DEMO_BOOK, DEMO_MD } from './demo-data.js';
 import { runIngest } from '../ingest/client.js';
+import { EXPORT_VERSION, planLibraryImport, validateItem } from '../core/library.js';
 
 (function(){
 'use strict';
@@ -99,6 +100,28 @@ function storeFail(e){
 }
 function del(n, id){ mem[n].delete(id); if (idb) try{ idb.transaction(n, 'readwrite').objectStore(n).delete(id); }catch(e){} }
 const kv = { get:(k, d) => mem.kv.has(k) ? mem.kv.get(k) : d, set:(k, v) => put('kv', { k, v }) };
+/* Import writes all three stores in one transaction. Memory is updated only after commit. */
+function idbWriteImport(writes){
+  return new Promise(resolve => {
+    const applyMem = () => {
+      writes.items.forEach(i => mem.items.set(i.id, i));
+      writes.annos.forEach(a => mem.annos.set(a.id, a));
+      writes.kv.forEach(x => mem.kv.set(x.k, x.v));
+    };
+    if (!idb){ applyMem(); resolve({ ok:true, memory:true }); return; }
+    let t;
+    try{ t = idb.transaction(['items','annos','kv'], 'readwrite'); }
+    catch(e){ resolve({ ok:false, error:e }); return; }
+    let settled = false;
+    t.oncomplete = () => { if (settled) return; settled = true; applyMem(); resolve({ ok:true }); };
+    t.onabort = t.onerror = () => { if (settled) return; settled = true; resolve({ ok:false, error:t.error || new Error('aborted') }); };
+    try{
+      writes.items.forEach(i => t.objectStore('items').put(i));
+      writes.annos.forEach(a => t.objectStore('annos').put(a));
+      writes.kv.forEach(x => t.objectStore('kv').put(x));
+    }catch(e){ try{ t.abort(); }catch(_){} }
+  });
+}
 /* profile: ONE localStorage key for all new preferences (never exported) */
 const PK = 'maktabati:profile';
 const PDEF = { name:'', color:0, read:{}, ai:{ lang:'mirror', len:'normal', mode:'', spoiler:true, full:false, mem:{ status:true, hl:true, notes:true, quotes:true, gloss:true } }, lastExport:0, lib:{ sort:'read', type:'all', view:'grid' }, dismissPrep:{} };
@@ -502,7 +525,7 @@ function readyCard(it){
 }
 function renderBook(it){
   document.title = it.title + ' · مكتبتي'; $('#pageTitle').textContent = it.title;
-  const chs = arr(it.chapters), n = chs.length, ci = curChap(it), st = kv.get(it.id + ':status', {}), started = (it.progress || 0) > .01 || ci >= 0;
+  const chs = arr(it.chapters).filter(c => c && typeof c === 'object'), n = chs.length, ci = curChap(it), st = kv.get(it.id + ':status', {}), started = (it.progress || 0) > .01 || ci >= 0;
   const R = '#/read/' + enc(it.id), due = dueCards().filter(c => c.it.id === it.id).length;
   const cnt = [[annosOf('hl', it.id).length, 'تظليلات'], [noteCount(it), 'ملاحظات'], [annosOf('quote', it.id).length, 'اقتباسات'], [due, 'مراجعات مستحقة']];
   const go = started ? 'أكمل القراءة' + (n > 1 ? ' · الفصل ' + (Math.max(0, ci) + 1) : '') : 'ابدأ القراءة';
@@ -514,8 +537,9 @@ function renderBook(it){
     '<div class="bp-act"><button class="pbtn" data-href="' + R + '">' + go + '</button><button class="gbtn" data-bpa="chat">ناقش</button><button class="gbtn" data-bpa="snd"' + (snd ? '' : ' disabled title="يتوفر مع ميزة الأصوات"') + '>أصوات</button><button class="gbtn" data-bpa="more" aria-label="المزيد" style="min-width:44px; padding:0">' + svg('dots') + '</button></div>' +
     ingWarn(it) +
     '<div class="stats">' + cnt.map(c => '<div class="stat"><b>' + c[0] + '</b><span>' + c[1] + '</span></div>').join('') + '</div>' +
-    (n > 1 ? '<h2 class="bp-h2">الفصول</h2><div>' + chs.map((c, i) => { const s = st['c' + i] || 'none', b = BK_ST[s]; return '<button class="bp-ch" data-href="' + R + '/c' + i + '"><span class="n">' + (i + 1) + '</span><span class="t" dir="auto">' + md(c.title || '') + (c.title ? '' : 'الفصل ' + (i + 1)) + '</span><span class="r"><span class="bp-st" data-s="' + s + '"><i aria-hidden="true" style="font-style:normal">' + b[1] + '</i>' + b[0] + '</span>' + (c.minutes ? '<span>' + esc(c.minutes) + ' دقيقة</span>' : '') + '</span></button>'; }).join('') + '</div>' : '') +
-    readyCard(it) + '</div></div></div>';
+    (!n ? '<p class="empty" style="margin:1.25rem 0 0">هذا الكتاب ما فيه فصول محفوظة. جرّب استيراده مرة ثانية أو احذفه من المكتبة.</p>' : '') +
+    (n > 1 ? '<h2 class="bp-h2">الفصول</h2><div>' + chs.map((c, i) => { const raw = st['c' + i] || 'none', s = BK_ST[raw] ? raw : 'none', b = BK_ST[s]; return '<button class="bp-ch" data-href="' + R + '/c' + i + '"><span class="n">' + (i + 1) + '</span><span class="t" dir="auto">' + md(c.title || '') + (c.title ? '' : 'الفصل ' + (i + 1)) + '</span><span class="r"><span class="bp-st" data-s="' + s + '"><i aria-hidden="true" style="font-style:normal">' + b[1] + '</i>' + b[0] + '</span>' + (c.minutes ? '<span>' + esc(c.minutes) + ' دقيقة</span>' : '') + '</span></button>'; }).join('') + '</div>' : '') +
+    (n ? readyCard(it) : '') + '</div></div></div>';
   $('#v-book').onclick = e => {
     const b = e.target.closest('[data-bpa]'); if (!b) return; const a = b.dataset.bpa;
     if (a === 'chat') location.hash = '#/bchat/' + enc(it.id);
@@ -592,7 +616,7 @@ function cleanOrphans(){
 async function exportBook(it){
   const F = bookFootprint(it.id), cards = {}; F.cardKeys.forEach(k => cards[k] = F.cards[k]);
   const kvs = await kvForExport(F.kvKeys.map(k => ({ k, v:mem.kv.get(k) }))); if (F.cardKeys.length) kvs.push({ k:'cards', v:cards });
-  const data = { app:'maktabati', v:1, exported:new Date().toISOString(), items:[it], annos:F.annos, kv:kvs };
+  const data = { app:'maktabati', v:EXPORT_VERSION, exported:new Date().toISOString(), items:[it], annos:F.annos, kv:kvs };
   const url = URL.createObjectURL(new Blob([JSON.stringify(data)], { type:'application/json' }));
   const a = document.createElement('a'); a.href = url; a.download = 'maktabati-book-' + dayKey(Date.now()) + '.json'; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 2000); toast(tx('صدّرت الكتاب'));
@@ -694,10 +718,11 @@ function block(b, key, lead){
   return '<div class="' + cls + '" data-bk="' + key + '">' + h + '</div>';
 }
 function stHTML(it, cid){
-  const s = (kv.get(it.id + ':status', {})[cid]) || 'none';
+  const raw = (kv.get(it.id + ':status', {})[cid]) || 'none', s = STATUS[raw] ? raw : 'none';
   return '<span class="st" data-status-for="' + cid + '" data-s="' + s + '"><i aria-hidden="true">' + STATUS[s][1] + '</i>' + STATUS[s][0] + '</span>';
 }
 function chapterHTML(it, c, ci, solo){
+  if (!c) return '';
   const cid = 'c' + ci, F = it.id + ':' + cid + ':', tools = it.type !== 'notes';
   let h = '';
   if (!(solo && !c.title)){
@@ -736,7 +761,8 @@ function coverHTML(it){
     (it.subtitle ? '<p class="sub">' + md(it.subtitle) + '</p>' : '') + (it.author ? '<p class="author">' + md(it.author) + '</p>' : '') +
     (it.originalTitle ? '<p class="orig"><bdi dir="ltr">' + esc(it.originalTitle) + '</bdi></p>' : '') +
     (it.whyRead ? '<p class="why"><b>ليش أقرأه</b>' + md(it.whyRead) + '</p>' : '') +
-    (solo && total ? '<p class="orig" style="margin-top:1.5rem">قراءة تقريبًا ' + total + ' دقيقة</p>' : '') + '</section>';
+    (solo && total ? '<p class="orig" style="margin-top:1.5rem">قراءة تقريبًا ' + total + ' دقيقة</p>' : '') +
+    (!chs.length ? '<p class="empty" style="margin-top:2rem">هذا الكتاب ما فيه فصول محفوظة. جرّب استيراده مرة ثانية أو احذفه من المكتبة.</p>' : '') + '</section>';
 }
 function introHTML(it){
   if (!it.intro) return '';
@@ -859,7 +885,8 @@ function bindFields(it){
 }
 function setStatus(it, cid, s){
   const all = kv.get(it.id + ':status', {});
-  if (s){ all[cid] = s; kv.set(it.id + ':status', all); } else s = all[cid] || 'none';
+  if (s){ if (!STATUS[s]) s = 'none'; all[cid] = s; kv.set(it.id + ':status', all); } else s = all[cid] || 'none';
+  if (!STATUS[s]) s = 'none';
   $$('[data-status-for="' + cid + '"]').forEach(el => { el.dataset.s = s; el.innerHTML = '<i aria-hidden="true">' + STATUS[s][1] + '</i>' + STATUS[s][0]; });
   $$('[data-done="' + cid + '"]').forEach(b => { const d = s === 'done'; b.setAttribute('aria-pressed', d); b.innerHTML = d ? svg('check', ' width="18" height="18"') + 'خلّصت هالفصل' : 'علّم الفصل: خلّصته'; });
 }
@@ -1890,36 +1917,42 @@ if (import.meta.env.DEV) window.__mapRender = renderMap;
 
 /* ---------- add / import / export ---------- */
 async function exportLib(){
-  const data = { app:'maktabati', v:1, exported:new Date().toISOString(), items:allItems(), annos:[...mem.annos.values()], kv:await kvForExport([...mem.kv.entries()].map(([k, v]) => ({ k, v }))) };
+  const data = { app:'maktabati', v:EXPORT_VERSION, exported:new Date().toISOString(), items:allItems(), annos:[...mem.annos.values()], kv:await kvForExport([...mem.kv.entries()].map(([k, v]) => ({ k, v }))) };
   const url = URL.createObjectURL(new Blob([JSON.stringify(data)], { type:'application/json' }));
   const a = document.createElement('a'); a.href = url; a.download = 'maktabati-' + dayKey(Date.now()) + '.json'; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 2000); toast('صدّرت المكتبة'); prof().lastExport = Date.now(); profSave(); if (cur.view === 'profile') renderProfile(cur.tab);
+}
+function reportImportErrors(errors){
+  const list = arr(errors).slice(0, 12);
+  openModal('<div class="mhead"><h3>ما تغيّر شي</h3>' + closeBtn + '</div>' +
+    '<p style="margin:0 0 .6rem; line-height:1.75">الملف فيه بيانات غير صالحة، فما انحفظ أي شي.</p>' +
+    '<ul style="margin:0 0 .8rem; padding-inline-start:1.2em; line-height:1.8">' + list.map(e => '<li>' + esc(e) + '</li>').join('') + '</ul>' +
+    (errors.length > list.length ? '<p class="hint">وفيه ' + (errors.length - list.length) + ' خطأ آخر.</p>' : '') +
+    '<div class="sh-actions"><button class="pbtn" data-close>حسنًا</button></div>');
 }
 async function importLib(f){
   if (!f) return;
   if (f.size > 250e6){ toast(tx('الملف كبير جدًا. ما تغيّر شي.')); return; } /* exports carry figures as data: URLs, so a library with images can be large */
   let d;
   try{ d = JSON.parse(await f.text()); }catch(e){ toast('ما قدرت أقرأ الملف'); return; }
-  const isObj = o => o && typeof o === 'object' && !Array.isArray(o), okId = s => typeof s === 'string' && s.length > 0 && s.length < 200;
-  const okItem = it => isObj(it) && okId(it.id) && (it.chapters == null || Array.isArray(it.chapters)) && (it.title == null || typeof it.title === 'string');
   if (d && Array.isArray(d.items)){
-    /* validate everything first; a bad record rejects the whole file and nothing changes */
-    const A = arr(d.annos), K = arr(d.kv);
-    if (!d.items.every(okItem) || !A.every(a => isObj(a) && okId(a.id) && (a.itemId == null || typeof a.itemId === 'string')) || !K.every(x => isObj(x) && typeof x.k === 'string' && x.k)){ toast(tx('ما تغيّر شي: الملف فيه بيانات غير صالحة.')); return; }
-    /* additive: existing records are never overwritten */
-    let n = 0;
-    d.items.forEach(it => { if (!mem.items.has(it.id)){ put('items', it); n++; } });
-    A.forEach(a => { if (!mem.annos.has(a.id)) put('annos', a); });
-    K.forEach(x => {
-      if (x.k === 'cards' && isObj(x.v)){ const c = kv.get('cards', {}); Object.keys(x.v).forEach(k => { if (!c[k]) c[k] = x.v[k]; }); kv.set('cards', c); }
-      else if (/^chat:/.test(x.k) && Array.isArray(x.v)){ const cur0 = arr(kv.get(x.k, [])), ids = new Set(cur0.map(c => c && c.id)); kv.set(x.k, cur0.concat(x.v.filter(c => isObj(c) && okId(c.id) && !ids.has(c.id))).slice(-30)); }
-      else if (/^fig:/.test(x.k) && typeof x.v === 'string'){ const b = !mem.kv.has(x.k) && dataURLToBlob(x.v); if (b) put('kv', { k:x.k, v:b }); }
-      else if (!mem.kv.has(x.k)) put('kv', x);
-    });
-    toast('استوردت ' + n + ' عنصر'); refreshView(); updateDue();
-  } else if (okItem(d) && Array.isArray(d.chapters)){
-    const it = Object.assign({ type:'book', progress:0 }, d, { id:d.id && !mem.items.has(d.id) ? d.id : uid(), createdAt:Date.now() }); put('items', it); toast('انضاف «' + it.title + '»'); refreshView();
-  } else toast('الملف مو بالشكل المتوقّع');
+    const existing = { items:allItems(), annos:[...mem.annos.values()], kv:new Map(mem.kv) };
+    const plan = planLibraryImport(d, existing, dataURLToBlob);
+    if (!plan.ok){ reportImportErrors(plan.errors); return; }
+    const res = await idbWriteImport(plan.writes);
+    if (!res.ok){ storeFail(res.error); toast('ما تغيّر شي: ما قدرنا نحفظ الاستيراد.'); return; }
+    toast('استوردت ' + plan.writes.items.length + ' عنصر' + (plan.skipped ? ' · تخطيت ' + plan.skipped + ' مكرر' : ''));
+    refreshView(); updateDue(); drawSide();
+  } else {
+    const errors = []; validateItem(d, 'الملف', errors);
+    if (errors.length){ reportImportErrors(errors); return; }
+    const dup = (d.id && mem.items.has(d.id)) || (d.hash && allItems().some(i => i.hash === d.hash));
+    if (dup){ toast('هذا العنصر موجود في مكتبتك، فتخطيته.'); return; }
+    const it = Object.assign({ type:'book', progress:0 }, d, { id:d.id || uid(), createdAt:Date.now() });
+    const res = await idbWriteImport({ items:[it], annos:[], kv:[] });
+    if (!res.ok){ storeFail(res.error); toast('ما تغيّر شي: ما قدرنا نحفظ العنصر.'); return; }
+    toast('انضاف «' + short(it.title, 30) + '»'); refreshView(); drawSide();
+  }
 }
 
 /* ---------- seed ---------- */
