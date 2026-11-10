@@ -3,6 +3,7 @@ import { runIngest } from '../ingest/client.js';
 import { EXPORT_VERSION, planLibraryImport, validateItem } from '../core/library.js';
 import { isPasteTooLarge, needsLowMemoryWarning } from '../core/limits.js';
 import { AI_DEFAULTS, basePolicy, keylessAllowed, estimateMessagesTokens, fitRequest, parseSSE, shouldRetry, retryDelayMs, validateCard } from '../core/ai.js';
+import { findNormalizedRange } from '../core/text.js';
 
 (function(){
 'use strict';
@@ -78,29 +79,94 @@ const closeBtn = '<button class="btn" data-close aria-label="إغلاق">' + svg
 
 /* ---------- storage (IndexedDB, with in-memory fallback) ---------- */
 const mem = { items:new Map(), annos:new Map(), kv:new Map() };
-let idb = null;
+let idb = null, storageDown = false, storageChannel = null, lastNotify = 0;
+const STORAGE_NOTICES = new Set();
+const LOCAL_FAILS = new Set();
+function localFail(kind){
+  if (LOCAL_FAILS.has(kind)) return; LOCAL_FAILS.add(kind);
+  const msg = kind === 'map' ? 'ما انحفظت مواضع الخريطة على هالجهاز.' :
+    kind === 'sounds' ? 'ما انحفظت إعدادات الأصوات على هالجهاز.' :
+    kind === 'ai' ? 'ما انحفظت إعدادات الاتصال على هالجهاز.' :
+    'ما انحفظت الإعدادات على هالجهاز.';
+  try{ toast(msg); }catch(e){}
+}
+function storageNotice(kind){
+  if (STORAGE_NOTICES.has(kind)) return; STORAGE_NOTICES.add(kind);
+  const msg = kind === 'version' ? 'تم تحديث قاعدة البيانات من تبويب آخر. أعد تحميل الصفحة قبل ما تكمل.' :
+    kind === 'changed' ? 'تم تعديل المكتبة من تبويب آخر. أعد تحميل الصفحة لتشاهد آخر نسخة.' :
+    'التخزين غير متاح في هذا المتصفح. التغييرات ما راح تنحفظ بعد إغلاق الصفحة.';
+  try{ toast(tx(msg)); }catch(e){}
+}
+function notifyChange(){
+  if (!storageChannel) return;
+  const now = Date.now(); if (now - lastNotify < 800) return; lastNotify = now;
+  try{ storageChannel.postMessage({ type:'changed' }); }catch(e){}
+}
+function initBroadcast(){
+  if (typeof BroadcastChannel === 'undefined') return;
+  try{
+    storageChannel = new BroadcastChannel('maktabati');
+    storageChannel.onmessage = e => {
+      if (!e || !e.data) return;
+      if (e.data.type === 'changed') storageNotice('changed');
+      else if (e.data.type === 'hello') storageChannel.postMessage({ type:'changed' });
+    };
+    storageChannel.postMessage({ type:'hello' });
+  }catch(e){ storageChannel = null; }
+}
 function openDB(){
   return new Promise(res => {
-    const t = setTimeout(() => res(false), 2500);
+    let req = null, settled = false, t = null;
+    const finish = ok => { if (settled) return; settled = true; clearTimeout(t); res(ok); };
+    t = setTimeout(() => {
+      try{ if (req && req.result) req.result.close(); }catch(e){}
+      idb = null; finish(false);
+    }, 2500);
     try{
-      const r = indexedDB.open('maktabati', 1);
-      r.onupgradeneeded = () => { const d = r.result; ['items','annos'].forEach(n => d.objectStoreNames.contains(n) || d.createObjectStore(n, { keyPath:'id' })); d.objectStoreNames.contains('kv') || d.createObjectStore('kv', { keyPath:'k' }); };
-      r.onsuccess = () => { clearTimeout(t); idb = r.result; res(true); };
-      r.onerror = r.onblocked = () => { clearTimeout(t); res(false); };
-    }catch(e){ clearTimeout(t); res(false); }
+      req = indexedDB.open('maktabati', 1);
+      req.onupgradeneeded = () => { const d = req.result; ['items','annos'].forEach(n => d.objectStoreNames.contains(n) || d.createObjectStore(n, { keyPath:'id' })); d.objectStoreNames.contains('kv') || d.createObjectStore('kv', { keyPath:'k' }); };
+      req.onsuccess = () => {
+        if (settled){ try{ req.result.close(); }catch(e){} return; }
+        idb = req.result;
+        idb.onversionchange = () => { try{ idb.close(); }catch(e){} idb = null; storageDown = true; storageNotice('version'); };
+        finish(true);
+      };
+      req.onerror = req.onblocked = () => { idb = null; finish(false); };
+    }catch(e){ idb = null; finish(false); }
   });
 }
-function getAll(n){ return new Promise(res => { try{ const q = idb.transaction(n).objectStore(n).getAll(); q.onsuccess = () => res(q.result || []); q.onerror = () => res([]); }catch(e){ res([]); } }); }
-function put(n, v){
-  if (n === 'kv') mem.kv.set(v.k, v.v); else mem[n].set(v.id, v);
-  if (idb) try{ const t = idb.transaction(n, 'readwrite'); t.onabort = t.onerror = () => storeFail(t.error); t.objectStore(n).put(v); }catch(e){ storeFail(e); }
-}
-let storeWarned = 0;
+function getAll(n){ return new Promise(res => { try{ const q = idb.transaction(n).objectStore(n).getAll(); q.onsuccess = () => res(q.result || []); q.onerror = () => res(null); }catch(e){ res(null); } }); }
 function storeFail(e){
-  if (Date.now() - storeWarned < 15000) return; storeWarned = Date.now();
   toast(tx(e && (e.name === 'QuotaExceededError' || /quota/i.test(e.message || '')) ? 'ما انحفظ: مساحة التخزين ممتلئة. صدّر مكتبتك واحذف ما لا تحتاجه.' : 'ما انحفظ آخر تغيير على هالجهاز.'));
 }
-function del(n, id){ mem[n].delete(id); if (idb) try{ idb.transaction(n, 'readwrite').objectStore(n).delete(id); }catch(e){} }
+function put(n, v){
+  if (n === 'kv') mem.kv.set(v.k, v.v); else mem[n].set(v.id, v);
+  if (!idb) return Promise.resolve(false);
+  return new Promise(resolve => {
+    let done = false, t = null;
+    const finish = val => { if (done) return; done = true; if (val) notifyChange(); else storeFail(t && t.error); resolve(val); };
+    try{
+      t = idb.transaction(n, 'readwrite');
+      t.oncomplete = () => finish(true);
+      t.onabort = t.onerror = () => finish(false);
+      t.objectStore(n).put(v);
+    }catch(e){ finish(false); }
+  });
+}
+function del(n, id){
+  mem[n].delete(id);
+  if (!idb) return Promise.resolve(false);
+  return new Promise(resolve => {
+    let done = false, t = null;
+    const finish = val => { if (done) return; done = true; if (val) notifyChange(); else storeFail(t && t.error); resolve(val); };
+    try{
+      t = idb.transaction(n, 'readwrite');
+      t.oncomplete = () => finish(true);
+      t.onabort = t.onerror = () => finish(false);
+      t.objectStore(n).delete(id);
+    }catch(e){ finish(false); }
+  });
+}
 const kv = { get:(k, d) => mem.kv.has(k) ? mem.kv.get(k) : d, set:(k, v) => put('kv', { k, v }) };
 /* Import writes all three stores in one transaction. Memory is updated only after commit. */
 function idbWriteImport(writes){
@@ -110,12 +176,12 @@ function idbWriteImport(writes){
       writes.annos.forEach(a => mem.annos.set(a.id, a));
       writes.kv.forEach(x => mem.kv.set(x.k, x.v));
     };
-    if (!idb){ applyMem(); resolve({ ok:true, memory:true }); return; }
+    if (!idb){ applyMem(); notifyChange(); resolve({ ok:true, memory:true }); return; }
     let t;
     try{ t = idb.transaction(['items','annos','kv'], 'readwrite'); }
     catch(e){ resolve({ ok:false, error:e }); return; }
     let settled = false;
-    t.oncomplete = () => { if (settled) return; settled = true; applyMem(); resolve({ ok:true }); };
+    t.oncomplete = () => { if (settled) return; settled = true; applyMem(); notifyChange(); resolve({ ok:true }); };
     t.onabort = t.onerror = () => { if (settled) return; settled = true; resolve({ ok:false, error:t.error || new Error('aborted') }); };
     try{
       writes.items.forEach(i => t.objectStore('items').put(i));
@@ -135,9 +201,9 @@ function prof(){
   PROF = Object.assign({}, PDEF, s, { ai:a, read:Object.assign({}, s.read || {}), lib:Object.assign({}, PDEF.lib, s.lib || {}), dismissPrep:Object.assign({}, s.dismissPrep || {}) });
   return PROF;
 }
-function profSave(){ try{ localStorage.setItem(PK, JSON.stringify(prof())); }catch(e){} }
+function profSave(){ try{ localStorage.setItem(PK, JSON.stringify(prof())); }catch(e){ localFail('profile'); } }
 const MEM = () => prof().ai.mem;
-const pref = { get(k, d){ try{ const v = localStorage.getItem('reader:' + k); if (v !== null) return JSON.parse(v); }catch(e){} const r = prof().read[k]; return r == null ? d : r; }, set(k, v){ try{ localStorage.setItem('reader:' + k, JSON.stringify(v)); }catch(e){} } };
+const pref = { get(k, d){ try{ const v = localStorage.getItem('reader:' + k); if (v !== null) return JSON.parse(v); }catch(e){} const r = prof().read[k]; return r == null ? d : r; }, set(k, v){ try{ localStorage.setItem('reader:' + k, JSON.stringify(v)); }catch(e){ localFail('reader'); } } };
 
 const allItems = () => [...mem.items.values()];
 const itemById = id => mem.items.get(id);
@@ -495,7 +561,7 @@ function renderLib(){
       (cont.length ? '<h2 class="shelf-h">أكمل القراءة</h2><div class="cont">' + cont.map(contCard).join('') + '</div>' : '') +
       (rest.length ? '<h2 class="shelf-h">' + (cont.length ? 'باقي المكتبة' : 'المكتبة') + '</h2>' + restH : (cont.length ? '' : '<p class="empty">ما فيه عناصر من هالنوع.</p>'))
       : '<p class="empty">مكتبتك فاضية. اضغط «أضف» والصق نص أو ارفع ملف.</p>') + '</div>' +
-    (idb ? '' : '<p class="quiet" style="margin-top:2.5rem">التخزين غير متاح في هذا المتصفح، فالتغييرات ما تنحفظ بعد الإغلاق. صدّر مكتبتك قبل ما تطلع.</p>') + '</div>';
+    (storageDown ? '<div class="msg" role="alert" style="margin-top:2.5rem"><b>التخزين غير متاح.</b> التغييرات ما راح تنحفظ بعد إغلاق الصفحة. افتح التطبيق في متصفح يسمح بـIndexedDB، أو صدّر مكتبتك قبل ما تطلع.</div>' : '') + '</div>';
   let t; $('#q').addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => doSearch(e.target.value), 180); });
   const sh = $('#shelves');
   sh.onchange = e => { if (e.target.id === 'libSort'){ prof().lib.sort = e.target.value; profSave(); renderLib(); fitSoon($('#v-lib')); } };
@@ -576,12 +642,13 @@ function initCover(){
 /* ---- confirm + delete ---- */
 function confirmBox(o){
   openModal('<div class="mhead"><h3>' + o.title + '</h3>' + closeBtn + '</div><p style="margin:0 0 .5rem; line-height:1.75">' + o.text + '</p>' +
+    (o.extra || '') +
     (o.words ? '<label class="flabel" for="cfW">' + o.wordLabel + '</label><input class="inp" id="cfW" autocomplete="off" dir="auto">' : '') +
     '<div class="sh-actions"><button class="pbtn" id="cfGo"' + (o.words ? ' disabled' : '') + '>' + o.ok + '</button><button class="gbtn" data-close>إلغاء</button></div>');
   if (o.words) $('#cfW').addEventListener('input', e => { $('#cfGo').disabled = !o.words.includes(e.target.value.trim().toLowerCase()); });
-  $('#cfGo').onclick = () => { closeModal(true); o.run(); };
+  $('#cfGo').onclick = () => { const extra = o.read ? o.read() : null; closeModal(true); o.run(extra); };
 }
-const kvDel = k => { mem.kv.delete(k); if (idb) try{ idb.transaction('kv', 'readwrite').objectStore('kv').delete(k); }catch(e){} };
+const kvDel = k => del('kv', k);
 /* everything that belongs to one book: used by delete, single-book export and the orphan sweep */
 const BOOK_KV = [/^fig:([^:]+):/, /^(.+):(?:loc|pos|status|sessions)$/, /^f:([^:]+):/, /^cc:(.+):\d+$/, /^chat:b:(.+)$/, /^chatfull:(.+)$/];
 const kvBookOf = k => { for (const re of BOOK_KV){ const m = re.exec(k); if (m) return m[1]; } return null; };
@@ -661,9 +728,10 @@ function prepBanner(it){
   return '<div class="prep-ban" role="note"><span class="pb-t">يكتب المساعد بطاقة قصيرة لكل فصل عشان يعرف كتابك بدون ما يقرأه كامل مع كل سؤال</span><button class="gbtn ch-sm" data-prep="' + esc(it.id) + '">' + (aiReady() ? 'جهّز الكتاب' : 'اضبط الاتصال أولاً') + '</button><button class="btn" data-prepx="' + esc(it.id) + '" aria-label="إخفاء التلميح">' + svg('close') + '</button></div>';
 }
 function snip(text, nq){
-  const t = stripD(text); const i = norm(t).indexOf(nq); if (i < 0) return esc(short(t, 120));
-  const s = Math.max(0, i - 50), e = Math.min(t.length, i + nq.length + 70);
-  return (s ? '…' : '') + esc(t.slice(s, i)) + '<mark>' + esc(t.slice(i, i + nq.length)) + '</mark>' + esc(t.slice(i + nq.length, e)) + (e < t.length ? '…' : '');
+  const t = String(text || ''), r = findNormalizedRange(t, nq);
+  if (!r) return esc(short(t, 120));
+  const s = Math.max(0, r.start - 50), e = Math.min(t.length, r.end + 70);
+  return (s ? '…' : '') + esc(t.slice(s, r.start)) + '<mark>' + esc(t.slice(r.start, r.end)) + '</mark>' + esc(t.slice(r.end, e)) + (e < t.length ? '…' : '');
 }
 function doSearch(q){
   const res = $('#results'), sh = $('#shelves'); const nq = norm(q.trim());
@@ -761,7 +829,7 @@ function chapterHTML(it, c, ci, solo){
   return h + '</div>';
 }
 function coverHTML(it){
-  const c = colorOf(it.id), chs = arr(it.chapters), solo = chs.length === 1;
+  const c = colorOf(it.id), chs = arr(it.chapters).filter(x => x && typeof x === 'object'), solo = chs.length === 1;
   const total = chs.reduce((a, x) => a + (+x.minutes || 0), 0);
   return '<section class="cover" id="top" style="background:' + c.bg + '; min-height:' + (it.type === 'book' ? '100svh' : '64svh') + '"><p class="eyebrow">' + (TYPES[it.type] || '') + '</p><h1>' + md(it.title) + '</h1>' +
     (it.subtitle ? '<p class="sub">' + md(it.subtitle) + '</p>' : '') + (it.author ? '<p class="author">' + md(it.author) + '</p>' : '') +
@@ -776,7 +844,7 @@ function introHTML(it){
     arr(it.intro.body).map(p => '<p>' + md(p) + '</p>').join('') + arr(it.intro.blocks).map((b, bi) => block(b, 'i-' + bi)).join('') + '</section></div>';
 }
 function mapHTML(it, pt){
-  const chs = arr(it.chapters), total = chs.reduce((a, x) => a + (+x.minutes || 0), 0);
+  const chs = arr(it.chapters).filter(x => x && typeof x === 'object'), total = chs.reduce((a, x) => a + (+x.minutes || 0), 0);
   return '<div class="wrap"><section class="block" id="map" style="padding-top:' + pt + '"><p class="label">خريطة ' + (it.type === 'book' ? 'الكتاب' : 'النص') + '</p><h2 class="title">الفصول</h2><div class="map">' +
     chs.map((x, ci) => '<button class="map-row" data-go="c' + ci + '"><span class="map-num">' + (ci + 1) + '</span><span class="map-t">' + md(x.title || 'فصل ' + (ci + 1)) + (x.minutes ? '<span class="map-m">' + esc(x.minutes) + ' دقيقة</span>' : '') + '</span>' + stHTML(it, 'c' + ci) + '</button>').join('') +
     '</div>' + (total ? '<p class="map-total">المجموع: قرابة ' + total + ' دقيقة قراءة.</p>' : '') + '</section></div>';
@@ -788,7 +856,7 @@ function conclusionHTML(it){
     '<h4 style="margin:0 0 .5rem; font-size:1.15rem">وش بطبّق منه</h4>' + (C.applyPrompt ? '<p class="hint">' + md(C.applyPrompt) + '</p>' : '') + field(it.id + ':apply', 'بطبّق…') + '</section></div>';
 }
 function readerHTML(it){
-  const chs = arr(it.chapters), solo = chs.length === 1;
+  const chs = arr(it.chapters).filter(x => x && typeof x === 'object'), solo = chs.length === 1;
   let h = coverHTML(it) + introHTML(it);
   if (!solo) h += mapHTML(it, it.intro ? '1rem' : '4rem');
   h += chs.map((x, ci) => chapterHTML(it, x, ci, solo)).join('');
@@ -965,16 +1033,16 @@ function onSel(){
   const left = Math.min(innerWidth - bw - 8, Math.max(8, rc.left + rc.width / 2 - bw / 2));
   bar.style.top = top + 'px'; bar.style.left = left + 'px';
 }
-function selAction(kind){
+async function selAction(kind){
   const S = SEL; if (!S || !RD) return; const it = RD.it;
   if (kind === 'meaning'){ const w = S.quote.replace(/[^\u0600-\u06FFa-zA-Z\s]/g, '').trim(); window.open('https://www.almaany.com/ar/dict/ar-ar/' + encodeURIComponent(stripD(w)) + '/', '_blank', 'noopener'); return; }
-  if (kind === 'quote'){ getSelection().removeAllRanges(); hideSel(); const qa = { id:uid(), kind:'quote', itemId:it.id, bk:S.bk, text:S.quote, t:Date.now() }; put('annos', qa); quoteModal(qa, it); return; }
+  if (kind === 'quote'){ getSelection().removeAllRanges(); hideSel(); const qa = { id:uid(), kind:'quote', itemId:it.id, bk:S.bk, text:S.quote, t:Date.now() }; await put('annos', qa); quoteModal(qa, it); return; }
   if (kind === 'explain'){ getSelection().removeAllRanges(); hideSel(); if (aiReady()){ const b = blockOf(it, S.bk); openChat('book', it.id, { mode:'explain', attach:{ text:plain(b ? blockText(b) : S.el.innerText), where:whereOf(it, S.bk), bk:S.bk } }); } else explainCopy(S, it); return; }
   if (S.multi){ toast('حدّد داخل فقرة وحدة'); return; }
   getSelection().removeAllRanges(); hideSel();
   if (HK[kind]){
     const a = { id:uid(), kind:'hl', hk:kind, itemId:it.id, bk:S.bk, text:S.quote, note:'', links:[], t:Date.now() };
-    put('annos', a); markHl(a); drawerNav(it);
+    await put('annos', a); markHl(a); drawerNav(it);
     if (kind === 'imp'){ schedule([hlKey(a)]); updateDue(); }
     toast(kind === 'imp' ? 'ظلّلتها «مهم»، وبترجع لك في المراجعة' : 'ظلّلتها «' + HK[kind].l + '»');
   }
@@ -986,10 +1054,10 @@ function termModal(pre, it, bk){
     '<label class="flabel" for="tEn">بالإنجليزي (اختياري)</label><input class="inp" id="tEn" dir="ltr" style="text-align:right">' +
     '<label class="flabel" for="tDef">تعريف بسطر</label><textarea class="inp" id="tDef" rows="2"></textarea>' +
     '<div class="sh-actions"><button class="pbtn" id="tSave">احفظ في قاموسي</button></div>');
-  $('#tSave').addEventListener('click', () => {
+  $('#tSave').addEventListener('click', async () => {
     const ar = $('#tAr').value.trim(); if (!ar) return;
     const a = { id:uid(), kind:'term', itemId:it.id, bk, ar, en:$('#tEn').value.trim(), def:$('#tDef').value.trim(), t:Date.now() };
-    put('annos', a); closeModal(true); markTerm(a); toast('انضاف لقاموسي');
+    await put('annos', a); closeModal(true); markTerm(a); toast('انضاف لقاموسي');
   });
 }
 
@@ -1024,17 +1092,17 @@ function hlSheet(id){
     '<div class="sh-actions">' + (cur.view === 'read' && cur.id === a.itemId ? '' : '<button class="pbtn" data-href="#/read/' + encodeURIComponent(it.id) + '/' + encodeURIComponent(a.bk) + '">افتح في المصدر</button>') +
     '<button class="gbtn" data-act="note">' + (a.note ? 'عدّل الملاحظة' : 'ملاحظة') + '</button><button class="gbtn" data-act="link">اربطه بـ…</button><button class="gbtn" data-act="quote">بطاقة اقتباس</button>' +
     (cur.view === 'read' ? '<button class="gbtn" data-act="del" style="color:var(--m-fg)">احذف التظليل</button>' : '') + '</div>');
-  $('#sheet').onclick = e => {
-    const hb = e.target.closest('[data-hk]'); if (hb){ setHk(a, hb.dataset.hk); hlSheet(a.id); return; }
+  $('#sheet').onclick = async e => {
+    const hb = e.target.closest('[data-hk]'); if (hb){ await setHk(a, hb.dataset.hk); hlSheet(a.id); return; }
     const b = e.target.closest('[data-act]'); if (!b) return;
     const act = b.dataset.act;
     if (act === 'note'){
       openModal('<div class="mhead"><h3>ملاحظة على التظليل</h3>' + closeBtn + '</div><p class="hint" style="margin:0 0 .6rem">«' + esc(short(a.text, 90)) + '»</p><textarea class="inp" id="nTxt" rows="4">' + esc(a.note || '') + '</textarea><div class="sh-actions"><button class="pbtn" id="nSave">احفظ</button></div>');
-      $('#nSave').addEventListener('click', () => { a.note = $('#nTxt').value.trim(); put('annos', a); closeModal(true); $$('mark.hl[data-anno="' + a.id + '"]').forEach(m => m.classList.toggle('has-note', !!a.note)); hlSheet(a.id); });
+      $('#nSave').addEventListener('click', async () => { a.note = $('#nTxt').value.trim(); await put('annos', a); closeModal(true); $$('mark.hl[data-anno="' + a.id + '"]').forEach(m => m.classList.toggle('has-note', !!a.note)); hlSheet(a.id); });
     }
     if (act === 'link') linkPicker(a);
     if (act === 'quote') quoteModal(a, it);
-    if (act === 'del'){ del('annos', a.id); dropCard(hlKey(a)); updateDue(); if (RD) drawerNav(RD.it); annosOf('hl').forEach(x => { if (arr(x.links).includes(a.id)){ x.links = x.links.filter(l => l !== a.id); put('annos', x); } }); $$('mark.hl[data-anno="' + a.id + '"]').forEach(m => m.replaceWith(...m.childNodes)); closeSheet(); toast('شلت التظليل'); }
+    if (act === 'del'){ await del('annos', a.id); dropCard(hlKey(a)); updateDue(); if (RD) drawerNav(RD.it); for (const x of annosOf('hl')) if (arr(x.links).includes(a.id)){ x.links = x.links.filter(l => l !== a.id); await put('annos', x); } $$('mark.hl[data-anno="' + a.id + '"]').forEach(m => m.replaceWith(...m.childNodes)); closeSheet(); toast('شلت التظليل'); }
   };
 }
 function linkPicker(a){
@@ -1047,7 +1115,7 @@ function linkPicker(a){
   $('#lkQ').addEventListener('input', e => { const q = norm(e.target.value.trim()); $('#lkList').innerHTML = cands.filter(c => !q || norm(c.text + ' ' + (c.it ? c.it.title : '')).includes(q)).map(row).join(''); });
   $('#lkList').addEventListener('click', e => {
     const b = e.target.closest('[data-pick]'); if (!b) return;
-    a.links = [...new Set(arr(a.links).concat(b.dataset.pick))]; put('annos', a); closeModal(true); toast('ربطتها'); hlSheet(a.id);
+    a.links = [...new Set(arr(a.links).concat(b.dataset.pick))]; put('annos', a).then(() => { closeModal(true); toast('ربطتها'); hlSheet(a.id); });
   });
 }
 function termSheet(key){
@@ -1443,12 +1511,12 @@ function bmSync(){
   const h = RD ? bmHere() : null, on = !!(h && RD && annosOf('bm', RD.it.id).some(b => bmSame(b, h)));
   $$('#bmBtn, #rtUI [data-rtt="bm"]').forEach(x => x.setAttribute('aria-pressed', on));
 }
-function toggleBookmark(){
+async function toggleBookmark(){
   if (!RD) return; const it = RD.it, h = bmHere();
   if (!h){ toast('انزل للنص وحط العلامة'); return; }
   const ex = annosOf('bm', it.id).find(b => bmSame(b, h));
-  if (ex){ const el = bmEl(ex); del('annos', ex.id); if (el) el.classList.remove('is-bm'); toast('شلت العلامة'); }
-  else { put('annos', { id:uid(), kind:'bm', itemId:it.id, bk:h.bk, pi:h.pi, ch:h.ch, ex:short(h.el.textContent.replace(/\s+/g, ' ').trim(), 80), t:Date.now() }); h.el.classList.add('is-bm'); toast('حطيت علامة هنا'); }
+  if (ex){ const el = bmEl(ex); await del('annos', ex.id); if (el) el.classList.remove('is-bm'); toast('شلت العلامة'); }
+  else { await put('annos', { id:uid(), kind:'bm', itemId:it.id, bk:h.bk, pi:h.pi, ch:h.ch, ex:short(h.el.textContent.replace(/\s+/g, ' ').trim(), 80), t:Date.now() }); h.el.classList.add('is-bm'); toast('حطيت علامة هنا'); }
   drawerNav(it); bmSync();
 }
 function goBm(id){
@@ -1529,7 +1597,7 @@ function drawReview(){
 /* ---------- idea map ---------- */
 const MAPK = 'maktabati:map';
 const mapLoad = () => { try{ const o = JSON.parse(localStorage.getItem(MAPK) || '{}'); return o && typeof o === 'object' && !Array.isArray(o) ? o : {}; }catch(e){ return {}; } };
-const mapSave = o => { try{ localStorage.setItem(MAPK, JSON.stringify(o)); }catch(e){} };
+const mapSave = o => { try{ localStorage.setItem(MAPK, JSON.stringify(o)); }catch(e){ localFail('map'); } };
 const MGOLD = '#E7C27A', MBG = '#171717';
 const hexA = (h, a) => { const n = parseInt(h.slice(1), 16); return 'rgba(' + (n >> 16) + ',' + (n >> 8 & 255) + ',' + (n & 255) + ',' + a + ')'; };
 const mapInit = t => { t = stripD(t).replace(/[^\u0621-\u064Aa-zA-Z0-9]/g, ''); if (/^ال./.test(t) && t.length > 3) t = t.slice(2); return (t[0] || '•').toUpperCase(); };
@@ -1986,8 +2054,8 @@ const hkOf = a => HK[a.hk] ? a.hk : 'imp';
 const hlKey = a => a.itemId + '|h|' + a.id;
 function dropCard(id){ const cards = kv.get('cards', {}); if (cards[id]){ delete cards[id]; kv.set('cards', cards); } }
 const hkSeg = a => '<div class="seg" style="margin:0 0 .75rem">' + HKS.map(k => '<button data-hk="' + k + '" aria-pressed="' + (hkOf(a) === k) + '"><i class="sw" style="background:' + HK[k].sw + '"></i>' + HK[k].l + '</button>').join('') + '</div>';
-function setHk(a, k){
-  a.hk = k; put('annos', a);
+async function setHk(a, k){
+  a.hk = k; await put('annos', a);
   $$('mark.hl[data-anno="' + a.id + '"]').forEach(m => m.dataset.hk = k);
   if (k === 'imp') schedule([hlKey(a)]); else dropCard(hlKey(a));
   updateDue();
@@ -2157,7 +2225,7 @@ function initTips(){
 const AIK = 'maktabati:ai';
 const AI_DEF = { base:'https://api.deepseek.com', model:'deepseek-chat', key:'', max:AI_DEFAULTS.maxTokens, ctx:AI_DEFAULTS.contextWindow };
 function aiCfg(){ try{ return Object.assign({}, AI_DEF, JSON.parse(localStorage.getItem(AIK) || '{}')); }catch(e){ return Object.assign({}, AI_DEF); } }
-function aiSave(c){ try{ localStorage.setItem(AIK, JSON.stringify(c)); }catch(e){} }
+function aiSave(c){ try{ localStorage.setItem(AIK, JSON.stringify(c)); }catch(e){ localFail('ai'); } }
 const aiReady = () => {
   const c = aiCfg(), p = basePolicy(c.base, c.key);
   return !!(c.base && c.model && p.ok && (c.key || keylessAllowed(c.base)));
@@ -2332,7 +2400,7 @@ const aheadOk = (it, ci, card) => it.type !== 'book' || ci <= currentCi(it) || f
 const chStatus = (it, ci) => { const s = (kv.get(it.id + ':status', {})['c' + ci]) || 'none'; return STL[s] ? s : 'none'; };
 const fchap = (it, bk) => { const p = bkPos(bk)[0]; return p < 0 ? 'المقدّمة' : 'الفصل ' + (p + 1); };
 function bookMemory(it, full){
-  const chs = arr(it.chapters), L = [], m = MEM();
+  const chs = arr(it.chapters).filter(c => c && typeof c === 'object'), L = [], m = MEM();
   L.push('[' + (TYPES[it.type] || 'كتاب') + ': ' + plain(it.title) + (it.author ? ' — ' + plain(it.author) : '') + ' | id: ' + it.id + ']');
   const loc = kv.get(it.id + ':loc', null);
   if (!m.status){} else if (loc && loc.s) L.push('  آخر مكان: ' + plain(screenName(it, loc.s))); else if (it.progress) L.push('  التقدّم: ' + Math.round(it.progress * 100) + '%');
@@ -2438,7 +2506,7 @@ const findConv = id => allConvs().find(c => c && c.id === id) || null;
 const convs = C => C.view === 'panel' ? listOf('chat:b:' + C.conv.bookId) : listOf(convKey(C.conv));
 const newConv = bookId => { const c = { id:uid(), t:Date.now(), msgs:[] }; if (bookId) c.bookId = bookId; return c; };
 const hq = (C, sel) => C.host.querySelector(sel);
-function saveRec(conv){ if (conv.deleted) return; const key = convKey(conv), list = listOf(key).filter(x => x.id !== conv.id); if (conv.msgs.length) list.push(conv); kv.set(key, list.slice(-30)); drawSide(); }
+function saveRec(conv){ if (conv.deleted) return Promise.resolve(false); const key = convKey(conv), list = listOf(key).filter(x => x.id !== conv.id); if (conv.msgs.length) list.push(conv); const p = kv.set(key, list.slice(-30)); drawSide(); return p; }
 const saveConv = C => saveRec(C.conv);
 function touchHash(C){ if (C.view !== 'page' || CH !== C) return; lastHomeConv = C.conv.id; const h = '#/c/' + C.conv.id; if (location.hash !== h) history.replaceState(null, '', h); lastNonRead = h; markSide(); }
 const initFull = C => { C.full = C.conv.bookId ? !!kv.get('chatfull:' + C.conv.bookId, prof().ai.full) : false; };
@@ -2658,12 +2726,14 @@ function buildMessages(C){
   const last = ms.filter(m => m.role === 'user').slice(-1)[0] || { content:'' };
   const q = last.content + ' ' + (last.attach || '');
   const parts = [];
+  let focus = last.attach || '';
   if (scopeOf(C) === 'lib') {
     parts.push({ id:'library_map', label:'', text:'خريطة المكتبة:\n' + libraryMap(q) });
     const passages = passagesTxt(searchHits(q, 8)); if (passages) parts.push({ id:'passages', label:'', text:passages });
     const gloss = glossaryTxt(); if (gloss) parts.push({ id:'glossary', label:'', text:gloss });
   } else {
     const it = itemById(C.conv.bookId), bc = bookContext(it, C.full);
+    if (!focus && it && RD && RD.it === it){ const el = topBlock(); if (el) focus = plain(el.textContent).slice(0, 80); }
     if (bc.memory) parts.push({ id:'book_memory', label:'', text:bc.memory });
     if (bc.chapter) parts.push({ id:'book_text', label:bc.label, text:bc.chapter });
     if (last.mode === 'link' && it) parts.push({ id:'rest_library', label:'باقي المكتبة', text:allItems().filter(x => x.id !== it.id).map(x => bookMemory(x, false)).join('\n\n') + passagesTxt(searchHits(q, 6).filter(h => h.it.id !== it.id)) });
@@ -2673,7 +2743,7 @@ function buildMessages(C){
   const cfg = aiCfg();
   const max = Math.max(1, Math.min(8000, Number(cfg.max) || AI_DEFAULTS.maxTokens));
   const budget = Math.max(1024, (Number(cfg.ctx) || AI_DEFAULTS.contextWindow) - max - 256);
-  const fit = fitRequest({ base, parts, history, budget, focus:last.attach || '' });
+  const fit = fitRequest({ base, parts, history, budget, focus });
   if (!fit.ok) throw { context:true, estimated:fit.estimated, budget:budget };
   return fit.messages;
 }
@@ -2690,14 +2760,16 @@ async function chatSend(text, mode){
   const ta = hq(C, '#chIn'); if (ta) ta.value = '';
   const cmd = localCommand(text);
   if (cmd){
-    conv.msgs.push(um, { role:'assistant', content:cmd.text, cards:cmd.cards }); conv.t = Date.now(); saveConv(C); touchHash(C); drawChat();
+    conv.msgs.push(um, { role:'assistant', content:cmd.text, cards:cmd.cards }); conv.t = Date.now(); await saveConv(C); touchHash(C); drawChat();
     if (cmd.go) setTimeout(() => { if (cmd.go === 'add') openUpload(); else location.hash = cmd.go; }, 450);
     return;
   }
   const am = { role:'assistant', content:'', streaming:true };
   conv.msgs.push(um, am); conv.t = Date.now(); touchHash(C);
-  if (!aiReady()){ delete am.streaming; am.err = tx('اضبط الذكاء من') + ' <a href="#/settings">' + tx('الإعدادات') + '</a> ' + tx('أول: رابط الـAPI واسم النموذج والمفتاح.'); saveConv(C); drawChat(); return; }
-  saveConv(C); const ctrl = new AbortController(); RUN.set(conv.id, ctrl); drawChat();
+  if (!aiReady()){ delete am.streaming; am.err = tx('اضبط الذكاء من') + ' <a href="#/settings">' + tx('الإعدادات') + '</a> ' + tx('أول: رابط الـAPI واسم النموذج والمفتاح.'); await saveConv(C); drawChat(); return; }
+  await saveConv(C);
+  if (C.aborted || conv.deleted){ const k = conv.msgs.indexOf(am); if (k >= 0 && !am.content) conv.msgs.splice(k, 1); if (!conv.deleted) await saveRec(conv); return; }
+  const ctrl = new AbortController(); RUN.set(conv.id, ctrl); drawChat();
   try{ await aiCall({ stream:true, signal:ctrl.signal, messages:buildMessages(C), onDelta:t => { am.content = t; if (CH && CH.conv === conv) schedMsgs(); } }); if (!am.content) am.content = tx('(ما وصل رد)'); }
   catch(e){
     if (e && e.name === 'AbortError'){
@@ -2707,7 +2779,7 @@ async function chatSend(text, mode){
   }
   delete am.streaming; RUN.delete(conv.id); conv.t = Date.now();
   if (conv.deleted) return;
-  saveRec(conv);
+  await saveRec(conv);
   if (CH && CH.conv === conv) drawChat();
 }
 
@@ -2871,12 +2943,20 @@ function backupDue(){
   const ref = prof().lastExport || Math.min.apply(null, items.map(i => i.createdAt || Date.now()));
   return Date.now() - ref > 30 * DAY;
 }
-async function wipeAll(){
+async function wipeAll(includeSettings = false){
   const names = ['items', 'annos', 'kv'];
   mem.items.clear(); mem.annos.clear(); mem.kv.clear();
-  if (idb) await new Promise(res => { try{ const t = idb.transaction(names, 'readwrite'); names.forEach(n => t.objectStore(n).clear()); t.oncomplete = t.onerror = t.onabort = () => res(); }catch(e){ res(); } });
-  try{ Object.keys(localStorage).filter(k => k.startsWith('reader:') && k !== 'reader:lang' && k !== 'reader:theme').forEach(k => localStorage.removeItem(k)); localStorage.removeItem(PK); }catch(e){}
-  PROF = null; kv.set('seeded', true);
+  let ok = true;
+  if (idb) ok = await new Promise(res => { try{ const t = idb.transaction(names, 'readwrite'); names.forEach(n => t.objectStore(n).clear()); t.oncomplete = () => res(true); t.onerror = t.onabort = () => res(false); }catch(e){ res(false); } });
+  try{
+    for (const k of Object.keys(localStorage)){
+      if (includeSettings && (k.startsWith('maktabati:') || k.startsWith('reader:'))) localStorage.removeItem(k);
+      else if (!includeSettings && k.startsWith('reader:') && k !== 'reader:lang' && k !== 'reader:theme') localStorage.removeItem(k);
+    }
+    localStorage.removeItem(PK);
+  }catch(e){ storageNotice('unavailable'); }
+  PROF = null; await kv.set('seeded', true);
+  return ok;
 }
 function updPrev(){ const p = $('#rdPrev'); if (p) p.textContent = pref.get('diac', 'show') === 'hide' ? stripD(p.dataset.s) : p.dataset.s; }
 function applySeg(path, v){
@@ -2904,7 +2984,17 @@ function renderProfile(tab){
       const k = w.dataset.wipe;
       if (k === 'chats') confirmBox({ title:'امسح المحادثات', text:'يمسح كل محادثات الرفيق من هالجهاز.', ok:'امسح', run:() => { [...mem.kv.keys()].filter(x => x.startsWith('chat:')).forEach(kvDel); drawSide(); toast('انمسحت المحادثات'); } });
       else if (k === 'cards') confirmBox({ title:'امسح بطاقات الفصول', text:'يمسح بطاقات الفصول اللي كتبها الذكاء. تقدر تجهّزها من جديد.', ok:'امسح', run:() => { [...mem.kv.keys()].filter(x => x.startsWith('cc:')).forEach(kvDel); toast('انمسحت بطاقات الفصول'); } });
-      else confirmBox({ title:'احذف كل البيانات', text:'يحذف كل الكتب والتظليلات والمحادثات من هالجهاز، ولا يمكن التراجع. ما يمسّ إعدادات الاتصال.', ok:'احذف', words:['احذف', 'delete'], wordLabel:'اكتب «احذف» للتأكيد', run:async () => { await wipeAll(); toast('انحذفت كل البيانات'); location.hash = '#/lib'; drawChip(); drawSide(); updateDue(); if (cur.view === 'lib') renderLib(); } });
+      else confirmBox({
+        title:'احذف كل البيانات',
+        text:'يحذف كل الكتب والتظليلات والمحادثات وإعدادات القراءة من هالجهاز، ولا يمكن التراجع. يبقى مفتاح الذكاء، ومواضع الخريطة، ومزيجات الأصوات إلا إذا اخترت حذفها تحت.',
+        extra:'<label class="prow" style="align-items:center; gap:.6rem; margin:.4rem 0 1rem"><input type="checkbox" id="wipeSettings" style="width:20px;height:20px"><span><b>احذف أيضًا</b> مفتاح الذكاء، ومواضع/تثبيتات الخريطة، ومزيجات الأصوات، وكل إعدادات <bdi dir="ltr">maktabati:*</bdi>.</span></label>',
+        ok:'احذف', words:['احذف', 'delete'], wordLabel:'اكتب «احذف» للتأكيد', read:() => !!($('#wipeSettings') && $('#wipeSettings').checked),
+        run:async include => {
+          const ok = await wipeAll(include);
+          toast(ok ? 'انحذفت كل البيانات' : 'ما قدرنا نمسح كل البيانات من التخزين');
+          location.hash = '#/lib'; drawChip(); drawSide(); updateDue(); if (cur.view === 'lib') renderLib();
+        }
+      });
       return;
     }
     if (e.target.closest('#pvExp')){ exportLib(); return; }
@@ -2936,8 +3026,10 @@ function renderProfile(tab){
 }
 
 /* ---------- import from chat / PDF conversion ---------- */
-function saveNew(it, stay){
-  put('items', it); closeModal(true); closeChat(); toast('انضاف «' + short(it.title, 30) + '» لمكتبتك');
+async function saveNew(it, stay){
+  const saved = await put('items', it);
+  if (!saved) toast('انضاف للجلسة الحالية فقط؛ التخزين غير متاح.');
+  closeModal(true); closeChat(); toast('انضاف «' + short(it.title, 30) + '» لمكتبتك');
   const h = stay ? '#/lib' : '#/read/' + encodeURIComponent(it.id);
   if (location.hash === h) route(); else location.hash = h;
   offerPrep(it);
@@ -3268,7 +3360,7 @@ function sndState(){
   return SS;
 }
 let sndSaveT = 0;
-function sndSave(now){ clearTimeout(sndSaveT); const f = () => { try{ localStorage.setItem(SND_K, JSON.stringify(sndState())); }catch(e){} }; if (now) f(); else sndSaveT = setTimeout(f, 300); }
+function sndSave(now){ clearTimeout(sndSaveT); const f = () => { try{ localStorage.setItem(SND_K, JSON.stringify(sndState())); }catch(e){ localFail('sounds'); } }; if (now) f(); else sndSaveT = setTimeout(f, 300); }
 
 const AU = { ctx:null, master:null, comp:null, bufs:{}, voices:{}, playing:false, timer:null, tdT:0, tmT:0, tick:0 };
 function auEnsure(){
@@ -3373,7 +3465,7 @@ function auPlay(){
 function auPause(){
   if (!AU.ctx || !AU.playing) return;
   AU.playing = false; const now = AU.ctx.currentTime; holdParam(AU.master.gain, now); AU.master.gain.linearRampToValueAtTime(0, now + 1.5);
-  clearTimeout(AU.tdT); AU.tdT = setTimeout(() => { if (AU.playing) return; Object.keys(AU.voices).forEach(id => { const v = AU.voices[id]; delete AU.voices[id]; v.kill(); }); AU.ctx.suspend().catch(() => {}); }, 1700);
+  clearTimeout(AU.tdT); AU.tdT = setTimeout(() => { AU.tdT = 0; if (AU.playing) return; Object.keys(AU.voices).forEach(id => { const v = AU.voices[id]; delete AU.voices[id]; v.kill(); }); AU.ctx.suspend().catch(() => {}); }, 1700);
   clearTimeout(AU.tmT); AU.timer = null; sndUI();
 }
 function auToggle(id){
@@ -4208,12 +4300,19 @@ function menu(open, silent){
 
 /* ---------- init ---------- */
 async function init(){
-  const ok = await openDB();
-  if (ok){
+  initBroadcast();
+  const dbOpened = await openDB();
+  let loaded = false;
+  if (dbOpened){
     const [items, annos, kvs] = await Promise.all([getAll('items'), getAll('annos'), getAll('kv')]);
-    items.forEach(i => mem.items.set(i.id, i)); annos.forEach(a => mem.annos.set(a.id, a)); kvs.forEach(x => mem.kv.set(x.k, x.v));
+    if (items && annos && kvs){
+      items.forEach(i => mem.items.set(i.id, i)); annos.forEach(a => mem.annos.set(a.id, a)); kvs.forEach(x => mem.kv.set(x.k, x.v));
+      loaded = true;
+    }
   }
-  if (!mem.items.size && !kv.get('seeded', false)) seed();
+  storageDown = !dbOpened || !loaded;
+  if (storageDown) storageNotice('unavailable');
+  if (loaded && !mem.items.size && !kv.get('seeded', false)) seed();
   if (!kv.get('hlCardsV1', false)){ schedule(annosOf('hl').filter(a => hkOf(a) === 'imp').map(hlKey)); kv.set('hlCardsV1', true); }
   if (idb && mem.items.size && !kv.get('orphansV1', false)){ const on = cleanOrphans(); kv.set('orphansV1', { t:Date.now(), n:on }); console.info('[maktabati] orphan sweep', JSON.stringify(on)); }
 
