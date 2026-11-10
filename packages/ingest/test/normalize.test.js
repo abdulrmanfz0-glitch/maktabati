@@ -105,6 +105,11 @@ describe('split Arabic diacritics from pdf.js', () => {
     expect(out).toBe('لُغة');
     expect(out.normalize('NFC')).toBe(out);
   });
+  it('keeps the space before non-combining Quranic signs', () => {
+    expect(repairSplitMarks('قال ۞ ثم')).toBe('قال ۞ ثم');
+    expect(repairSplitMarks('سجدة ۩ هنا')).toBe('سجدة ۩ هنا');
+    expect(repairSplitMarks('حس ّاسة')).toBe('حسّاسة');
+  });
 });
 
 describe('real spaces after a word ending in a mark', () => {

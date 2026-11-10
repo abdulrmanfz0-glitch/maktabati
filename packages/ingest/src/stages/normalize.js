@@ -35,6 +35,10 @@ export function mapForms(s) {
 export const stripTatweel = s => s.replace(/ـ/g, '');
 export const stripMarks = s => s.replace(RE_MARKS_G, '');
 
+// Built from RE_MARK so Quranic signs that are not combining (U+06DE ۞,
+// U+06E9 ۩, U+06E5/U+06E6) keep the space before them.
+const RE_SPACE_BEFORE_MARK = new RegExp('[ \\t\\u00A0]+(?=' + RE_MARK.source + ')', 'g');
+
 /**
  * Repair marks that pdf.js left separated from their base letter.
  * A combining mark never starts a word, so whitespace before one is always
@@ -42,7 +46,7 @@ export const stripMarks = s => s.replace(RE_MARKS_G, '');
  * joinItems, where the item geometry can prove the two touch.
  */
 export function repairSplitMarks(s) {
-  return String(s).replace(/[ \t\u00A0]+(?=[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED])/g, '').normalize('NFC');
+  return String(s).replace(RE_SPACE_BEFORE_MARK, '').normalize('NFC');
 }
 
 /** Match form of a string that may still contain presentation forms (for statistics). */
