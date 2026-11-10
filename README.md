@@ -7,9 +7,9 @@ plain-text book, read it in a comfortable reader, highlight and annotate it,
 review what you read, play ambient sounds, and discuss the book with an AI
 companion that knows your library.
 
-<!-- Screenshot placeholder: add docs/screenshot.png before publishing. -->
-> **Screenshot placeholder:** add `docs/screenshot.png` (desktop library or
-> reader view) before publishing this repository.
+![Maktabati library, dark theme](docs/screenshot.png)
+
+*Library with demo books, search, filters, and reading progress.*
 
 ## What it does
 
