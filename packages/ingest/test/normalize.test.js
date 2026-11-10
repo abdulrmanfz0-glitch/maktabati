@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { mapForms, stripTatweel, stripControls, attachMarks, joinItems, normalizePage, reversalStats, repairSplitMarks, MARK_OPEN, MARK_CLOSE, toAsciiDigits } from '../src/stages/normalize.js';
+import { assemble } from '../src/stages/assemble.js';
 import { RE_PRES } from '../src/text.js';
 
 const U = (...cps) => String.fromCodePoint(...cps);
@@ -87,9 +88,9 @@ describe('split Arabic diacritics from pdf.js', () => {
       const out = normalizePage([line(items)], {});
       expect(out.lines[0].text).toBe(after);
     }
-    // The fifth example has the shadda at the end of the first item and a
-    // leading space in the next item; only a touching gap may lose that space.
-    const joined = normalizePage([line([it1('يجدّ', 200, 30), it1(' فان', 170, 30)])], {});
+    // The fifth example is a shadda item attached to the previous base and a
+    // following item that starts with a space; their boxes touch.
+    const joined = normalizePage([line([it1('يجد', 200, 20), it1('ّ', 200, 4), it1('فان', 160, 40)])], {});
     expect(joined.lines[0].text).toBe('يجدّفان');
   });
 
@@ -104,6 +105,39 @@ describe('split Arabic diacritics from pdf.js', () => {
     expect(out).toBe('لُغة');
     expect(out.normalize('NFC')).toBe(out);
   });
+});
+
+describe('real spaces after a word ending in a mark', () => {
+  const phrases = [
+    ['كلّ شيء', ['كلّ', ' شيء']],
+    ['حقّ الناس', ['حقّ', ' الناس']],
+    ['كتابٌ جديدٌ مفيدٌ', ['كتابٌ', ' جديدٌ', ' مفيدٌ']],
+    ['جدّاً كبيراً', ['جدّاً', ' كبيراً']],
+    ['إنّ الله', ['إنّ', ' الله']]
+  ];
+  const itemsAt = (words, gap) => {
+    const out = []; let x = 260;
+    for (const w of words) { out.push(it1(w, x, 40)); x -= 40 + gap; }
+    return out;
+  };
+
+  for (const [label, words] of phrases) {
+    it('joinItems keeps a touching real space: ' + label, () => {
+      const out = joinItems(itemsAt(words, 0), 1, {});
+      expect(out).toBe(label);
+    });
+    it('joinItems keeps a word-sized gap: ' + label, () => {
+      const out = joinItems(itemsAt(words, 12), 1, {});
+      expect(out).toBe(label);
+    });
+    it('assemble.closePara keeps a line-ending real space: ' + label, () => {
+      const lines = words.map((text, i) => ({ text, y: 100 - i * 16, x0: 40, x1: 200, size: 13, base: 1, parStart: i === 0 }));
+      const pages = [{ index: 1, lines, images: [], notes: [], width: 300, height: 400 }];
+      const { book } = assemble(pages, { bodySize: 13, leading: 16 }, { chapters: [] }, [], {}, {});
+      const text = book.chapters[0].sections[0].blocks[0].text;
+      expect(text).toBe(label);
+    });
+  }
 });
 
 describe('normalizePage', () => {

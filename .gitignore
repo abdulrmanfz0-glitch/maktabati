@@ -5,6 +5,7 @@ dist/
 *.key
 *.pdf
 *.epub
+tests/fixtures/pdf/
 book/
 exports/
 backups/

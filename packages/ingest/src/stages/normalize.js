@@ -85,6 +85,7 @@ export function attachMarks(items) {
     while (idx < chars.length && RE_MARK.test(chars[idx])) idx++;
     chars.splice(idx, 0, m.s.trim());
     best.s = chars.join('');
+    best._markJoined = true;
   }
   return rest;
 }
@@ -117,10 +118,11 @@ export function joinItems(items, base, opts = {}) {
       // A mark belongs to the preceding base letter. Never put a space in
       // front of one, even when the next item starts with it.
       if (space && !startsMark && !/\s$/.test(out) && !/^\s/.test(s)) out += ' ';
-      // When the mark ends the previous item and the items touch, pdf.js
-      // sometimes puts the following letter in an item that starts with a
-      // space. Drop only that synthetic space; a word-sized gap is kept.
-      if (prevEndsMark && !space) s = s.replace(/^\s+/, '');
+      // Only a mark that was a separate pdf.js item and was attached here can
+      // own the leading space of the next item. A mark that is already inside
+      // the previous item's text may be a real word-ending mark; keep its
+      // word space even when the item boxes touch.
+      if (prevEndsMark && prev._markJoined && !space) s = s.replace(/^\s+/, '');
     }
     out += s;
   }

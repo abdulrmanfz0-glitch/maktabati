@@ -124,8 +124,8 @@ Do not change body text just to raise the link count.
 
 **Area:** ingest / structure · **Size:** M
 
-One book (`f692654d`) has a 284k-character chapter; two books have a duplicate
-chapter title.
+One book (`f692654d`) has a **284k-character** chapter; two books have a
+duplicate chapter title.
 
 **Done when:** a 400k-character synthetic book splits at real section headings
 (or is flagged for review), and duplicate titles are disambiguated without
@@ -147,10 +147,12 @@ for each case.
 **Area:** ingest / EPUB · **Size:** M
 
 No EPUB fixture exists; nested nav/NCX entries are ignored at depth >1; all
-documents are decoded as UTF-8.
+documents are decoded as UTF-8. A real EPUB using **windows-1256** must be
+covered, not just UTF-8.
 
-**Done when:** a small legal EPUB fixture has nested TOC entries, a non-UTF-8
-document, an SVG image, and an NCX-only variant; expected order and text pass.
+**Done when:** a small legal EPUB fixture has nested TOC entries, a
+windows-1256 document, an SVG image, and an NCX-only variant; expected order and
+text pass.
 
 ### A-06: mixed Arabic/Latin bidi punctuation
 
@@ -184,8 +186,8 @@ default, and a test proves no silent conversion.
 
 **Area:** ingest / performance · **Size:** L
 
-A 43 MB image-heavy PDF peaks around 509 MB because 162 figures are decoded at
-full resolution.
+A 43 MB image-heavy PDF peaks at **509 MB** because 162 figures are decoded at
+full resolution. This is a phone-memory risk, not just an export-size issue.
 
 **Done when:** a benchmark compares full-resolution versus bounded figure output
 and the stored/export size drops without changing visible text.
