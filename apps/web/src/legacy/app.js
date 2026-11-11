@@ -1227,9 +1227,13 @@ async function selAction(kind){
   if (kind === 'explain'){
     getSelection().removeAllRanges(); hideSel();
     if (aiReady()){
-      const b = blockOf(it, S.bk), src = b ? plain(blockText(b)) : '';
-      const attach = { text:S.quote, where:whereOf(it, S.bk), bk:S.bk };
-      if (S.ar && src) attach.source = src;
+      const b = blockOf(it, S.bk);
+      const blockEl = $('#v-read [data-bk="' + CSS.escape(S.bk) + '"]');
+      let attachText;
+      if (S.ar) attachText = blockEl ? trBlockTextFromDom(blockEl) : (S.el ? S.el.innerText : S.quote);
+      else attachText = b ? plain(blockText(b)) : (S.el ? S.el.innerText : S.quote);
+      const attach = { text:attachText || S.quote, where:whereOf(it, S.bk), bk:S.bk };
+      if (S.ar && b) attach.source = plain(blockText(b));
       openChat('book', it.id, { mode:'explain', attach });
     } else explainCopy(S, it);
     return;
@@ -2959,6 +2963,13 @@ async function trToggle(){
   renderReader(cur.it, key, { screen:RD.screen, noFlash:true, tr:data });
 }
 
+function trBlockTextFromDom(el){
+  if (!el) return '';
+  const c = el.cloneNode(true);
+  c.querySelectorAll('.tr-src-hl, .tr-banner, .tr-banner-btn').forEach(n => n.remove());
+  return String(c.textContent || '').replace(/\s+/g, ' ').trim();
+}
+
 function trApplyAnnos(it, ci){
   const fp = (RD && RD.trFp) || '';
   annosOf('hl', it.id).forEach(a => {
@@ -2968,7 +2979,8 @@ function trApplyAnnos(it, ci){
     const b = document.createElement('button');
     b.type = 'button'; b.className = 'tr-src-hl' + (a.note ? ' has-note' : '');
     b.dataset.srcHl = a.id; b.title = 'تظليل في النص الأصلي'; b.setAttribute('aria-label', 'افتح التظليل الأصلي');
-    b.textContent = '•';
+    const dot = document.createElement('span'); dot.setAttribute('aria-hidden', 'true');
+    b.appendChild(dot);
     el.appendChild(b);
   });
   annosOf('bm', it.id).forEach(b => { const el = bmEl(b); if (el) el.classList.add('is-bm'); });

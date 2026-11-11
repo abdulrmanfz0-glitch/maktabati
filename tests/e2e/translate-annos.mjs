@@ -86,7 +86,8 @@ try {
   await b.waitFor(`!!document.querySelector('#v-read mark.hl')`, 10000);
   const arAnno = await ev(`new Promise(res => { const r = indexedDB.open('maktabati'); r.onsuccess = () => { const q = r.result.transaction('annos').objectStore('annos').getAll(); q.onsuccess = () => res(q.result.find(a => a.lang === 'ar' && a.kind === 'hl') || null); q.onerror = () => res(null); }; r.onerror = () => res(null); })`);
   assert(arAnno && arAnno.lang === 'ar' && arAnno.trFp, 'Arabic highlight did not save lang/trFp');
-  ok('Arabic selection + highlight', 'bar visible, lang/trFp saved');
+  assert(!arAnno.text.includes('•'), 'saved Arabic highlight contains the source marker glyph');
+  ok('Arabic selection + highlight', 'bar visible, lang/trFp saved, no marker in quote');
 
   // Reload: Arabic mark and source marker survive.
   await b.reload();
@@ -118,6 +119,23 @@ try {
   const after = await topBk();
   assert(before === after, 'toggle did not keep the same data-bk position (' + before + ' -> ' + after + ')');
 
+  // Regression: original-view explain must attach the whole paragraph, not only the selection.
+  await setAI('fake-chat');
+  assert(await selectText('#v-read [data-bk] p', 20), 'could not select original text for explain');
+  await settle(400);
+  await click('#selbar [data-sel="explain"]');
+  await b.waitFor(`!document.querySelector('#chat').hidden`, 10000);
+  await ev(`(() => { const t = document.querySelector('#chatIn #chIn'); t.value = 'اشرح'; t.dispatchEvent(new Event('input', { bubbles:true })); })()`);
+  await click('#chatIn #chSend');
+  await b.waitFor(`(document.querySelector('#chatIn').textContent || '').includes('تم')`, 15000);
+  await settle(500);
+  const srcPayload = fake.stats.lastUserContent || '';
+  assert(srcPayload.includes('forgotten what it meant'), 'original explain payload lost the paragraph tail');
+  assert(!srcPayload.includes('<source_text>'), 'original explain should not add a source_text block');
+  await click('#chatScrim');
+  await b.waitFor(`document.querySelector('#chat').hidden`, 10000);
+  await setAI('fake-translate');
+
   // Back to Arabic and open the source marker sheet.
   await click('#v-read [data-tr-open]');
   await b.waitFor(`document.querySelector('#v-read').getAttribute('dir') === 'rtl'`, 10000);
@@ -138,7 +156,9 @@ try {
   await settle(500);
   const payload = fake.stats.lastUserContent || '';
   assert(payload.includes('ترجمة عربية'), 'explain payload missing Arabic selection');
+  assert(payload.includes('للفقرة 0-0-0'), 'explain payload missing the full Arabic paragraph');
   assert(payload.includes('<source_text>') && payload.includes('The river carried the old name'), 'explain payload missing labelled original paragraph');
+  assert(!payload.includes('•'), 'explain payload leaked the source marker glyph');
   ok('explain payload', 'Arabic quote + source_text present');
 } catch (e) {
   bad('Arabic reading tools e2e', e);

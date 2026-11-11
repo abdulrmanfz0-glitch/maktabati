@@ -1112,6 +1112,8 @@ body[data-rt="modern"] #v-read .box, body[data-rt="modern"] #v-read .qa, body[da
 .tr-view .bk{ user-select:text; }
 .tr-html{ opacity:.98; }
 .tr-src-hl{ display:inline-block; margin-inline-start:4px; padding:0 3px; border:0; border-radius:999px; background:transparent; color:var(--gold); font-size:15px; line-height:1; vertical-align:super; cursor:pointer; user-select:none; }
+.tr-src-hl span{ display:inline-block; user-select:none; }
+.tr-src-hl span::before{ content:'•'; }
 .tr-src-hl:hover{ background:var(--surface); }
 .tr-src-hl.has-note{ color:var(--accent); }
 @media (max-width:520px){ .tr-grid{ grid-template-columns:repeat(2,minmax(0,1fr)); } .tr-banner{ margin-inline:12px; } }
