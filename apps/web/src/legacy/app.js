@@ -1,6 +1,7 @@
 import { DEMO_BOOK, DEMO_MD } from './demo-data.js';
 import { runIngest } from '../ingest/client.js';
 import { EXPORT_VERSION, planLibraryImport, validateItem } from '../core/library.js';
+import { FILTER_ALL, FILTER_UNFILED, collectionKey, cleanName, makeCollection, collectionsFromKv, sortCollections, hasBook, addBookToCollection, removeBookFromCollection, renameCollection, countCollectionBooks, filterByCollection, removeBookFromAll } from '../core/collections.js';
 import { isPasteTooLarge, needsLowMemoryWarning } from '../core/limits.js';
 import { AI_DEFAULTS, basePolicy, keylessAllowed, estimateMessagesTokens, fitRequest, parseSSE, shouldRetry, retryDelayMs, validateCard, createTimeoutGuard, linkAbort } from '../core/ai.js';
 import { findNormalizedRange } from '../core/text.js';
@@ -192,7 +193,7 @@ function idbWriteImport(writes){
 }
 /* profile: ONE localStorage key for all new preferences (never exported) */
 const PK = 'maktabati:profile';
-const PDEF = { name:'', color:0, read:{}, ai:{ lang:'mirror', len:'normal', mode:'', spoiler:true, full:false, mem:{ status:true, hl:true, notes:true, quotes:true, gloss:true } }, lastExport:0, lib:{ sort:'read', type:'all', view:'grid' }, dismissPrep:{} };
+const PDEF = { name:'', color:0, read:{}, ai:{ lang:'mirror', len:'normal', mode:'', spoiler:true, full:false, mem:{ status:true, hl:true, notes:true, quotes:true, gloss:true } }, lastExport:0, lib:{ sort:'read', type:'all', view:'grid', col:'all' }, dismissPrep:{} };
 let PROF = null;
 function prof(){
   if (PROF) return PROF;
@@ -550,8 +551,11 @@ function lrow(it){
   return '<div class="lrow-w"><button class="lrow" data-href="#/book/' + enc(it.id) + '"><span class="lr-cv">' + bkCover(it, { mini:true }) + '</span><span class="lr-b"><b dir="auto">' + esc(it.title) + '</b><small>' + (it.author ? '<bdi dir="auto">' + esc(it.author) + '</bdi> · ' : '') + (TYPES[it.type] || '') + '</small></span><span class="lr-r"><span>' + statusText(it) + '</span>' + (rd.total ? '<span>' + (rd.done >= rd.total ? 'جاهز' : '<bdi dir="ltr">' + rd.done + '/' + rd.total + '</bdi>') + '</span>' : '') + '</span></button>' + moreBtn(it) + '</div>';
 }
 function renderLib(){
-  const items = allItems(), L = prof().lib;
-  const list = items.filter(i => L.type === 'all' || i.type === L.type);
+  const items = allItems(), L = prof().lib, byId = new Set(items.map(i => i.id));
+  const cols = collectionList();
+  if (L.col !== FILTER_ALL && L.col !== FILTER_UNFILED && !cols.some(c => c.id === L.col)){ L.col = FILTER_ALL; profSave(); }
+  const active = cols.find(c => c.id === L.col) || null;
+  const list = filterByCollection(items, cols, L.col).filter(i => L.type === 'all' || i.type === L.type);
   const cont = list.filter(inProg).sort((a, b) => b.lastOpened - a.lastOpened);
   const S = {
     read:(a, b) => (b.lastOpened || b.createdAt || 0) - (a.lastOpened || a.createdAt || 0),
@@ -564,22 +568,128 @@ function renderLib(){
     '<div class="chips" role="group" aria-label="تصفية حسب النوع">' + [['all', 'الكل']].concat(Object.keys(TYPES).map(k => [k, TYPES[k]])).map(o => '<button class="chip" data-ft="' + o[0] + '" aria-pressed="' + (L.type === o[0]) + '">' + o[1] + '</button>').join('') + '</div>' +
     '<div class="vt" role="group" aria-label="طريقة العرض"><button data-vw="grid" aria-pressed="' + (L.view !== 'list') + '" aria-label="شبكة">' + svg('grid') + '</button><button data-vw="list" aria-pressed="' + (L.view === 'list') + '" aria-label="قائمة">' + svg('menu') + '</button></div></div>';
   const restH = L.view === 'list' ? '<div>' + rest.map(lrow).join('') + '</div>' : '<div class="grid">' + rest.map(card).join('') + '</div>';
+  const empty = !items.length ? 'مكتبتك فاضية. اضغط «أضف» والصق نص أو ارفع ملف.'
+    : L.col === FILTER_UNFILED ? 'كل كتبك مصنّفة.'
+    : active ? 'ما فيه كتب في هذي المجموعة بعد.'
+    : 'ما فيه عناصر من هالنوع.';
+  const colHead = active ? '<div class="col-head"><span class="col-head-t"><bdi dir="auto">' + esc(active.name) + '</bdi> <span class="count">(' + countCollectionBooks(active, byId) + ')</span></span><button class="linkbtn" data-col-edit="' + esc(active.id) + '">' + tx('تعديل') + '</button></div>' : '';
   $('#v-lib').innerHTML = '<div class="wide" style="padding-top:1.25rem; padding-bottom:3rem"><div style="display:flex; align-items:center; gap:.5rem; margin-bottom:1rem"><h1 class="vh" style="flex:1">المكتبة</h1><button class="gbtn" data-add>+ أضف</button></div>' +
     '<label class="search"><span class="sr">بحث</span><input type="search" id="q" placeholder="ابحث في النصوص والتظليلات والملاحظات" autocomplete="off"></label>' +
+    collectionBarHTML(cols, byId) +
     '<p class="quiet">' + weekText() + '</p>' +
     '<div id="results" hidden></div>' +
-    '<div id="shelves">' + (items.length ? ctl +
+    '<div id="shelves">' + colHead + (items.length ? ctl +
       (cont.length ? '<h2 class="shelf-h">أكمل القراءة</h2><div class="cont">' + cont.map(contCard).join('') + '</div>' : '') +
-      (rest.length ? '<h2 class="shelf-h">' + (cont.length ? 'باقي المكتبة' : 'المكتبة') + '</h2>' + restH : (cont.length ? '' : '<p class="empty">ما فيه عناصر من هالنوع.</p>'))
-      : '<p class="empty">مكتبتك فاضية. اضغط «أضف» والصق نص أو ارفع ملف.</p>') + '</div>' +
+      (rest.length ? '<h2 class="shelf-h">' + (cont.length ? 'باقي المكتبة' : 'المكتبة') + '</h2>' + restH : (cont.length ? '' : '<p class="empty">' + empty + '</p>'))
+      : '<p class="empty">' + empty + '</p>') + '</div>' +
     (storageDown ? '<div class="msg" role="alert" style="margin-top:2.5rem"><b>التخزين غير متاح.</b> التغييرات ما راح تنحفظ بعد إغلاق الصفحة. افتح التطبيق في متصفح يسمح بـIndexedDB، أو صدّر مكتبتك قبل ما تطلع.</div>' : '') + '</div>';
   let t; $('#q').addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => doSearch(e.target.value), 180); });
+  $('#colBar').onclick = e => {
+    const nw = e.target.closest('[data-col-new]');
+    if (nw){ newCollectionModal(() => { renderLib(); fitSoon($('#v-lib')); }); return; }
+    const b = e.target.closest('[data-col]'); if (!b) return;
+    prof().lib.col = b.dataset.col; profSave(); renderLib(); fitSoon($('#v-lib'));
+  };
   const sh = $('#shelves');
   sh.onchange = e => { if (e.target.id === 'libSort'){ prof().lib.sort = e.target.value; profSave(); renderLib(); fitSoon($('#v-lib')); } };
   sh.onclick = e => {
-    const f = e.target.closest('[data-ft]'), v = e.target.closest('[data-vw]');
+    const f = e.target.closest('[data-ft]'), v = e.target.closest('[data-vw]'), ed = e.target.closest('[data-col-edit]');
     if (f){ prof().lib.type = f.dataset.ft; profSave(); renderLib(); fitSoon($('#v-lib')); }
     else if (v){ prof().lib.view = v.dataset.vw; profSave(); renderLib(); fitSoon($('#v-lib')); }
+    else if (ed){ manageCollection(ed.dataset.colEdit); }
+  };
+}
+
+/* ---------- collections (user shelves) ---------- */
+const collectionList = () => sortCollections(collectionsFromKv(mem.kv), LANG === 'en' ? 'en' : 'ar');
+function collectionBarHTML(cols, byId){
+  const L = prof().lib;
+  const chip = (v, label, n) => '<button class="chip" data-col="' + esc(v) + '" aria-pressed="' + (L.col === v) + '">' + label + (n == null ? '' : ' <bdi dir="ltr" class="count">(' + n + ')</bdi>') + '</button>';
+  return '<div class="chips col-bar" id="colBar" role="group" aria-label="' + esc(tx('المجموعات')) + '">' +
+    chip(FILTER_ALL, esc(tx('الكل'))) +
+    cols.map(c => chip(c.id, '<bdi dir="auto">' + esc(c.name) + '</bdi>', countCollectionBooks(c, byId))).join('') +
+    chip(FILTER_UNFILED, esc(tx('غير مصنّف'))) +
+    '<button class="chip col-new" data-col-new>' + esc(tx('+ مجموعة')) + '</button></div>';
+}
+function newCollectionModal(after){
+  openModal('<div class="mhead"><h3>' + tx('مجموعة جديدة') + '</h3>' + closeBtn + '</div>' +
+    '<label class="flabel" for="colNm">' + tx('اسم المجموعة') + '</label>' +
+    '<input class="inp" id="colNm" maxlength="80" dir="auto" autocomplete="off">' +
+    '<div class="sh-actions"><button class="pbtn" id="colMk" disabled>' + tx('أنشئ') + '</button></div>');
+  const inp = $('#colNm'), btn = $('#colMk');
+  inp.addEventListener('input', () => { btn.disabled = !cleanName(inp.value); });
+  const go = () => {
+    const c = makeCollection({ id: uid(), name: inp.value });
+    if (!c) return;
+    put('kv', { k: collectionKey(c.id), v: c });
+    closeModal(true); toast('انضافت المجموعة');
+    if (after) after(c);
+  };
+  btn.onclick = go;
+  inp.addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); go(); } });
+  setTimeout(() => inp.focus(), 40);
+}
+function collectionSheet(it){
+  const draw = () => {
+    const cols = collectionList();
+    openSheet('<div class="sh-head"><p class="label">' + tx('المجموعات') + '</p>' + closeBtn + '</div>' +
+      '<p class="hint" style="margin:0 0 .25rem">' + tx('اختر مجموعة، أو أنشئ واحدة جديدة.') + '</p>' +
+      (cols.length
+        ? '<ul class="col-rows">' + cols.map(c => '<li><button class="col-row" data-col-toggle="' + esc(c.id) + '" aria-pressed="' + hasBook(c, it.id) + '"><span class="col-nm" dir="auto">' + esc(c.name) + '</span><span class="col-tick" aria-hidden="true">✓</span></button></li>').join('') + '</ul>'
+        : '<p class="empty" style="padding:1.25rem 0">' + tx('ما فيه مجموعات بعد.') + '</p>') +
+      '<label class="flabel" for="colNewIn">' + tx('مجموعة جديدة') + '</label>' +
+      '<div style="display:flex; gap:.4rem; align-items:stretch"><input class="inp" id="colNewIn" maxlength="80" dir="auto" autocomplete="off"><button class="gbtn" id="colNewGo" style="flex:none">' + tx('أنشئ وأضف') + '</button></div>');
+    const inp = $('#colNewIn');
+    const create = () => {
+      const c = makeCollection({ id: uid(), name: inp.value });
+      if (!c) return;
+      const doc = addBookToCollection(c, it.id);
+      put('kv', { k: collectionKey(doc.id), v: doc });
+      toast('انضافت المجموعة');
+      if (cur.view === 'lib') renderLib();
+      draw();
+    };
+    $('#colNewGo').onclick = create;
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); create(); } });
+    $('#sheet').onclick = e => {
+      const row = e.target.closest('[data-col-toggle]'); if (!row) return;
+      const c = collectionList().find(x => x.id === row.dataset.colToggle); if (!c) return;
+      const on = hasBook(c, it.id);
+      const next = on ? removeBookFromCollection(c, it.id) : addBookToCollection(c, it.id);
+      if (next !== c) put('kv', { k: collectionKey(next.id), v: next });
+      row.setAttribute('aria-pressed', String(!on));
+      toast(on ? 'انشال من المجموعة' : 'انضاف للمجموعة');
+      if (cur.view === 'lib') renderLib();
+    };
+  };
+  draw();
+}
+function manageCollection(id){
+  const c = collectionList().find(x => x.id === id);
+  if (!c) return;
+  openSheet('<div class="sh-head"><p class="label">' + tx('خيارات المجموعة') + '</p>' + closeBtn + '</div>' +
+    '<label class="flabel" for="colRn">' + tx('اسم المجموعة') + '</label>' +
+    '<input class="inp" id="colRn" maxlength="80" dir="auto" autocomplete="off" value="' + esc(c.name) + '">' +
+    '<div class="sh-actions"><button class="pbtn" id="colRnGo">' + tx('احفظ') + '</button></div>' +
+    '<div class="sh-actions" style="margin-top:1.5rem"><button class="gbtn" id="colDel" style="color:var(--m-fg)">' + tx('احذف المجموعة') + '</button></div>' +
+    '<p class="hint" style="margin:.5rem 0 0">' + tx('الكتب تبقى في مكتبتك.') + '</p>');
+  const save = () => {
+    const next = renameCollection(c, $('#colRn').value);
+    if (next === c){ closeSheet(); return; }
+    put('kv', { k: collectionKey(next.id), v: next });
+    closeSheet(); toast('تغيّر الاسم');
+    if (cur.view === 'lib') renderLib();
+  };
+  $('#colRnGo').onclick = save;
+  $('#colRn').addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); save(); } });
+  $('#colDel').onclick = () => {
+    closeSheet();
+    confirmBox({ title: tx('حذف المجموعة؟'), text: tx('تنحذف المجموعة من قائمتك، وكتبها تبقى في مكتبتك.'), ok: tx('احذف'), run: () => {
+      del('kv', collectionKey(id));
+      if (prof().lib.col === id){ prof().lib.col = FILTER_ALL; profSave(); }
+      toast('انحذفت المجموعة');
+      if (cur.view === 'lib') renderLib();
+    } });
   };
 }
 
@@ -617,7 +727,7 @@ function renderBook(it){
     '<h1 class="bp-h" dir="auto">' + esc(it.title) + '</h1>' + (it.subtitle ? '<p class="bp-sub" dir="auto">' + esc(it.subtitle) + '</p>' : '') + (it.author ? '<p class="bp-au" dir="auto">' + esc(it.author) + '</p>' : '') +
     (it.translator ? '<p class="bp-m"><span>المترجم</span><bdi dir="auto">' + esc(it.translator) + '</bdi></p>' : '') + (it.originalTitle ? '<p class="bp-m"><span>العنوان الأصلي</span><bdi dir="ltr">' + esc(it.originalTitle) + '</bdi></p>' : '') +
     (it.whyRead ? '<div class="bp-why"><b>ليش أقرأه</b><p dir="auto">' + md(it.whyRead) + '</p></div>' : '') +
-    '<div class="bp-act"><button class="pbtn" data-href="' + R + '">' + go + '</button><button class="gbtn" data-bpa="chat">ناقش</button><button class="gbtn" data-bpa="snd"' + (snd ? '' : ' disabled title="يتوفر مع ميزة الأصوات"') + '>أصوات</button><button class="gbtn" data-bpa="more" aria-label="المزيد" style="min-width:44px; padding:0">' + svg('dots') + '</button></div>' +
+    '<div class="bp-act"><button class="pbtn" data-href="' + R + '">' + go + '</button><button class="gbtn" data-bpa="chat">ناقش</button><button class="gbtn" data-bpa="cols">' + tx('المجموعات') + '</button><button class="gbtn" data-bpa="snd"' + (snd ? '' : ' disabled title="يتوفر مع ميزة الأصوات"') + '>أصوات</button><button class="gbtn" data-bpa="more" aria-label="المزيد" style="min-width:44px; padding:0">' + svg('dots') + '</button></div>' +
     ingWarn(it) +
     '<div class="stats">' + cnt.map(c => '<div class="stat"><b>' + c[0] + '</b><span>' + c[1] + '</span></div>').join('') + '</div>' +
     (!n ? '<p class="empty" style="margin:1.25rem 0 0">هذا الكتاب ما فيه فصول محفوظة. جرّب استيراده مرة ثانية أو احذفه من المكتبة.</p>' : '') +
@@ -626,6 +736,7 @@ function renderBook(it){
   $('#v-book').onclick = e => {
     const b = e.target.closest('[data-bpa]'); if (!b) return; const a = b.dataset.bpa;
     if (a === 'chat') location.hash = '#/bchat/' + enc(it.id);
+    else if (a === 'cols') collectionSheet(it);
     else if (a === 'snd' && snd) window.MaktabatiSounds.open(it.id);
     else if (a === 'more'){
       openSheet('<div class="sh-head"><p class="label"><bdi dir="auto">' + esc(short(it.title, 30)) + '</bdi></p>' + closeBtn + '</div><ul class="sh-links"><li><button data-bpa="cover">غيّر الغلاف</button></li>' + (it.cover ? '<li><button data-bpa="uncover">أزل الغلاف</button></li>' : '') + '<li><button data-bpa="del" style="color:var(--m-fg)">احذف الكتاب</button></li></ul>');
@@ -711,9 +822,10 @@ async function purgeBook(id){
   const cards = Object.assign({}, F.cards); F.cardKeys.forEach(k => delete cards[k]);
   const updates = [];
   if (ids.size) for (const a of mem.annos.values()) if (!ids.has(a.id) && Array.isArray(a.links) && a.links.some(l => ids.has(l))){ a.links = a.links.filter(l => !ids.has(l)); updates.push(a); }
+  const colUpdates = removeBookFromAll(collectionList(), id);
   const ok = await batchWrite({
     delAnnos:[...ids], delKv:F.kvKeys, delItems:[id], putAnnos:updates,
-    putKv:F.cardKeys.length ? [{ k:'cards', v:cards }] : []
+    putKv:(F.cardKeys.length ? [{ k:'cards', v:cards }] : []).concat(colUpdates.map(c => ({ k:collectionKey(c.id), v:c })))
   });
   mapClean();
   const P = prof(); if (P.dismissPrep && P.dismissPrep[id]){ delete P.dismissPrep[id]; profSave(); }
@@ -761,8 +873,11 @@ function confirmDelete(it){
   $('#cfGo').onclick = () => { closeModal(true); doDelete(it); };
 }
 function bookMenu(it){
-  openSheet('<div class="sh-head"><p class="label"><bdi dir="auto">' + esc(short(it.title, 30)) + '</bdi></p>' + closeBtn + '</div><ul class="sh-links"><li><button data-bm="del" style="color:var(--m-fg)">احذف الكتاب</button></li></ul>');
-  $('#sheet').onclick = ev => { if (ev.target.closest('[data-bm="del"]')){ closeSheet(); confirmDelete(it); } };
+  openSheet('<div class="sh-head"><p class="label"><bdi dir="auto">' + esc(short(it.title, 30)) + '</bdi></p>' + closeBtn + '</div><ul class="sh-links"><li><button data-bm="cols">' + tx('أضف إلى مجموعة') + '</button></li><li><button data-bm="del" style="color:var(--m-fg)">احذف الكتاب</button></li></ul>');
+  $('#sheet').onclick = ev => {
+    if (ev.target.closest('[data-bm="cols"]')){ closeSheet(); collectionSheet(it); return; }
+    if (ev.target.closest('[data-bm="del"]')){ closeSheet(); confirmDelete(it); }
+  };
 }
 const moreBtn = it => '<button class="cv-more" data-bmenu="' + esc(it.id) + '" aria-label="خيارات الكتاب"><span>' + svg('dots') + '</span></button>';
 function refreshView(){
@@ -782,8 +897,8 @@ function snip(text, nq){
   return (s ? '…' : '') + esc(t.slice(s, r.start)) + '<mark>' + esc(t.slice(r.start, r.end)) + '</mark>' + esc(t.slice(r.end, e)) + (e < t.length ? '…' : '');
 }
 function doSearch(q){
-  const res = $('#results'), sh = $('#shelves'); const nq = norm(q.trim());
-  if (nq.length < 2){ res.hidden = true; sh.hidden = false; return; }
+  const res = $('#results'), sh = $('#shelves'), bar = $('#colBar'); const nq = norm(q.trim());
+  if (nq.length < 2){ res.hidden = true; sh.hidden = false; if (bar) bar.hidden = false; return; }
   const G = { titles:[], text:[], hl:[], notes:[] };
   allItems().forEach(it => {
     if (norm(it.title + ' ' + (it.author || '')).includes(nq)) G.titles.push('<button class="res" data-href="#/read/' + encodeURIComponent(it.id) + '"><div>' + snip(it.title, nq) + '</div><small>' + (TYPES[it.type] || '') + (it.author ? ' · ' + esc(it.author) : '') + '</small></button>');
@@ -800,7 +915,7 @@ function doSearch(q){
   const sec = (t, a) => a.length ? '<h2 class="shelf-h">' + t + ' <span class="count">' + a.length + '</span></h2>' + a.join('') : '';
   const html = sec('في العناوين', G.titles) + sec('في النصوص', G.text) + sec('في تظليلاتي', G.hl) + sec('في ملاحظاتي', G.notes);
   res.innerHTML = html || '<p class="empty">ما لقيت شي عن «' + esc(q) + '».</p>';
-  res.hidden = false; sh.hidden = true;
+  res.hidden = false; sh.hidden = true; if (bar) bar.hidden = true;
 }
 
 /* ---------- reader ---------- */
@@ -4276,6 +4391,15 @@ Object.entries({ 'احذف الكتاب':'Delete book','إلغاء':'Cancel','ا
   'ما انحفظ: مساحة التخزين ممتلئة. صدّر مكتبتك واحذف ما لا تحتاجه.':'Not saved: storage is full. Export your library and delete what you do not need.',
   'ما انحفظ آخر تغيير على هالجهاز.':'Your last change was not saved on this device.','الملف كبير جدًا. ما تغيّر شي.':'The file is too large. Nothing was changed.',
   'ما تغيّر شي: الملف فيه بيانات غير صالحة.':'Nothing was changed: the file contains invalid data.' }).forEach(([k, v]) => { if (!(k in EN_UI)) EN_UI[k] = v; });
+/* collection strings */
+Object.entries({ 'المجموعات':'Collections','أضف إلى مجموعة':'Add to a collection','مجموعة جديدة':'New collection','اسم المجموعة':'Collection name',
+  'أنشئ':'Create','أنشئ وأضف':'Create and add','احذف المجموعة':'Delete collection','الكتب تبقى في مكتبتك.':'The books stay in your library.',
+  'حذف المجموعة؟':'Delete this collection?','تنحذف المجموعة من قائمتك، وكتبها تبقى في مكتبتك.':'The collection is removed from your list; its books stay in your library.',
+  'غير مصنّف':'Uncategorized','+ مجموعة':'+ Collection','تعديل':'Edit','خيارات المجموعة':'Collection options',
+  'اختر مجموعة، أو أنشئ واحدة جديدة.':'Pick a collection, or create a new one.','ما فيه مجموعات بعد.':'No collections yet.',
+  'ما فيه كتب في هذي المجموعة بعد.':'No books in this collection yet.','كل كتبك مصنّفة.':'All your books are filed.',
+  'انضاف للمجموعة':'Added to the collection','انشال من المجموعة':'Removed from the collection','انضافت المجموعة':'Collection created',
+  'انحذفت المجموعة':'Collection deleted','تغيّر الاسم':'Name changed' }).forEach(([k, v]) => { if (!(k in EN_UI)) EN_UI[k] = v; });
 /* ingest engine strings */
 Object.entries({ 'تحويل الملف':'Converting the file','أجهّز محوّل الملفات…':'Preparing the converter…','أقرأ الصفحات…':'Reading pages…','أرتّب الفصول والحواشي…':'Arranging chapters and notes…',
   'ما قدرت أحوّل الملف.':'Could not convert the file.','يمكن الملف محمي أو تالف.':'The file may be protected or damaged.','طلع الناتج بشكل غير متوقّع، فما حفظت شي.':'The result had an unexpected shape, so nothing was saved.',

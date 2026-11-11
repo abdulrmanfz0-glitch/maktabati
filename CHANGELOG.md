@@ -6,6 +6,12 @@ All notable changes are recorded here. This project follows
 
 ## [Unreleased]
 
+### Added
+
+- Library collections: create, rename, and delete shelves; add or remove a book
+  from its page or its library menu; filter the library by a collection or by
+  unfiled books.
+
 ## [0.1.0] - 2026-11-10
 
 ### Added

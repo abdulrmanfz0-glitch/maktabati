@@ -692,6 +692,18 @@ body.reading.chat-open .snd-panel{ inset-inline-end:412px; }
 .lib-ctl select{ min-height:44px; border:1px solid var(--rule); border-radius:10px; background:var(--surface); color:var(--ink); padding-inline:12px; font:inherit; font-size:14px; }
 .lib-ctl .chips{ flex:1; min-width:0; }
 .lib-ctl .chip{ font-size:14px; }
+/* ===== collections ===== */
+.col-bar{ flex-wrap:nowrap; overflow-x:auto; margin-top:1rem; padding-bottom:.15rem; scrollbar-width:none; }
+.col-bar::-webkit-scrollbar{ display:none; }
+.col-bar .chip{ flex:none; }
+.col-bar .col-new{ border-style:dashed; color:var(--soft); }
+.col-head{ display:flex; align-items:center; gap:.5rem; margin:1.5rem 0 0; }
+.col-head .col-head-t{ flex:1; min-width:0; font-weight:700; }
+.col-rows{ list-style:none; margin:.5rem 0 0; padding:0; }
+.col-row{ width:100%; min-height:52px; display:flex; align-items:center; gap:.75rem; padding:.4rem 0; border:0; border-bottom:1px solid var(--rule); background:none; color:var(--ink); font:inherit; text-align:start; cursor:pointer; }
+.col-nm{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.col-tick{ opacity:0; color:var(--accent); font-weight:700; }
+.col-row[aria-pressed="true"] .col-tick{ opacity:1; }
 .vt{ display:inline-flex; border:1px solid var(--rule); border-radius:10px; overflow:hidden; }
 .vt button{ width:44px; height:44px; border:0; background:transparent; color:var(--soft); cursor:pointer; display:grid; place-items:center; }
 .vt button svg{ width:20px; height:20px; }
