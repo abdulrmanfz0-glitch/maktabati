@@ -1109,9 +1109,11 @@ body[data-rt="modern"] #v-read .box, body[data-rt="modern"] #v-read .qa, body[da
 .tr-banner{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 20px 1rem; padding:8px 12px; border:1px solid var(--rule); border-radius:10px; background:var(--surface); font-size:.8rem; line-height:1.6; color:var(--soft); }
 .tr-banner b{ color:var(--ink); font-weight:600; }
 .tr-banner-btn{ margin-inline-start:auto; border:0; background:none; color:var(--soft); font:inherit; font-size:.78rem; text-decoration:underline; cursor:pointer; }
-.tr-view #selbar{ display:none !important; }
 .tr-view .bk{ user-select:text; }
 .tr-html{ opacity:.98; }
+.tr-src-hl{ display:inline-block; margin-inline-start:4px; padding:0 3px; border:0; border-radius:999px; background:transparent; color:var(--gold); font-size:15px; line-height:1; vertical-align:super; cursor:pointer; user-select:none; }
+.tr-src-hl:hover{ background:var(--surface); }
+.tr-src-hl.has-note{ color:var(--accent); }
 @media (max-width:520px){ .tr-grid{ grid-template-columns:repeat(2,minmax(0,1fr)); } .tr-banner{ margin-inline:12px; } }
 .tr-book-range{ margin:.5rem 0 .8rem; }
 .tr-book-list{ max-height:12rem; overflow:auto; margin:.3rem 0 .8rem; border:1px solid var(--rule); border-radius:10px; }

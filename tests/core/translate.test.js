@@ -3,7 +3,7 @@ import {
   PROMPT_VERSION, SYSTEM_PROMPT, parseGlossary, glossaryHash, glossaryForText,
   extractChapterUnits, chunkUnits, buildMessages, parseTranslation, qaSegment,
   estimateChapter, priceFor, isPeak, fingerprint, chapterSourceHash, countWords,
-  bookPlan, runConcurrent, needsCostConfirm
+  bookPlan, runConcurrent, needsCostConfirm, isArabicHighlight, isSourceHighlight
 } from '../../apps/web/src/core/translate.js';
 
 const book = () => ({
@@ -206,5 +206,20 @@ describe('concurrency helper', () => {
     }, { limit:2 });
     expect(max).toBeLessThanOrEqual(2);
     expect(out).toEqual([0,10,20,30,40]);
+  });
+});
+
+describe('annotation view filtering', () => {
+  it('matches Arabic highlights only on the exact translation fingerprint', () => {
+    const a = { kind:'hl', lang:'ar', trFp:'fp1', text:'نص عربي' };
+    expect(isArabicHighlight(a, 'fp1')).toBe(true);
+    expect(isArabicHighlight(a, 'fp2')).toBe(false);
+    expect(isArabicHighlight(a, '')).toBe(false);
+    expect(isSourceHighlight(a)).toBe(false);
+  });
+  it('keeps old highlights as source highlights', () => {
+    expect(isSourceHighlight({ kind:'hl', text:'English' })).toBe(true);
+    expect(isSourceHighlight({ kind:'hl', lang:'en', text:'English' })).toBe(true);
+    expect(isSourceHighlight({ kind:'quote', text:'x' })).toBe(false);
   });
 });

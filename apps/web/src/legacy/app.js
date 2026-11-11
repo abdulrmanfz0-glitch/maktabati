@@ -5,7 +5,7 @@ import { FILTER_ALL, FILTER_UNFILED, collectionKey, cleanName, makeCollection, c
 import { isPasteTooLarge, needsLowMemoryWarning } from '../core/limits.js';
 import { AI_DEFAULTS, basePolicy, keylessAllowed, estimateMessagesTokens, fitRequest, parseSSE, shouldRetry, retryDelayMs, validateCard, createTimeoutGuard, linkAbort, isDeepSeekBase, migrateDeepSeekModel } from '../core/ai.js';
 import { findNormalizedRange } from '../core/text.js';
-import { PROMPT_VERSION, CORRECTIVE_MESSAGE, parseGlossary, glossaryHash, glossaryForText, extractChapterUnits, chunkUnits, buildMessages as buildTranslationMessages, parseTranslation, qaSegment, estimateChapter, fingerprint, chapterSourceHash, lastTwoSentences, bookPlan, runConcurrent, hashString, isPeak } from '../core/translate.js';
+import { PROMPT_VERSION, CORRECTIVE_MESSAGE, parseGlossary, glossaryHash, glossaryForText, extractChapterUnits, chunkUnits, buildMessages as buildTranslationMessages, parseTranslation, qaSegment, estimateChapter, fingerprint, chapterSourceHash, lastTwoSentences, bookPlan, runConcurrent, hashString, isPeak, isArabicHighlight, isSourceHighlight } from '../core/translate.js';
 import { trGetJob, trPutJob, trListJobs, trGetSegments, trPutSegment, trDeleteJob, trGetGlossary, trPutGlossary, trDeleteBook, trClearAll } from '../core/translate-store.js';
 
 (function(){
@@ -1117,7 +1117,7 @@ function markTerm(a){
   wrapText(el, a.ar, () => { const s = document.createElement('span'); s.className = 'tmark'; s.dataset.anno = a.id; return s; });
 }
 function applyAnnos(it){
-  annosOf('hl', it.id).forEach(markHl);
+  annosOf('hl', it.id).forEach(a => { if (isSourceHighlight(a)) markHl(a); });
   annosOf('term', it.id).forEach(markTerm);
   annosOf('bm', it.id).forEach(b => { const el = bmEl(b); if (el) el.classList.add('is-bm'); });
 }
@@ -1202,15 +1202,16 @@ let SEL = null;
 function hideSel(){ $('#selbar').hidden = true; SEL = null; }
 function onSel(){
   if (cur.view !== 'read'){ hideSel(); return; }
-  if (TR_VIEW && RD && RD.screen && RD.screen[0] === 'c' && trIsArabic(RD.it, +RD.screen.slice(1))){ hideSel(); return; }
   const s = getSelection(); if (!s.rangeCount || s.isCollapsed){ hideSel(); return; }
   const r = s.getRangeAt(0); const sb = closestBk(r.startContainer), eb = closestBk(r.endContainer);
   if (!sb || !$('#v-read').contains(sb)){ hideSel(); return; }
   const q = s.toString().replace(/\s+/g, ' ').trim(); if (q.length < 2){ hideSel(); return; }
-  SEL = { bk:sb.dataset.bk, el:sb, quote:q, multi:sb !== eb };
+  const ci = RD && RD.screen && RD.screen[0] === 'c' ? +RD.screen.slice(1) : -1;
+  const arView = !!(RD && ci >= 0 && trIsArabic(RD.it, ci));
+  SEL = { bk:sb.dataset.bk, el:sb, quote:q, multi:sb !== eb, ar:arView, trFp:arView ? (RD.trFp || '') : '' };
   const nw = q.split(' ').length;
   $('[data-sel="meaning"]').hidden = nw > 3;
-  $('[data-sel="term"]').hidden = nw > 6;
+  $('[data-sel="term"]').hidden = arView || nw > 6;
   $('[data-sel="quote"]').hidden = q.length > 320;
   const bar = $('#selbar'); bar.hidden = false;
   if (!pref.get('selHint', false)){ pref.set('selHint', true); $('#selHint').hidden = true; }
@@ -1221,15 +1222,27 @@ function onSel(){
 }
 async function selAction(kind){
   const S = SEL; if (!S || !RD) return; const it = RD.it;
-  if (TR_VIEW && RD.screen && RD.screen[0] === 'c' && trIsArabic(it, +RD.screen.slice(1))){ hideSel(); return; }
   if (kind === 'meaning'){ const w = S.quote.replace(/[^\u0600-\u06FFa-zA-Z\s]/g, '').trim(); window.open('https://www.almaany.com/ar/dict/ar-ar/' + encodeURIComponent(stripD(w)) + '/', '_blank', 'noopener'); return; }
   if (kind === 'quote'){ getSelection().removeAllRanges(); hideSel(); const qa = { id:uid(), kind:'quote', itemId:it.id, bk:S.bk, text:S.quote, t:Date.now() }; await put('annos', qa); quoteModal(qa, it); return; }
-  if (kind === 'explain'){ getSelection().removeAllRanges(); hideSel(); if (aiReady()){ const b = blockOf(it, S.bk); openChat('book', it.id, { mode:'explain', attach:{ text:plain(b ? blockText(b) : S.el.innerText), where:whereOf(it, S.bk), bk:S.bk } }); } else explainCopy(S, it); return; }
+  if (kind === 'explain'){
+    getSelection().removeAllRanges(); hideSel();
+    if (aiReady()){
+      const b = blockOf(it, S.bk), src = b ? plain(blockText(b)) : '';
+      const attach = { text:S.quote, where:whereOf(it, S.bk), bk:S.bk };
+      if (S.ar && src) attach.source = src;
+      openChat('book', it.id, { mode:'explain', attach });
+    } else explainCopy(S, it);
+    return;
+  }
   if (S.multi){ toast('حدّد داخل فقرة وحدة'); return; }
+  if (kind === 'term' && S.ar){ toast('المصطلحات من النص الأصلي فقط حاليًا.'); return; }
   getSelection().removeAllRanges(); hideSel();
   if (HK[kind]){
     const a = { id:uid(), kind:'hl', hk:kind, itemId:it.id, bk:S.bk, text:S.quote, note:'', links:[], t:Date.now() };
-    await put('annos', a); markHl(a); drawerNav(it);
+    if (S.ar){ a.lang = 'ar'; a.trFp = S.trFp || (RD.trFp || ''); }
+    await put('annos', a);
+    if (!S.ar || isArabicHighlight(a, RD.trFp)) markHl(a);
+    drawerNav(it);
     if (kind === 'imp'){ await schedule([hlKey(a)]); updateDue(); }
     toast(kind === 'imp' ? 'ظلّلتها «مهم»، وبترجع لك في المراجعة' : 'ظلّلتها «' + HK[kind].l + '»');
   }
@@ -2946,6 +2959,21 @@ async function trToggle(){
   renderReader(cur.it, key, { screen:RD.screen, noFlash:true, tr:data });
 }
 
+function trApplyAnnos(it, ci){
+  const fp = (RD && RD.trFp) || '';
+  annosOf('hl', it.id).forEach(a => {
+    if (isArabicHighlight(a, fp)){ markHl(a); return; }
+    if (!isSourceHighlight(a)) return;
+    const el = $('#v-read [data-bk="' + CSS.escape(a.bk) + '"]'); if (!el) return;
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'tr-src-hl' + (a.note ? ' has-note' : '');
+    b.dataset.srcHl = a.id; b.title = 'تظليل في النص الأصلي'; b.setAttribute('aria-label', 'افتح التظليل الأصلي');
+    b.textContent = '•';
+    el.appendChild(b);
+  });
+  annosOf('bm', it.id).forEach(b => { const el = bmEl(b); if (el) el.classList.add('is-bm'); });
+}
+
 /** Replace block contents in the already-rendered chapter, before pagination runs. */
 function trApply(it, data, ci){
   if (!data || !Array.isArray(data.segments)) return;
@@ -3015,7 +3043,7 @@ function trApply(it, data, ci){
   const chapter = arr(it.chapters)[ci];
   const title = byId.get('c' + ci + ':title');
   const sectionTitles = {};
-  if (RD) RD.trTitle = title || '';
+  if (RD){ RD.trTitle = title || ''; RD.trFp = data.job && data.job.fingerprint ? data.job.fingerprint : ''; }
   const h2 = $('#v-read .divider#c' + ci + ' h2');
   if (h2 && title) h2.innerHTML = md(title);
   if (chapter) arr(chapter.sections).forEach((s, si) => {
@@ -3030,6 +3058,7 @@ function trApply(it, data, ci){
 
   $('#v-read').dir = 'rtl'; $('#v-read').lang = 'ar';
   document.body.classList.add('tr-view');
+  trApplyAnnos(it, ci);
   const note = document.createElement('div');
   note.className = 'tr-banner';
   note.innerHTML = '<b>ترجمة آلية</b><span>' + (missing ? 'بقيت ' + trNum(missing) + ' فقرة بالأصل. راجعها قبل الاعتماد.' : 'راجع النص الأصلي عند الشك.') + '</span><button type="button" class="tr-banner-btn" data-tr-setup>إعدادات الترجمة</button>';
@@ -3852,7 +3881,7 @@ function buildMessages(C){
     if (last.mode === 'link' && it) parts.push({ id:'rest_library', label:'باقي المكتبة', text:allItems().filter(x => x.id !== it.id).map(x => bookMemory(x, false)).join('\n\n') + passagesTxt(searchHits(q, 6).filter(h => h.it.id !== it.id)) });
   }
   const base = sysText() + (last.mode && MODES[last.mode] ? '\n\n' + MODES[last.mode].sys : '') + styleTxt();
-  const history = ms.slice(-16).map(m => ({ role:m.role, content:m.role === 'user' && m.attach ? '<quoted_passage>\n' + m.attach + '\n</quoted_passage>\n\n' + m.content : m.content }));
+  const history = ms.slice(-16).map(m => ({ role:m.role, content:m.role === 'user' && m.attach ? '<quoted_passage>\n' + m.attach + '\n</quoted_passage>' + (m.attachSrc ? '\n\n<source_text>\n' + m.attachSrc + '\n</source_text>' : '') + '\n\n' + m.content : m.content }));
   const cfg = aiCfg();
   const max = Math.max(1, Math.min(8000, Number(cfg.max) || AI_DEFAULTS.maxTokens));
   const budget = Math.max(1024, (Number(cfg.ctx) || AI_DEFAULTS.contextWindow) - max - 256);
@@ -3868,7 +3897,7 @@ async function chatSend(text, mode){
   if (!text) return;
   const um = { role:'user', content:text, t:Date.now() };
   if (md0) um.mode = md0;
-  if (C.attach){ um.attach = C.attach.text; um.where = C.attach.where; if (C.attach.bk) um.bk = C.attach.bk; C.attach = null; }
+  if (C.attach){ um.attach = C.attach.text; um.where = C.attach.where; if (C.attach.bk) um.bk = C.attach.bk; if (C.attach.source) um.attachSrc = C.attach.source; C.attach = null; }
   if (conv.bookId && !conv.anchor){ const bi = itemById(conv.bookId); if (bi) conv.anchor = anchorNow(bi, um.bk); }
   const ta = hq(C, '#chIn'); if (ta) ta.value = '';
   const cmd = localCommand(text);
@@ -5457,6 +5486,7 @@ async function init(){
     if (!t.closest('#ctxm') && !t.closest('[data-cmenu]')) closeCtx();
     if (t.closest('[data-fnclose]')){ hideFn(); return; }
     const al = t.closest('a[href^="#/"]'); if (al){ if (isMobile()) side(false); if (al.getAttribute('href') === location.hash){ e.preventDefault(); route(); } return; }
+    if (t.closest('[data-src-hl]')){ e.preventDefault(); hlSheet(t.closest('[data-src-hl]').dataset.srcHl); return; }
     if (t.closest('[data-tr-book]')){ e.preventDefault(); const it = itemById(t.closest('[data-tr-book]').dataset.trBook); if (it) trOpenBookSetup(it); return; }
     if (t.closest('[data-tr-open]')){ e.preventDefault(); trToggle(); return; }
     if (t.closest('[data-tr-pill-open]')){ e.preventDefault(); trOpenBookProgress(); return; }

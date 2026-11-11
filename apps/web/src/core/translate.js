@@ -413,6 +413,16 @@ export function chapterSourceHash(units) {
   return hashString((units || []).map(u => String(u.id) + '\u0000' + String(u.text)).join('\u0001'));
 }
 
+/** Arabic highlight matches only the exact translation fingerprint it was made on. */
+export function isArabicHighlight(a, trFp) {
+  return !!(a && a.kind === 'hl' && a.lang === 'ar' && a.trFp && a.trFp === trFp);
+}
+
+/** Original highlights (including old records without a lang field). */
+export function isSourceHighlight(a) {
+  return !!(a && a.kind === 'hl' && a.lang !== 'ar');
+}
+
 /** A cost above this needs a second explicit confirmation. */
 export function needsCostConfirm(cost, limit = 1) {
   return Number.isFinite(Number(cost)) && Number(cost) > Number(limit);
