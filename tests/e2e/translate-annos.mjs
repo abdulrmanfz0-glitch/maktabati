@@ -82,6 +82,8 @@ try {
   await settle(450);
   assert(await ev(`!document.querySelector('#selbar').hidden`), 'selection bar did not appear in Arabic view');
   assert(await ev(`document.querySelector('#selbar [data-sel="term"]').hidden`), 'term button should stay original-only');
+  const selected = await ev(`getSelection().toString().replace(/\\s+/g, ' ').trim()`);
+  assert(selected && !selected.includes('•'), 'selection quote contains the source marker glyph');
   await click('#selbar [data-sel="imp"]');
   await b.waitFor(`!!document.querySelector('#v-read mark.hl')`, 10000);
   const arAnno = await ev(`new Promise(res => { const r = indexedDB.open('maktabati'); r.onsuccess = () => { const q = r.result.transaction('annos').objectStore('annos').getAll(); q.onsuccess = () => res(q.result.find(a => a.lang === 'ar' && a.kind === 'hl') || null); q.onerror = () => res(null); }; r.onerror = () => res(null); })`);
