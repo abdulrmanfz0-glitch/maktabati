@@ -5,8 +5,8 @@ import { FILTER_ALL, FILTER_UNFILED, collectionKey, cleanName, makeCollection, c
 import { isPasteTooLarge, needsLowMemoryWarning } from '../core/limits.js';
 import { AI_DEFAULTS, basePolicy, keylessAllowed, estimateMessagesTokens, fitRequest, parseSSE, shouldRetry, retryDelayMs, validateCard, createTimeoutGuard, linkAbort, isDeepSeekBase, migrateDeepSeekModel } from '../core/ai.js';
 import { findNormalizedRange } from '../core/text.js';
-import { PROMPT_VERSION, CORRECTIVE_MESSAGE, parseGlossary, glossaryHash, glossaryForText, extractChapterUnits, chunkUnits, buildMessages as buildTranslationMessages, parseTranslation, qaSegment, estimateChapter, fingerprint, chapterSourceHash, lastTwoSentences } from '../core/translate.js';
-import { trGetJob, trPutJob, trGetSegments, trPutSegment, trDeleteJob, trGetGlossary, trPutGlossary, trDeleteBook, trClearAll } from '../core/translate-store.js';
+import { PROMPT_VERSION, CORRECTIVE_MESSAGE, parseGlossary, glossaryHash, glossaryForText, extractChapterUnits, chunkUnits, buildMessages as buildTranslationMessages, parseTranslation, qaSegment, estimateChapter, fingerprint, chapterSourceHash, lastTwoSentences, bookPlan, runConcurrent, hashString, isPeak } from '../core/translate.js';
+import { trGetJob, trPutJob, trListJobs, trGetSegments, trPutSegment, trDeleteJob, trGetGlossary, trPutGlossary, trDeleteBook, trClearAll } from '../core/translate-store.js';
 
 (function(){
 'use strict';
@@ -729,7 +729,7 @@ function renderBook(it){
     '<h1 class="bp-h" dir="auto">' + esc(it.title) + '</h1>' + (it.subtitle ? '<p class="bp-sub" dir="auto">' + esc(it.subtitle) + '</p>' : '') + (it.author ? '<p class="bp-au" dir="auto">' + esc(it.author) + '</p>' : '') +
     (it.translator ? '<p class="bp-m"><span>المترجم</span><bdi dir="auto">' + esc(it.translator) + '</bdi></p>' : '') + (it.originalTitle ? '<p class="bp-m"><span>العنوان الأصلي</span><bdi dir="ltr">' + esc(it.originalTitle) + '</bdi></p>' : '') +
     (it.whyRead ? '<div class="bp-why"><b>ليش أقرأه</b><p dir="auto">' + md(it.whyRead) + '</p></div>' : '') +
-    '<div class="bp-act"><button class="pbtn" data-href="' + R + '">' + go + '</button><button class="gbtn" data-bpa="chat">ناقش</button><button class="gbtn" data-bpa="cols">' + tx('المجموعات') + '</button><button class="gbtn" data-bpa="snd"' + (snd ? '' : ' disabled title="يتوفر مع ميزة الأصوات"') + '>أصوات</button><button class="gbtn" data-bpa="more" aria-label="المزيد" style="min-width:44px; padding:0">' + svg('dots') + '</button></div>' +
+    '<div class="bp-act"><button class="pbtn" data-href="' + R + '">' + go + '</button>' + trBookButton(it) + '<button class="gbtn" data-bpa="chat">ناقش</button><button class="gbtn" data-bpa="cols">' + tx('المجموعات') + '</button><button class="gbtn" data-bpa="snd"' + (snd ? '' : ' disabled title="يتوفر مع ميزة الأصوات"') + '>أصوات</button><button class="gbtn" data-bpa="more" aria-label="المزيد" style="min-width:44px; padding:0">' + svg('dots') + '</button></div>' +
     ingWarn(it) +
     '<div class="stats">' + cnt.map(c => '<div class="stat"><b>' + c[0] + '</b><span>' + c[1] + '</span></div>').join('') + '</div>' +
     (!n ? '<p class="empty" style="margin:1.25rem 0 0">هذا الكتاب ما فيه فصول محفوظة. جرّب استيراده مرة ثانية أو احذفه من المكتبة.</p>' : '') +
@@ -1002,6 +1002,7 @@ function coverHTML(it){
     (it.subtitle ? '<p class="sub">' + md(it.subtitle) + '</p>' : '') + (it.author ? '<p class="author">' + md(it.author) + '</p>' : '') +
     (it.originalTitle ? '<p class="orig"><bdi dir="ltr">' + esc(it.originalTitle) + '</bdi></p>' : '') +
     (it.whyRead ? '<p class="why"><b>ليش أقرأه</b>' + md(it.whyRead) + '</p>' : '') +
+    (it.type === 'book' ? '<div class="tr-cover-act">' + trBookButton(it, 'pbtn') + '</div>' : '') +
     (solo && total ? '<p class="orig" style="margin-top:1.5rem">قراءة تقريبًا ' + total + ' دقيقة</p>' : '') +
     (!chs.length ? '<p class="empty" style="margin-top:2rem">هذا الكتاب ما فيه فصول محفوظة. جرّب استيراده مرة ثانية أو احذفه من المكتبة.</p>' : '') + '</section>';
 }
@@ -1064,7 +1065,7 @@ function drawerNav(it){
   let n = '<button class="nav plain" data-href="#/hls/' + encodeURIComponent(it.id) + '"><span>تظليلاتي' + (hn ? ' <span class="count">' + hn + '</span>' : '') + '</span></button>' + (it.intro ? '<button class="nav plain" data-go="intro">المقدّمة</button>' : '') + (!solo ? '<button class="nav plain" data-go="map">خريطة ' + (it.type === 'book' ? 'الكتاب' : 'النص') + '</button>' : '');
   chs.forEach((c, ci) => {
     const ct = tr && ci === curCi && tr.chapter ? tr.chapter : c.title;
-    n += '<div class="dr-sec">' + (solo ? '' : '<button class="nav" data-go="c' + ci + '"><span class="n">' + (ci + 1) + '</span><span style="font-weight:600">' + md(ct || 'فصل ' + (ci + 1)) + '</span>' + stHTML(it, 'c' + ci) + '</button>') +
+    n += '<div class="dr-sec">' + (solo ? '' : '<button class="nav" data-go="c' + ci + '"><span class="n">' + (ci + 1) + '</span><span style="font-weight:600">' + md(ct || 'فصل ' + (ci + 1)) + '</span>' + trTocBadge(it.id, ci) + stHTML(it, 'c' + ci) + '</button>') +
       arr(c.sections).map((s, si) => {
         const st = tr && ci === curCi && tr.sections && tr.sections[si] ? tr.sections[si] : s.title;
         return st ? '<button class="nav sub" data-go="s-' + ci + '-' + si + '"><span class="n">' + (ci + 1) + '.' + (si + 1) + '</span><span>' + md(st) + '</span></button>' : '';
@@ -1166,7 +1167,7 @@ function renderReader(it, target, o){
   if (paged){ screen = o.screen || (target && screenOf(target)) || (loc && loc.s) || 'cover'; if (!list.includes(screen)) screen = 'cover'; }
   const q = RD && RD.it === it ? RD.q : '';
   RD = { it, paged, screen, list, q };
-  if (!tr && TR_VIEW && screen && screen[0] === 'c' && TR_VIEW.ci === +screen.slice(1)) TR_VIEW = null;
+  if (!tr && TR_VIEW && !TR_VIEW.whole && screen && screen[0] === 'c' && TR_VIEW.ci === +screen.slice(1)) TR_VIEW = null;
   it.lastOpened = Date.now(); put('items', it);
   $('#tbTitle').textContent = it.title; document.title = it.title + ' · مكتبتي';
   const bd = bookDir(it); $('#v-read').dir = bd; $('#v-read').lang = bd === 'rtl' ? 'ar' : 'en';
@@ -1178,6 +1179,13 @@ function renderReader(it, target, o){
   trRefreshButton();
   observe(it); showBar(); quietUntil = Date.now() + 600;
   rtMount(it, target, o, loc);
+  if (!tr && TR_VIEW && TR_VIEW.bookId === it.id && TR_VIEW.whole && screen && screen[0] === 'c' && !o.trLoading){
+    const ci = +screen.slice(1);
+    trLoad(it.id, ci, true).then(data => {
+      if (data && RD && RD.it === it && RD.screen === screen) renderReader(it, target, Object.assign({}, o, { tr:data, trLoading:true }));
+    });
+  }
+  if (trBookIsEnglish(it)) trLoadBookStatus(it).then(() => { if (RD && RD.it === it) drawerNav(it); });
   requestAnimationFrame(() => {
     if (RT && RT.paged) return;
     const jump = y => { const d = document.documentElement; d.style.scrollBehavior = 'auto'; window.scrollTo(0, y); d.style.scrollBehavior = ''; };
@@ -2605,10 +2613,14 @@ let TR_VIEW = null;              /* { bookId, ci } while the Arabic view is on *
 const TR_CACHE = new Map();      /* bookId:ci -> { job, segments } */
 const TR_RUN = new Map();        /* jobId -> AbortController */
 let TR_LAST = null;              /* { it, ci, units, terms, cfg, chunks, job } for resume */
+const TR_BOOK_RUN = new Map();   /* bookId -> AbortController */
+const TR_STATUS_CACHE = new Map();
+let TR_BOOK_LAST = null;         /* whole-book context for the pill/resume */
+let TR_PILL = null;
 
 const trChapterKey = (bookId, ci) => bookId + ':c' + ci;
 const trJobId = (it, ci) => trChapterKey(it.id, ci);
-const trIsArabic = (it, ci) => !!(TR_VIEW && TR_VIEW.bookId === it.id && TR_VIEW.ci === ci);
+const trIsArabic = (it, ci) => !!(TR_VIEW && TR_VIEW.bookId === it.id && (TR_VIEW.whole || TR_VIEW.ci === ci));
 const TR_EN = new WeakMap();
 const trBookIsEnglish = it => {
   if (!it) return false;
@@ -2617,6 +2629,10 @@ const trBookIsEnglish = it => {
   TR_EN.set(it, v);
   return v;
 };
+function trBookButton(it, cls){
+  if (!it || it.type !== 'book' || !trBookIsEnglish(it)) return '';
+  return '<button type="button" class="' + (cls || 'gbtn') + ' tr-book-btn" data-tr-book="' + esc(it.id) + '">ترجمة الكتاب</button>';
+}
 const trAckKey = 'maktabati:trAck';
 function trAcked(bookId){
   try { const a = JSON.parse(localStorage.getItem(trAckKey) || '[]'); return Array.isArray(a) && a.includes(bookId); } catch (e) { return false; }
@@ -2877,6 +2893,8 @@ async function trTranslateChunk(o){
 
 function trCompleteUI(job){
   const box = $('#modalBox'); if (!box) return;
+  const book = itemById(job.bookId);
+  if (book){ trInvalidateBookStatus(book.id); trLoadBookStatus(book).then(() => { if (RD && RD.it === book) drawerNav(book); }); }
   const warns = Number(job.warnings) || 0;
   const errs = Number(job.failed) || 0;
   const note = errs ? 'اكتملت مع أخطاء في ' + trNum(errs) + ' مقطعًا. راجع التحذيرات قبل الاعتماد.' : (warns ? 'اكتملت مع ' + trNum(warns) + ' مقطعًا يحتاج مراجعة.' : 'اكتملت الترجمة.');
@@ -2889,6 +2907,8 @@ function trCompleteUI(job){
 }
 function trPauseUI(job, message){
   const box = $('#modalBox'); if (!box) return;
+  const book = itemById(job.bookId);
+  if (book){ trInvalidateBookStatus(book.id); trLoadBookStatus(book).then(() => { if (RD && RD.it === book) drawerNav(book); }); }
   box.innerHTML = '<div class="mhead"><h3>توقفت الترجمة</h3>' + closeBtn + '</div>' +
     '<div class="msg">' + esc(message) + '</div>' +
     '<p class="hint">' + trNum(job.done) + ' من ' + trNum(job.total) + ' مقطعًا محفوظة. تقدر تستكمل من آخر مقطع.</p>' +
@@ -2897,13 +2917,14 @@ function trPauseUI(job, message){
   const n = $('#trNew'); if (n) n.onclick = async () => { if (TR_LAST && TR_LAST.job) await trDeleteJob(TR_LAST.job.id); TR_LAST = null; closeModal(true); trOpenSetup(); };
 }
 
-async function trShowArabic(){
+async function trShowArabic(whole){
   const cur = trCurrent(); if (!cur) return;
   const data = await trLoad(cur.it.id, cur.ci, true);
   if (!data || !data.segments.length){ toast('ما فيه ترجمة محفوظة لهذا الفصل'); return; }
   const key = (topBlock() && topBlock().dataset.bk) || RD.screen;
   closeModal(true);
-  TR_VIEW = { bookId:cur.it.id, ci:cur.ci };
+  const all = whole === true || (whole !== false && await trAllDone(cur.it));
+  TR_VIEW = { bookId:cur.it.id, ci:cur.ci, whole:all };
   renderReader(cur.it, key, { screen:RD.screen, noFlash:true, tr:data });
 }
 
@@ -2921,14 +2942,15 @@ async function trToggle(){
     return;
   }
   const key = (topBlock() && topBlock().dataset.bk) || RD.screen;
-  TR_VIEW = { bookId:cur.it.id, ci:cur.ci };
+  TR_VIEW = { bookId:cur.it.id, ci:cur.ci, whole:await trAllDone(cur.it) };
   renderReader(cur.it, key, { screen:RD.screen, noFlash:true, tr:data });
 }
 
 /** Replace block contents in the already-rendered chapter, before pagination runs. */
 function trApply(it, data, ci){
   if (!data || !Array.isArray(data.segments)) return;
-  TR_VIEW = { bookId:it.id, ci };
+  const whole = !!(TR_VIEW && TR_VIEW.bookId === it.id && TR_VIEW.whole);
+  TR_VIEW = { bookId:it.id, ci, whole };
   const units = [], byId = new Map();
   for (const seg of data.segments){
     for (const u of seg.units || []) units.push(u);
@@ -3017,7 +3039,466 @@ function trApply(it, data, ci){
 
 
 
-/* ---------- reading memory + library map ---------- */
+/* ---------- whole-book translation ---------- */
+const trBookJobId = bookId => 'book:' + bookId;
+const trIsPdf = it => !!(it && it.ingest && it.ingest.kind === 'pdf');
+
+function trTocBadge(bookId, ci){
+  const c = TR_STATUS_CACHE.get(bookId), row = c && c.chapters && c.chapters[ci];
+  if (!row || row.state === 'none' || row.empty) return '';
+  return row.state === 'done' ? '<span class="tr-toc done">مترجم</span>' : '<span class="tr-toc partial">جزئي</span>';
+}
+
+function trChapterExpected(it, ci, terms, cfg){
+  const units = extractChapterUnits(it, ci, { pdf:trIsPdf(it) });
+  const chunks = chunkUnits(units, { target:1800, max:2500 });
+  const fp = fingerprint({ sourceHash:chapterSourceHash(units), model:cfg.model, base:cfg.base, promptVersion:PROMPT_VERSION, glossaryHash:glossaryHash(terms) });
+  return { units, chunks, fingerprint:fp };
+}
+
+async function trChapterState(it, ci, terms, cfg, expected){
+  const id = trJobId(it, ci), job = await trGetJob(id);
+  if (!job) return { state:'none', job:null, segments:[] };
+  const segments = await trGetSegments(id);
+  const done = segments.filter(s => s.status === 'done' || s.status === 'warn').length;
+  const errors = segments.filter(s => s.status === 'error').length;
+  if (job.fingerprint !== expected.fingerprint) return { state:'none', stale:true, job, segments };
+  if (done >= expected.chunks.length && !errors) return { state:'done', job, segments };
+  return { state:(done || segments.length) ? 'partial' : 'none', job, segments };
+}
+
+async function trLoadBookStatus(it, terms, cfg, force){
+  if (!it || it.type !== 'book' || !trBookIsEnglish(it)) return null;
+  const hit = TR_STATUS_CACHE.get(it.id);
+  if (hit && !force && Date.now() - hit.at < 15000) return hit;
+  cfg = cfg || aiCfg();
+  if (!terms){ const g = await trGetGlossary(it.id); terms = g && Array.isArray(g.terms) ? g.terms : []; }
+  const chapters = {}; let any = false, all = true;
+  const chs = arr(it.chapters);
+  for (let ci = 0; ci < chs.length; ci++){
+    const expected = trChapterExpected(it, ci, terms, cfg);
+    if (!expected.units.length){ chapters[ci] = { state:'none', empty:true }; continue; }
+    any = true;
+    const st = await trChapterState(it, ci, terms, cfg, expected);
+    chapters[ci] = st;
+    if (st.state !== 'done') all = false;
+  }
+  const data = { at:Date.now(), chapters, allDone:any && all };
+  TR_STATUS_CACHE.set(it.id, data);
+  return data;
+}
+async function trAllDone(it){
+  const s = await trLoadBookStatus(it);
+  return !!(s && s.allDone);
+}
+function trInvalidateBookStatus(bookId){ TR_STATUS_CACHE.delete(bookId); }
+
+function trBookSourceHash(it){
+  return hashString(arr(it.chapters).map((_, ci) => chapterSourceHash(extractChapterUnits(it, ci, { pdf:trIsPdf(it) }))).join('|'));
+}
+function trBookFingerprint(it, terms, cfg){
+  return fingerprint({ sourceHash:trBookSourceHash(it), model:cfg.model, base:cfg.base, promptVersion:PROMPT_VERSION, glossaryHash:glossaryHash(terms) });
+}
+async function trBookStates(it, terms, cfg){
+  const status = await trLoadBookStatus(it, terms, cfg, true), out = {};
+  if (status) for (const ci of Object.keys(status.chapters)){
+    const row = status.chapters[ci];
+    if (row && row.job) out[ci] = { state:row.state, fingerprint:row.job.fingerprint };
+  }
+  return out;
+}
+async function trBookPlanFor(it, from, to, terms, cfg, concurrency){
+  const states = await trBookStates(it, terms, cfg);
+  return bookPlan(it, { from, to, glossary:terms, model:cfg.model, base:cfg.base, pdf:trIsPdf(it), states, concurrency });
+}
+
+function trBookTime(sec){
+  const m = Math.max(1, Math.round(Number(sec || 0) / 60));
+  return m + ' دقيقة';
+}
+function trBookSummaryHTML(plan){
+  const t = plan.totals;
+  if (!t.segments) return '<div class="msg ok">كل الفصول المحددة مترجمة بالفعل.</div>';
+  let cost = '';
+  if (t.unknownPrice) cost = '<p class="tr-cost">التوكنات فقط؛ سعر هذا النموذج غير معروف.</p>';
+  else if (t.peakCost > 0) cost = '<div class="tr-cost"><b>التكلفة التقديرية:</b> خارج الذروة ' + trMoney(t.cost) + ' · الذروة ' + trMoney(t.peakCost) + '<br><span>السعر الآن: ' + (isPeak(new Date()) ? 'ذروة' : 'خارج الذروة') + ' · تقدير وليس فاتورة.</span></div>';
+  else cost = '<div class="tr-cost"><b>التكلفة التقديرية:</b> ' + trMoney(t.cost) + ' <span>· تقدير وليس فاتورة.</span></div>';
+  return '<div class="tr-grid"><div><b>' + trNum(t.chapters) + '</b><span>فصل</span></div><div><b>' + trNum(t.words) + '</b><span>كلمة</span></div><div><b>' + trNum(t.segments) + '</b><span>مقطع</span></div><div><b>' + trNum(t.inputTokens) + '</b><span>توكن إدخال</span></div><div><b>' + trNum(t.outputTokens) + '</b><span>توكن إخراج</span></div><div><b>' + trNum(t.done) + '</b><span>مكتمل</span></div></div>' +
+    cost + '<p class="hint">الوقت التقديري: ' + trBookTime(t.timeLowSec) + ' – ' + trBookTime(t.timeHighSec) + ' · تقدير تقريبي يعتمد على سرعة المزوّد.</p>';
+}
+function trBookRowsHTML(plan){
+  return plan.rows.map(r => {
+    const st = r.skipped ? '<span class="tr-toc done">مترجم — سيُتخطى</span>' : r.state === 'done' ? '<span class="tr-toc done">مترجم</span>' : r.state === 'partial' ? '<span class="tr-toc partial">جزئي</span>' : r.empty ? '<span class="tr-toc">فارغ</span>' : '<span class="tr-toc">لم يُترجم</span>';
+    return '<div class="tr-book-row"><span class="n">' + (r.ci + 1) + '</span><span class="t" dir="auto">' + esc(r.title) + '</span>' + st + '<span class="m">' + trNum(r.segments) + ' مقطع</span></div>';
+  }).join('');
+}
+
+async function trOpenBookSetup(it){
+  if (!it || it.type !== 'book' || !trBookIsEnglish(it)) return;
+  if (!aiReady()){ toast('اضبط الذكاء من «الإعدادات» أول'); location.hash = '#/profile/ai'; return; }
+  const cfg = aiCfg();
+  const gdoc = await trGetGlossary(it.id);
+  const terms = gdoc && Array.isArray(gdoc.terms) ? gdoc.terms : [];
+  const chs = arr(it.chapters).filter(c => c && typeof c === 'object');
+  const last = chs.length - 1;
+  if (last < 0) return;
+  let curCi = 0;
+  if (RD && RD.it === it && RD.screen && RD.screen[0] === 'c') curCi = +RD.screen.slice(1);
+  else if (cur.view === 'book' && cur.id === it.id) curCi = Math.max(0, curChap(it));
+  let conc = Number(localStorage.getItem('maktabati:trConc')) || 3;
+  conc = Math.max(1, Math.min(3, conc));
+  const status = await trLoadBookStatus(it, terms, cfg, true);
+  const planAll = await trBookPlanFor(it, 0, last, terms, cfg, conc);
+  const planFrom = curCi > 0 ? await trBookPlanFor(it, curCi, last, terms, cfg, conc) : planAll;
+  const bookJob = await trGetJob(trBookJobId(it.id));
+  const bfp = trBookFingerprint(it, terms, cfg);
+  const allDone = !!(status && status.allDone);
+  const S = { it, cfg, terms, curCi, last, conc, planAll, planFrom, range:'all', bookJob, bfp, allDone, acked:trAcked(it.id) };
+  const primary = allDone ? 'اقرأ الكتاب بالعربية' : (bookJob && bookJob.fingerprint === bfp && bookJob.status !== 'done' ? 'استكمل ترجمة الكتاب' : 'ابدأ ترجمة الكتاب');
+  openModal('<div class="mhead"><h3>ترجمة الكتاب</h3>' + closeBtn + '</div>' +
+    '<p class="tr-title" dir="auto">' + esc(it.title) + '</p>' +
+    '<div class="msg"><b>التبويب لازم يبقى مفتوحًا.</b><br>الترجمة تتوقف إذا أغلقت التبويب، وتستأنف من أول مقطع غير مكتمل عند فتحه من جديد.</div>' +
+    '<div class="seg tr-book-range" role="group" aria-label="نطاق الترجمة"><button type="button" data-trr="all" aria-pressed="true">كل الفصول</button><button type="button" data-trr="from"' + (curCi > 0 ? '' : ' disabled') + ' aria-pressed="false">من الفصل الحالي (' + (curCi + 1) + ') إلى النهاية</button></div>' +
+    '<div id="trBookSummary"></div><div id="trBookChapters" class="tr-book-list"></div>' +
+    '<label class="flabel" for="trBookConc">التوازي</label><select class="inp" id="trBookConc"><option value="1">1 — متسلسل</option><option value="2">2</option><option value="3">3 — أسرع</option></select>' +
+    '<label class="flabel" for="trGlossBook">قاموس المصطلحات (اختياري)</label><textarea class="inp tr-gloss" id="trGlossBook" rows="4" dir="auto">' + esc(terms.map(t => t.en + ' = ' + t.ar).join('\n')) + '</textarea>' +
+    '<p class="hint">سطر لكل مصطلح: English = عربي. يُرسل فقط ما يظهر في المقطع.</p>' +
+    '<label class="tr-check"><input type="checkbox" id="trBookAck"' + (S.acked ? ' checked' : '') + '> أترجم نسخة أملكها للاستخدام الشخصي فقط، ولن أنشر الترجمة. نص الكتاب سيُرسل إلى مزود الذكاء الذي اخترته.</label>' +
+    '<div class="msg" id="trBookMsg"></div>' +
+    '<div class="sh-actions"><button class="pbtn" id="trBookGo"' + (S.acked ? '' : ' disabled') + '>' + primary + '</button><button class="gbtn" data-close>إلغاء</button></div>', true);
+  const concEl = $('#trBookConc'); concEl.value = String(conc);
+  const ack = $('#trBookAck'), go = $('#trBookGo');
+
+  const draw = () => {
+    const plan = S.range === 'from' ? S.planFrom : S.planAll;
+    $('#trBookSummary').innerHTML = trBookSummaryHTML(plan);
+    $('#trBookChapters').innerHTML = trBookRowsHTML(plan);
+    const p = S.allDone || !plan.totals.segments ? 'اقرأ الكتاب بالعربية' : (S.bookJob && S.bookJob.fingerprint === S.bfp && S.bookJob.status !== 'done' ? 'استكمل ترجمة الكتاب' : 'ابدأ ترجمة الكتاب');
+    go.textContent = p;
+    go.disabled = !ack.checked;
+  };
+  draw();
+  $$('.tr-book-range [data-trr]').forEach(b => b.onclick = () => {
+    if (b.disabled) return;
+    S.range = b.dataset.trr;
+    $$('.tr-book-range [data-trr]').forEach(x => x.setAttribute('aria-pressed', x === b ? 'true' : 'false'));
+    draw();
+  });
+  concEl.onchange = async () => {
+    S.conc = Math.max(1, Math.min(3, Number(concEl.value) || 3));
+    try { localStorage.setItem('maktabati:trConc', String(S.conc)); } catch (e) {}
+    S.planAll = await trBookPlanFor(it, 0, S.last, S.terms, S.cfg, S.conc);
+    S.planFrom = S.curCi > 0 ? await trBookPlanFor(it, S.curCi, S.last, S.terms, S.cfg, S.conc) : S.planAll;
+    draw();
+  };
+  ack.addEventListener('change', () => { go.disabled = !ack.checked; });
+  go.onclick = async () => {
+    if (!ack.checked) return;
+    trAck(it.id);
+    const nextTerms = parseGlossary($('#trGlossBook').value);
+    await trPutGlossary(it.id, nextTerms);
+    const from = S.range === 'from' ? S.curCi : 0;
+    const plan = await trBookPlanFor(it, from, S.last, nextTerms, S.cfg, S.conc);
+    S.terms = nextTerms; S.from = from; S.to = S.last; S.plan = plan;
+    S.bfp = trBookFingerprint(it, nextTerms, S.cfg);
+    if ((S.allDone || !plan.totals.segments) && from === 0){ closeModal(true); trShowWholeBook(it); return; }
+    if (plan.needsConfirm){ trBookConfirm(S, plan); return; }
+    trStartBook(S, plan);
+  };
+}
+
+function trBookConfirm(S, plan){
+  const cost = plan.totals.peakCost > 0 ? 'خارج الذروة ' + trMoney(plan.totals.cost) + ' · الذروة ' + trMoney(plan.totals.peakCost) : trMoney(plan.totals.cost);
+  openModal('<div class="mhead"><h3>تأكيد التكلفة</h3>' + closeBtn + '</div>' +
+    '<p class="tr-title">التقدير أعلى من 1.00$.</p>' +
+    '<div class="msg"><b>التكلفة التقديرية: ' + cost + '</b><br>هذا تقدير وليس فاتورة، وقد يزيد حسب طول الترجمة والتكرارات.</div>' +
+    '<div class="sh-actions"><button class="pbtn" id="trCostGo">تأكيد البدء</button><button class="gbtn" id="trCostBack">رجوع</button></div>', true);
+  $('#trCostGo').onclick = () => trStartBook(S, plan);
+  $('#trCostBack').onclick = () => trOpenBookSetup(S.it);
+}
+
+async function trStartBook(S, plan){
+  const { it, cfg, terms } = S;
+  const from = S.range === 'from' ? S.curCi : 0;
+  const to = S.last;
+  const id = trBookJobId(it.id);
+  let job = await trGetJob(id);
+  if (job && (job.fingerprint !== S.bfp || job.from !== from || job.to !== to || job.status === 'done')){ await trDeleteJob(id); job = null; }
+  const totalSegments = plan.rows.reduce((n, r) => n + r.segments, 0);
+  const chapters = {};
+  plan.rows.forEach(r => {
+    const old = job && job.chapters && job.chapters[r.ci];
+    const done = r.skipped ? r.segments : Math.min(r.segments, Number(old && old.done) || 0);
+    chapters[r.ci] = { ci:r.ci, title:r.title, state:r.skipped ? 'done' : r.state, total:r.segments, done, warnings:old ? old.warnings || 0 : 0, failed:old ? old.failed || 0 : 0, status:r.skipped ? 'done' : (old && old.status === 'partial' ? 'partial' : (r.state === 'partial' ? 'partial' : 'pending')) };
+  });
+  if (!job){
+    job = { id, kind:'book', bookId:it.id, model:cfg.model, base:cfg.base, promptVersion:PROMPT_VERSION, glossaryHash:glossaryHash(terms), fingerprint:S.bfp, from, to, concurrency:S.conc, status:'paused', totalSegments, doneSegments:0, totalChapters:plan.rows.length, doneChapters:0, chapters, createdAt:Date.now(), updatedAt:Date.now() };
+  } else {
+    job.model = cfg.model; job.base = cfg.base; job.promptVersion = PROMPT_VERSION; job.glossaryHash = glossaryHash(terms); job.fingerprint = S.bfp;
+    job.from = from; job.to = to; job.concurrency = S.conc; job.totalSegments = totalSegments;
+    job.totalChapters = plan.rows.length; job.chapters = Object.assign({}, job.chapters || {}, chapters);
+  }
+  trBookRecount(job);
+  await trPutJob(job);
+  TR_BOOK_LAST = { it, terms, cfg, from, to, concurrency:S.conc, plan, bookJob:job };
+  trRunBook(TR_BOOK_LAST);
+}
+
+function trBookRecount(job){
+  let done = 0, chapters = 0;
+  for (const k of Object.keys(job.chapters || {})){
+    const c = job.chapters[k];
+    done += Number(c.done) || 0;
+    if (c.status === 'done') chapters++;
+  }
+  job.doneSegments = done;
+  job.doneChapters = chapters;
+}
+
+async function trRunChapterSegments(o){  const { chunks, job, terms, signal, concurrency } = o;
+  const existing = new Map((await trGetSegments(job.id)).map(s => [s.index, s]));
+  let done = 0, failed = 0, warnings = 0;
+  const pending = [];
+  for (let i = 0; i < chunks.length; i++){
+    const old = existing.get(i);
+    if (old && (old.status === 'done' || old.status === 'warn')){ done++; if (old.status === 'warn') warnings++; }
+    else pending.push(i);
+  }
+  let limit = Math.max(1, Math.min(3, concurrency || 1));
+  let pos = 0;
+  while (pos < pending.length){
+    if (signal.aborted) return { done, failed, warnings, paused:true, reason:'abort' };
+    const batch = pending.slice(pos, pos + limit);
+    const results = await runConcurrent(batch, async i => {
+      const context = i ? lastTwoSentences(chunks[i - 1].units.map(u => u.text).join(' ')) : '';
+      const text = chunks[i].units.map(u => u.text).join(' ');
+      const gloss = glossaryForText(terms, text);
+      try { return { i, result:await trTranslateChunk({ units:chunks[i].units, context, glossary:gloss, signal, depth:0 }) }; }
+      catch (e) {
+        if (e && e.name === 'AbortError') throw e;
+        if (e && e.status === 429) return { i, rate:true };
+        return { i, error:e };
+      }
+    }, { limit:batch.length });
+    const rates = [];
+    for (const res of results){
+      if (res.rate){ rates.push(res.i); continue; }
+      if (res.error){
+        await trPutSegment({ jobId:job.id, index:res.i, units:chunks[res.i].units, items:[], status:'error', qa:{ ok:false, hard:['request'], warn:[], details:{ error:String(res.error && (res.error.message || res.error.status) || res.error) } }, t:Date.now() });
+        failed++;
+        continue;
+      }
+      const r = res.result;
+      const saved = await trPutSegment({ jobId:job.id, index:res.i, units:chunks[res.i].units, items:r.items, status:r.status, qa:r.qa, t:Date.now() });
+      if (saved){ done++; if (r.status === 'warn') warnings++; if (r.status === 'error') failed++; }
+      else failed++;
+    }
+    job.done = done; job.failed = failed; job.warnings = warnings; job.updatedAt = Date.now();
+    await trPutJob(job);
+    o.onProgress && o.onProgress({ done, total:chunks.length, warnings, failed });
+    if (rates.length){
+      if (limit > 1){
+        limit = 1;
+        pending.splice(pos + batch.length, 0, ...rates);
+        pos += batch.length;
+        continue;
+      }
+      return { done, failed, warnings, paused:true, reason:'429' };
+    }
+    pos += batch.length;
+  }
+  return { done, failed, warnings, paused:false };
+}
+
+async function trRunBook(ctx){
+  const { it, terms, cfg, from, to, bookJob } = ctx;
+  const ctrl = new AbortController();
+  TR_BOOK_RUN.set(it.id, ctrl);
+  bookJob.status = 'running'; bookJob.updatedAt = Date.now();
+  await trPutJob(bookJob);
+  trBookPillShow(bookJob);
+  trBookProgressUI(bookJob);
+  let failed = 0;
+  try {
+    for (let ci = from; ci <= to; ci++){
+      if (ctrl.signal.aborted) break;
+      const expected = trChapterExpected(it, ci, terms, cfg);
+      if (!expected.units.length){
+        bookJob.chapters[ci] = { ci, title:arr(it.chapters)[ci] && arr(it.chapters)[ci].title || ('الفصل ' + (ci + 1)), state:'done', total:0, done:0, warnings:0, failed:0, status:'done' };
+        trBookRecount(bookJob); bookJob.updatedAt = Date.now(); await trPutJob(bookJob);
+        trBookProgressUI(bookJob); trBookPillUpdate(bookJob);
+        continue;
+      }
+      let cj = await trGetJob(trJobId(it, ci));
+      let segs = cj ? await trGetSegments(cj.id) : [];
+      if (cj && cj.fingerprint !== expected.fingerprint){ await trDeleteJob(cj.id); cj = null; segs = []; }
+      const doneBefore = segs.filter(s => s.status === 'done' || s.status === 'warn').length;
+      if (cj && doneBefore >= expected.chunks.length && !segs.some(s => s.status === 'error')){
+        cj.status = 'done'; cj.done = doneBefore; cj.updatedAt = Date.now(); await trPutJob(cj);
+        bookJob.chapters[ci] = { ci, title:arr(it.chapters)[ci] && arr(it.chapters)[ci].title || ('الفصل ' + (ci + 1)), state:'done', total:expected.chunks.length, done:doneBefore, warnings:segs.filter(s => s.status === 'warn').length, failed:0, status:'done' };
+        trBookRecount(bookJob); bookJob.updatedAt = Date.now(); await trPutJob(bookJob);
+        trBookProgressUI(bookJob); trBookPillUpdate(bookJob);
+        continue;
+      }
+      if (!cj){
+        cj = { id:trJobId(it, ci), bookId:it.id, chapterIndex:ci, chapterTitle:arr(it.chapters)[ci] && arr(it.chapters)[ci].title || ('الفصل ' + (ci + 1)), sourceHash:chapterSourceHash(expected.units), model:cfg.model, base:cfg.base, promptVersion:PROMPT_VERSION, glossaryHash:glossaryHash(terms), fingerprint:expected.fingerprint, status:'paused', total:expected.chunks.length, done:doneBefore, failed:0, warnings:0, createdAt:Date.now(), updatedAt:Date.now() };
+        await trPutJob(cj);
+      } else { cj.status = 'running'; cj.updatedAt = Date.now(); await trPutJob(cj); }
+      bookJob.currentChapter = ci; bookJob.chapterDone = doneBefore; bookJob.chapterTotal = expected.chunks.length; bookJob.updatedAt = Date.now();
+      await trPutJob(bookJob);
+      trBookProgressUI(bookJob);
+      const oldDone = Number(bookJob.chapters[ci] && bookJob.chapters[ci].done) || 0;
+      const baseDone = Math.max(0, (Number(bookJob.doneSegments) || 0) - oldDone);
+      let r;
+      try {
+        r = await trRunChapterSegments({ it, ci, chunks:expected.chunks, job:cj, terms, signal:ctrl.signal, concurrency:ctx.concurrency, onProgress:p => { bookJob.chapterDone = p.done; bookJob.chapterTotal = p.total; bookJob.doneSegments = baseDone + p.done; trBookProgressUI(bookJob); trBookPillUpdate(bookJob); } });
+      } catch (e) {
+        if (e && e.name === 'AbortError'){ bookJob.status = 'paused'; break; }
+        throw e;
+      }
+      if (r.paused){
+        cj.status = 'paused'; cj.done = r.done; cj.failed = r.failed; cj.warnings = r.warnings; cj.updatedAt = Date.now(); await trPutJob(cj);
+        bookJob.chapters[ci] = { ci, title:cj.chapterTitle, state:'partial', total:expected.chunks.length, done:r.done, warnings:r.warnings, failed:r.failed, status:'partial' };
+        bookJob.status = 'paused'; trBookRecount(bookJob); bookJob.updatedAt = Date.now(); await trPutJob(bookJob);
+        trBookPillUpdate(bookJob, true);
+        trBookPauseUI(bookJob, r.reason === '429' ? 'المزوّد يطلب تهدئة الطلبات (429). توقفت ترجمة الكتاب مؤقتًا.' : 'توقفت ترجمة الكتاب. تقدر تستكمل من أول مقطع غير مكتمل.');
+        return;
+      }
+      cj.status = r.failed ? 'partial' : 'done'; cj.done = r.done; cj.failed = r.failed; cj.warnings = r.warnings; cj.updatedAt = Date.now(); await trPutJob(cj);
+      bookJob.chapters[ci] = { ci, title:cj.chapterTitle, state:cj.status, total:expected.chunks.length, done:r.done, warnings:r.warnings, failed:r.failed, status:cj.status };
+      failed += r.failed;
+      trBookRecount(bookJob);
+      bookJob.updatedAt = Date.now(); await trPutJob(bookJob);
+      trInvalidateBookStatus(it.id);
+      trBookProgressUI(bookJob); trBookPillUpdate(bookJob);
+    }
+    bookJob.status = ctrl.signal.aborted ? 'paused' : (failed ? 'partial' : 'done');
+    trBookRecount(bookJob);
+    bookJob.updatedAt = Date.now(); await trPutJob(bookJob);
+    TR_BOOK_RUN.delete(it.id);
+    trInvalidateBookStatus(it.id);
+    if (bookJob.status === 'paused'){
+      trBookPillUpdate(bookJob, true);
+      trBookPauseUI(bookJob, 'توقفت ترجمة الكتاب. تقدر تستكمل من أول مقطع غير مكتمل.');
+    } else {
+      await trLoadBookStatus(it, terms, cfg, true);
+      if (RD && RD.it === it) drawerNav(it);
+      trBookCompleteUI(bookJob);
+    }
+  } catch (e) {
+    TR_BOOK_RUN.delete(it.id);
+    if (e && e.name === 'AbortError'){
+      bookJob.status = 'paused'; bookJob.updatedAt = Date.now(); await trPutJob(bookJob);
+      trBookPillUpdate(bookJob, true);
+      trBookPauseUI(bookJob, 'توقفت ترجمة الكتاب. تقدر تستكمل من أول مقطع غير مكتمل.');
+      return;
+    }
+    bookJob.status = 'partial'; bookJob.updatedAt = Date.now(); await trPutJob(bookJob);
+    trBookPillHide();
+    trBookPauseUI(bookJob, 'توقفت الترجمة بسبب خطأ في أحد المقاطع. المقاطع المحفوظة باقية، وتقدر تستكمل.');
+  }
+}
+
+function trBookPillEnsure(){
+  if (TR_PILL) return TR_PILL;
+  const el = document.createElement('div');
+  el.id = 'trBookPill'; el.className = 'tr-pill'; el.hidden = true;
+  el.innerHTML = '<button type="button" class="tr-pill-main" data-tr-pill-open><b>ترجمة الكتاب</b><span id="trPillText"></span><i><span id="trPillBar"></span></i></button><button type="button" class="tr-pill-stop" data-tr-pill-stop>إيقاف</button>';
+  document.body.appendChild(el);
+  TR_PILL = el;
+  return el;
+}
+function trBookPillShow(job){
+  const el = trBookPillEnsure(); el.hidden = false;
+  trBookPillUpdate(job);
+}
+function trBookPillUpdate(job, paused){
+  const el = trBookPillEnsure(); el.hidden = false;
+  const total = Math.max(1, job.totalSegments || 1), done = job.doneSegments || 0;
+  const pct = Math.round(done / total * 100);
+  const text = el.querySelector('#trPillText'), bar = el.querySelector('#trPillBar'), stop = el.querySelector('[data-tr-pill-stop]');
+  if (text) text.textContent = (paused ? 'متوقفة · ' : '') + 'الفصل ' + Math.min((job.currentChapter || 0) + 1, job.totalChapters || 1) + '/' + (job.totalChapters || 1) + ' · ' + pct + '%';
+  if (bar) bar.style.width = pct + '%';
+  if (stop) stop.textContent = paused ? 'استكمال' : 'إيقاف';
+}
+function trBookPillHide(){ if (TR_PILL) TR_PILL.hidden = true; }
+function trBookPillDone(job){
+  const el = trBookPillEnsure(); el.hidden = false;
+  const pct = Math.round((job.doneSegments || 0) / Math.max(1, job.totalSegments || 1) * 100);
+  const text = el.querySelector('#trPillText'), bar = el.querySelector('#trPillBar'), stop = el.querySelector('[data-tr-pill-stop]');
+  if (text) text.textContent = (job.status === 'done' ? 'اكتملت الترجمة' : 'اكتملت مع ملاحظات') + ' · ' + pct + '%';
+  if (bar) bar.style.width = pct + '%';
+  if (stop) stop.textContent = 'الملخص';
+}
+
+function trBookProgressHTML(job){
+  return '<p class="tr-title">أترجم الكتاب</p><p class="hint" id="trBookNow">الفصل ' + Math.min((job.currentChapter || 0) + 1, job.totalChapters || 1) + ' من ' + (job.totalChapters || 1) + '</p>' +
+    '<div class="pbar tr-bar"><span id="trBookBar" style="width:0%"></span></div><p class="hint" id="trBookStats">0%</p>' +
+    '<div class="pbar tr-bar tr-bar-sub"><span id="trChapterBar" style="width:0%"></span></div><p class="hint" id="trChapterStats">0 / 0</p>' +
+    '<div class="msg" id="trBookMsg"></div><div class="sh-actions"><button class="gbtn" id="trBookStop">إيقاف</button></div>';
+}
+function trBookProgressUI(job){
+  const box = $('#modalBox'); if (!box || $('#modal').hidden) return;
+  if (!$('#trBookBar')) box.innerHTML = '<div class="mhead"><h3>ترجمة الكتاب</h3>' + closeBtn + '</div>' + trBookProgressHTML(job);
+  const total = Math.max(1, job.totalSegments || 1), done = job.doneSegments || 0;
+  const pct = Math.round(done / total * 100);
+  const bar = $('#trBookBar'), stats = $('#trBookStats'), now = $('#trBookNow');
+  const cTotal = Math.max(1, job.chapterTotal || 1), cDone = job.chapterDone || 0;
+  if (bar) bar.style.width = pct + '%';
+  if (stats) stats.textContent = pct + '% · ' + trNum(done) + ' / ' + trNum(total) + ' مقطعًا';
+  if (now) now.textContent = 'الفصل ' + Math.min((job.currentChapter || 0) + 1, job.totalChapters || 1) + ' من ' + (job.totalChapters || 1);
+  const cb = $('#trChapterBar'), cs = $('#trChapterStats');
+  if (cb) cb.style.width = Math.round(cDone / cTotal * 100) + '%';
+  if (cs) cs.textContent = 'الفصل الحالي: ' + trNum(cDone) + ' / ' + trNum(cTotal);
+  const stop = $('#trBookStop');
+  if (stop) stop.onclick = () => trPauseBook();
+}
+function trBookPauseUI(job, message){
+  const box = $('#modalBox'); if (!box || $('#modal').hidden) return;
+  box.innerHTML = '<div class="mhead"><h3>توقفت ترجمة الكتاب</h3>' + closeBtn + '</div>' +
+    '<div class="msg">' + esc(message) + '</div>' +
+    '<p class="hint">' + trNum(job.doneSegments || 0) + ' من ' + trNum(job.totalSegments || 0) + ' مقطعًا محفوظة. التبويب يلزم يبقى مفتوحًا أثناء الترجمة.</p>' +
+    '<div class="sh-actions"><button class="pbtn" id="trBookResume">استكمل</button><button class="gbtn" data-close>إغلاق</button></div>';
+  const r = $('#trBookResume'); if (r) r.onclick = () => trResumeBook();
+}
+function trBookCompleteUI(job){
+  const box = $('#modalBox');
+  if (!box || $('#modal').hidden){ trBookPillDone(job); return; }
+  trBookPillHide();
+  const bad = Object.keys(job.chapters || {}).map(k => job.chapters[k]).filter(c => c.warnings || c.failed);
+  const warn = bad.length ? '<p class="label">فصول تحتاج مراجعة</p><ul class="tr-warn-list">' + bad.map(c => '<li><a href="#/read/' + encodeURIComponent(job.bookId) + '/c' + c.ci + '">' + esc(c.title) + '</a><span>' + (c.failed ? trNum(c.failed) + ' خطأ' : '') + (c.warnings ? (c.failed ? ' · ' : '') + trNum(c.warnings) + ' تحذير' : '') + '</span></li>').join('') + '</ul>' : '';
+  box.innerHTML = '<div class="mhead"><h3>ترجمة الكتاب جاهزة</h3>' + closeBtn + '</div>' +
+    '<div class="msg' + (job.status === 'done' ? ' ok' : '') + '">' + (job.status === 'done' ? 'اكتملت ترجمة الكتاب.' : 'اكتملت مع أخطاء في بعض المقاطع. راجع القائمة.') + '</div>' +
+    '<p class="hint">التبويب لازم يبقى مفتوحًا أثناء الترجمة. الترجمة محفوظة على هذا الجهاز فقط.</p>' + warn +
+    '<div class="sh-actions"><button class="pbtn" id="trBookRead">اقرأ الكتاب بالعربية</button><button class="gbtn" data-close>إغلاق</button></div>';
+  const r = $('#trBookRead'); if (r) r.onclick = () => { closeModal(true); trShowWholeBook(itemById(job.bookId)); };
+}
+function trPauseBook(){
+  const ctx = TR_BOOK_LAST; if (!ctx) return;
+  const ctrl = TR_BOOK_RUN.get(ctx.it.id); if (ctrl) ctrl.abort();
+}
+function trResumeBook(){
+  if (TR_BOOK_LAST && TR_BOOK_LAST.bookJob.status !== 'done'){ trRunBook(TR_BOOK_LAST); return; }
+  const it = (RD && RD.it) || itemById(cur.id);
+  if (it) trOpenBookSetup(it);
+}
+function trOpenBookProgress(){
+  if (!TR_BOOK_LAST){ const it = (RD && RD.it) || itemById(cur.id); if (it) trOpenBookSetup(it); return; }
+  const job = TR_BOOK_LAST.bookJob;
+  openModal('', true);
+  if (job.status === 'paused') trBookPauseUI(job, 'توقفت ترجمة الكتاب. تقدر تستكمل من أول مقطع غير مكتمل.');
+  else if (job.status === 'done' || job.status === 'partial') trBookCompleteUI(job);
+  else trBookProgressUI(job);
+}
+function trShowWholeBook(it){
+  if (!it) return;
+  closeModal(true);
+  if (RD && RD.it === it && RD.screen && RD.screen[0] === 'c'){ trShowArabic(true); return; }
+  TR_VIEW = { bookId:it.id, ci:0, whole:true };
+  location.hash = '#/read/' + encodeURIComponent(it.id) + '/c0';
+}
+
+
 const STL = { none:'ما بدأت', reading:'أقرأ', done:'خلّصت' };
 /* spoiler guard: book text past the reader's place is never sent unless «اسمح بالكتاب كامل» is on for that book; chapter cards past it only when spoiler protection is off */
 const fullFor = it => !!kv.get('chatfull:' + it.id, prof().ai.full);
@@ -4976,7 +5457,10 @@ async function init(){
     if (!t.closest('#ctxm') && !t.closest('[data-cmenu]')) closeCtx();
     if (t.closest('[data-fnclose]')){ hideFn(); return; }
     const al = t.closest('a[href^="#/"]'); if (al){ if (isMobile()) side(false); if (al.getAttribute('href') === location.hash){ e.preventDefault(); route(); } return; }
+    if (t.closest('[data-tr-book]')){ e.preventDefault(); const it = itemById(t.closest('[data-tr-book]').dataset.trBook); if (it) trOpenBookSetup(it); return; }
     if (t.closest('[data-tr-open]')){ e.preventDefault(); trToggle(); return; }
+    if (t.closest('[data-tr-pill-open]')){ e.preventDefault(); trOpenBookProgress(); return; }
+    if (t.closest('[data-tr-pill-stop]')){ e.preventDefault(); if (TR_BOOK_LAST && (TR_BOOK_LAST.bookJob.status === 'done' || TR_BOOK_LAST.bookJob.status === 'partial')) trOpenBookProgress(); else if (TR_BOOK_LAST && TR_BOOK_RUN.has(TR_BOOK_LAST.it.id)) trPauseBook(); else trResumeBook(); return; }
     if (t.closest('[data-tr-setup]')){ e.preventDefault(); trOpenSetup(); return; }
     if (t.closest('[data-add]')){ if (isMobile()) side(false); openUpload(); return; }
     const cmb = t.closest('[data-cmenu]'); if (cmb){ ctxMenu(cmb, cmb.dataset.cmenu); return; }
