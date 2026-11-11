@@ -5,6 +5,8 @@ import { FILTER_ALL, FILTER_UNFILED, collectionKey, cleanName, makeCollection, c
 import { isPasteTooLarge, needsLowMemoryWarning } from '../core/limits.js';
 import { AI_DEFAULTS, basePolicy, keylessAllowed, estimateMessagesTokens, fitRequest, parseSSE, shouldRetry, retryDelayMs, validateCard, createTimeoutGuard, linkAbort, isDeepSeekBase, migrateDeepSeekModel } from '../core/ai.js';
 import { findNormalizedRange } from '../core/text.js';
+import { PROMPT_VERSION, CORRECTIVE_MESSAGE, parseGlossary, glossaryHash, glossaryForText, extractChapterUnits, chunkUnits, buildMessages as buildTranslationMessages, parseTranslation, qaSegment, estimateChapter, fingerprint, chapterSourceHash, lastTwoSentences } from '../core/translate.js';
+import { trGetJob, trPutJob, trGetSegments, trPutSegment, trDeleteJob, trGetGlossary, trPutGlossary, trDeleteBook, trClearAll } from '../core/translate-store.js';
 
 (function(){
 'use strict';
@@ -449,7 +451,7 @@ function route(){
   $$('.view').forEach(v => v.hidden = true);
   document.body.classList.toggle('reading', isRead); document.documentElement.classList.toggle('in-read', isRead); $('#toolbar').hidden = !isRead; $('#prog').hidden = !isRead;
   if (isRead){ const bh = backHash(); $('#backBtn').setAttribute('aria-label', tx(/^#\/(c\/.*)?$/.test(bh) ? 'ارجع للشات' : bh === '#/lib' ? 'ارجع للمكتبة' : 'ارجع')); }
-  else { lastNonRead = location.hash || '#/'; $('#pageTitle').textContent = tx(PAGE_T[r.view] || ''); }
+  else { lastNonRead = location.hash || '#/'; document.body.classList.remove('tr-view'); $('#pageTitle').textContent = tx(PAGE_T[r.view] || ''); }
   $('#v-' + (isRead ? 'read' : r.view)).hidden = false;
   if (isRead){
     const it = itemById(r.id); if (!it){ location.hash = '#/'; return; }
@@ -828,6 +830,7 @@ async function purgeBook(id){
     putKv:(F.cardKeys.length ? [{ k:'cards', v:cards }] : []).concat(colUpdates.map(c => ({ k:collectionKey(c.id), v:c })))
   });
   mapClean();
+  await trDeleteBook(id);
   const P = prof(); if (P.dismissPrep && P.dismissPrep[id]){ delete P.dismissPrep[id]; profSave(); }
   if (P.tpl && P.tpl.books && P.tpl.books[id]){ delete P.tpl.books[id]; profSave(); }
   return ok;
@@ -961,13 +964,14 @@ function stHTML(it, cid){
 function chapterHTML(it, c, ci, solo){
   if (!c) return '';
   const cid = 'c' + ci, F = it.id + ':' + cid + ':', tools = it.type !== 'notes';
+  const trBar = it.type === 'book' && trBookIsEnglish(it) ? '<div class="tr-ch-bar"><button type="button" class="tr-ch-btn" data-tr-open aria-pressed="false">ترجمة الفصل</button></div>' : '';
   let h = '';
   if (!(solo && !c.title)){
     h += '<section class="divider" id="' + cid + '" data-ch="' + cid + '"><div class="wrap"><p class="kicker">الفصل</p><div class="num">' + String(ci + 1).padStart(2, '0') + '</div>' +
       '<h2>' + md(c.title) + '</h2>' + (c.question ? '<p class="q">«' + md(c.question) + '»</p>' : '') +
       (c.minutes ? '<p class="meta">قراءة تقريبًا ' + esc(c.minutes) + ' دقيقة</p>' : '') + '</div></section>';
   }
-  h += '<div class="wrap"' + (solo && !c.title ? ' id="' + cid + '"' : '') + '>';
+  h += '<div class="wrap"' + (solo && !c.title ? ' id="' + cid + '"' : '') + '>' + trBar;
   if (tools) h += '<section class="block" style="padding-bottom:0"><p class="label">' + svg('pen', ' width="18" height="18"') + 'توقّعي قبل القراءة</p><p class="hint">وش تتوقّع ' + (solo ? 'يقول هالنص' : 'يقول هالفصل') + '؟ جملة أو جملتين تكفي.</p>' + field(F + 'predict', 'أتوقّع أنّ…') + '</section>';
   if (arr(c.overview).length) h += '<section class="block" style="padding-bottom:0"><p class="label">خريطة الفصل</p><ol class="overview">' + arr(c.overview).map((o, i) => '<li><span>' + (i + 1) + '</span><div>' + md(o) + '</div></li>').join('') + '</ol></section>';
   let leadDone = false;
@@ -1056,10 +1060,15 @@ function screenHTML(it, sc){
 function drawerNav(it){
   const chs = arr(it.chapters), solo = chs.length === 1;
   const hn = annosOf('hl', it.id).length;
+  const tr = RD && RD.trTitles, curCi = RD && RD.screen && RD.screen[0] === 'c' ? +RD.screen.slice(1) : -1;
   let n = '<button class="nav plain" data-href="#/hls/' + encodeURIComponent(it.id) + '"><span>تظليلاتي' + (hn ? ' <span class="count">' + hn + '</span>' : '') + '</span></button>' + (it.intro ? '<button class="nav plain" data-go="intro">المقدّمة</button>' : '') + (!solo ? '<button class="nav plain" data-go="map">خريطة ' + (it.type === 'book' ? 'الكتاب' : 'النص') + '</button>' : '');
   chs.forEach((c, ci) => {
-    n += '<div class="dr-sec">' + (solo ? '' : '<button class="nav" data-go="c' + ci + '"><span class="n">' + (ci + 1) + '</span><span style="font-weight:600">' + md(c.title || 'فصل ' + (ci + 1)) + '</span>' + stHTML(it, 'c' + ci) + '</button>') +
-      arr(c.sections).map((s, si) => s.title ? '<button class="nav sub" data-go="s-' + ci + '-' + si + '"><span class="n">' + (ci + 1) + '.' + (si + 1) + '</span><span>' + md(s.title) + '</span></button>' : '').join('') + '</div>';
+    const ct = tr && ci === curCi && tr.chapter ? tr.chapter : c.title;
+    n += '<div class="dr-sec">' + (solo ? '' : '<button class="nav" data-go="c' + ci + '"><span class="n">' + (ci + 1) + '</span><span style="font-weight:600">' + md(ct || 'فصل ' + (ci + 1)) + '</span>' + stHTML(it, 'c' + ci) + '</button>') +
+      arr(c.sections).map((s, si) => {
+        const st = tr && ci === curCi && tr.sections && tr.sections[si] ? tr.sections[si] : s.title;
+        return st ? '<button class="nav sub" data-go="s-' + ci + '-' + si + '"><span class="n">' + (ci + 1) + '.' + (si + 1) + '</span><span>' + md(st) + '</span></button>' : '';
+      }).join('') + '</div>';
   });
   if (it.conclusion) n += '<div class="dr-sec"><button class="nav plain" data-go="conclusion">الخاتمة</button></div>';
   const bms = annosOf('bm', it.id);
@@ -1151,17 +1160,22 @@ function observe(it){
 }
 function renderReader(it, target, o){
   o = o || {};
+  const tr = o.tr || null;
   const paged = it.type === 'book', list = paged ? screensOf(it) : null, loc = kv.get(it.id + ':loc', null);
   let screen = null;
   if (paged){ screen = o.screen || (target && screenOf(target)) || (loc && loc.s) || 'cover'; if (!list.includes(screen)) screen = 'cover'; }
   const q = RD && RD.it === it ? RD.q : '';
   RD = { it, paged, screen, list, q };
+  if (!tr && TR_VIEW && screen && screen[0] === 'c' && TR_VIEW.ci === +screen.slice(1)) TR_VIEW = null;
   it.lastOpened = Date.now(); put('items', it);
   $('#tbTitle').textContent = it.title; document.title = it.title + ' · مكتبتي';
   const bd = bookDir(it); $('#v-read').dir = bd; $('#v-read').lang = bd === 'rtl' ? 'ar' : 'en';
   $('#v-read').innerHTML = paged ? screenHTML(it, screen) : readerHTML(it);
   if (pref.get('diac', 'show') === 'hide') stripShown($('#v-read'));
-  applyAnnos(it); bindFields(it); drawerNav(it); updateSess();
+  if (tr && screen && screen[0] === 'c') trApply(it, tr, +screen.slice(1));
+  else { applyAnnos(it); document.body.classList.remove('tr-view'); }
+  bindFields(it); drawerNav(it); updateSess();
+  trRefreshButton();
   observe(it); showBar(); quietUntil = Date.now() + 600;
   rtMount(it, target, o, loc);
   requestAnimationFrame(() => {
@@ -1180,6 +1194,7 @@ let SEL = null;
 function hideSel(){ $('#selbar').hidden = true; SEL = null; }
 function onSel(){
   if (cur.view !== 'read'){ hideSel(); return; }
+  if (TR_VIEW && RD && RD.screen && RD.screen[0] === 'c' && trIsArabic(RD.it, +RD.screen.slice(1))){ hideSel(); return; }
   const s = getSelection(); if (!s.rangeCount || s.isCollapsed){ hideSel(); return; }
   const r = s.getRangeAt(0); const sb = closestBk(r.startContainer), eb = closestBk(r.endContainer);
   if (!sb || !$('#v-read').contains(sb)){ hideSel(); return; }
@@ -1198,6 +1213,7 @@ function onSel(){
 }
 async function selAction(kind){
   const S = SEL; if (!S || !RD) return; const it = RD.it;
+  if (TR_VIEW && RD.screen && RD.screen[0] === 'c' && trIsArabic(it, +RD.screen.slice(1))){ hideSel(); return; }
   if (kind === 'meaning'){ const w = S.quote.replace(/[^\u0600-\u06FFa-zA-Z\s]/g, '').trim(); window.open('https://www.almaany.com/ar/dict/ar-ar/' + encodeURIComponent(stripD(w)) + '/', '_blank', 'noopener'); return; }
   if (kind === 'quote'){ getSelection().removeAllRanges(); hideSel(); const qa = { id:uid(), kind:'quote', itemId:it.id, bk:S.bk, text:S.quote, t:Date.now() }; await put('annos', qa); quoteModal(qa, it); return; }
   if (kind === 'explain'){ getSelection().removeAllRanges(); hideSel(); if (aiReady()){ const b = blockOf(it, S.bk); openChat('book', it.id, { mode:'explain', attach:{ text:plain(b ? blockText(b) : S.el.innerText), where:whereOf(it, S.bk), bk:S.bk } }); } else explainCopy(S, it); return; }
@@ -2457,10 +2473,11 @@ async function aiCall(o){
   const estimated = estimateMessagesTokens(messages);
   const ctx = Math.max(1024, Number(c.ctx) || AI_DEFAULTS.contextWindow);
   if (estimated + max > ctx) throw { context:true, estimated:estimated, budget:ctx };
-  const body = { model:c.model, messages, stream:!!o.stream, temperature:o.json ? 0.2 : 0.7, max_tokens:max };
+  const body = { model:c.model, messages, stream:!!o.stream, temperature:Number.isFinite(Number(o.temperature)) ? Number(o.temperature) : (o.json ? 0.2 : 0.7), max_tokens:max };
   /* deepseek-flash thinks by default; this reader wants a direct answer, and the
      field is sent only to DeepSeek so other OpenAI-compatible providers never see it. */
   if (isDeepSeekBase(c.base)) body.thinking = { type:'disabled' };
+  if (o.jsonObject) body.response_format = { type:'json_object' };
   const ctrl = new AbortController();
   let out = '';
   const firstMs = Math.max(5000, Math.min(300000, Number(c.first) || AI_DEFAULTS.firstByteTimeoutMs));
@@ -2582,6 +2599,423 @@ function prepModal(items){
   };
 }
 function offerPrep(it){ if (aiReady() && needCards(it).length) setTimeout(() => prepModal([it]), 700); }
+
+/* ---------- chapter translation (EN -> AR) ---------- */
+let TR_VIEW = null;              /* { bookId, ci } while the Arabic view is on */
+const TR_CACHE = new Map();      /* bookId:ci -> { job, segments } */
+const TR_RUN = new Map();        /* jobId -> AbortController */
+let TR_LAST = null;              /* { it, ci, units, terms, cfg, chunks, job } for resume */
+
+const trChapterKey = (bookId, ci) => bookId + ':c' + ci;
+const trJobId = (it, ci) => trChapterKey(it.id, ci);
+const trIsArabic = (it, ci) => !!(TR_VIEW && TR_VIEW.bookId === it.id && TR_VIEW.ci === ci);
+const TR_EN = new WeakMap();
+const trBookIsEnglish = it => {
+  if (!it) return false;
+  if (TR_EN.has(it)) return TR_EN.get(it);
+  const v = it.lang ? /^en/i.test(it.lang) : detectLang(itemSample(it)) === 'en';
+  TR_EN.set(it, v);
+  return v;
+};
+const trAckKey = 'maktabati:trAck';
+function trAcked(bookId){
+  try { const a = JSON.parse(localStorage.getItem(trAckKey) || '[]'); return Array.isArray(a) && a.includes(bookId); } catch (e) { return false; }
+}
+function trAck(bookId){
+  try { const a = JSON.parse(localStorage.getItem(trAckKey) || '[]'); if (!Array.isArray(a)) return; if (!a.includes(bookId)){ a.push(bookId); localStorage.setItem(trAckKey, JSON.stringify(a)); } } catch (e) {}
+}
+function trMoney(n){ return '$' + (Number(n) < 0.01 ? Number(n).toFixed(4) : Number(n).toFixed(3)); }
+function trNum(n){ return Number(n || 0).toLocaleString('en-US'); }
+
+function trCurrent(){
+  if (!RD || !RD.paged || !RD.screen || RD.screen[0] !== 'c') return null;
+  const ci = +RD.screen.slice(1), ch = arr(RD.it.chapters)[ci];
+  if (!ch) return null;
+  return { it:RD.it, ci, ch };
+}
+
+function trRefreshButton(){
+  const cur = trCurrent();
+  if (!cur) return;
+  const ar = trIsArabic(cur.it, cur.ci);
+  $$('#v-read [data-tr-open]').forEach(b => {
+    b.textContent = ar ? 'الأصل' : 'ترجمة الفصل';
+    b.setAttribute('aria-pressed', ar ? 'true' : 'false');
+    b.setAttribute('aria-label', ar ? 'ارجع إلى النص الأصلي' : 'ترجمة هذا الفصل إلى العربية');
+    b.title = ar ? 'ارجع إلى النص الأصلي' : 'ترجمة هذا الفصل إلى العربية';
+  });
+}
+
+async function trLoad(bookId, ci, fresh){
+  const key = trChapterKey(bookId, ci);
+  if (!fresh && TR_CACHE.has(key)) return TR_CACHE.get(key);
+  const job = await trGetJob(key);
+  if (!job){ TR_CACHE.delete(key); return null; }
+  const segments = await trGetSegments(key);
+  const data = { job, segments };
+  TR_CACHE.set(key, data);
+  return data;
+}
+function trInvalidate(bookId, ci){ TR_CACHE.delete(trChapterKey(bookId, ci)); }
+
+function trChunksFor(units){ return chunkUnits(units, { target:1800, max:2500 }); }
+
+function trCostHTML(est){
+  if (!est) return '';
+  if (!est.price) return '<p class="tr-cost">التوكنات فقط؛ السعر غير معروف لهذا النموذج.</p>';
+  if (est.price.deepseek) {
+    return '<div class="tr-cost"><b>التكلفة التقديرية:</b> خارج الذروة ' + trMoney(est.offpeakCost) + ' · الذروة ' + trMoney(est.peakCost) +
+      '<br><span>السعر الآن: ' + (est.peakNow ? 'ذروة' : 'خارج الذروة') + ' · تقدير وليس فاتورة.</span></div>';
+  }
+  return '<div class="tr-cost"><b>التكلفة التقديرية:</b> ' + trMoney(est.cost) + ' <span>· تقدير وليس فاتورة.</span></div>';
+}
+
+async function trOpenSetup(){
+  const cur = trCurrent();
+  if (!cur) return;
+  if (!aiReady()){ toast('اضبط الذكاء من «الإعدادات» أول'); location.hash = '#/profile/ai'; return; }
+  const it = cur.it, ci = cur.ci, ch = cur.ch;
+  const pdf = !!(it.ingest && it.ingest.kind === 'pdf');
+  const units = extractChapterUnits(it, ci, { pdf });
+  if (!units.length){ toast('ما فيه نص كافٍ لترجمة هذا الفصل.'); return; }
+  const cfg = aiCfg();
+  const gdoc = await trGetGlossary(it.id);
+  const terms = gdoc && Array.isArray(gdoc.terms) ? gdoc.terms : [];
+  const est = estimateChapter(it, ci, { model:cfg.model, base:cfg.base, glossary:terms, pdf });
+  if (!est){ toast('ما فيه نص كافٍ لترجمة هذا الفصل.'); return; }
+  const jobId = trJobId(it, ci);
+  const job = await trGetJob(jobId);
+  const segments = job ? await trGetSegments(jobId) : [];
+  const fp = fingerprint({ sourceHash:chapterSourceHash(units), model:cfg.model, base:cfg.base, promptVersion:PROMPT_VERSION, glossaryHash:glossaryHash(terms) });
+  const same = !!(job && job.fingerprint === fp);
+  const isDone = !!(same && job.status === 'done');
+  const canResume = !!(same && !isDone && (job.status === 'paused' || job.status === 'partial' || job.status === 'running' || job.status === 'error' || segments.length));
+  const mismatch = !!(job && !same);
+  const doneCount = segments.filter(s => s.status === 'done' || s.status === 'warn').length;
+  const acked = trAcked(it.id);
+  const title = ch.title || ('الفصل ' + (ci + 1));
+  const pdfWarn = pdf ? '<p class="hint">PDF: الكتل التي طولها 3 كلمات أو أقل تبقى بالأصل ولا تُرسل.</p>' : '';
+  const quality = it.ingest && it.ingest.rec !== 'ok' ? '<div class="msg"><b>جودة تحويل هذا الملف تحتاج مراجعة.</b><br>راجع النص الأصلي قبل الاعتماد على الترجمة.</div>' : '';
+  const mismatchMsg = mismatch ? '<div class="msg"><b>الترجمة المحفوظة لهذا الفصل أُعدت بإعدادات أو قاموس مختلف.</b><br>لا يمكن الاستئناف فوقها؛ ابدأ من جديد.</div>' : '';
+  const progressMsg = same && job ? '<p class="hint">آخر تقدّم: ' + trNum(doneCount) + ' من ' + trNum(job.total || est.chunks.length) + ' مقطعًا.</p>' : '';
+  const primary = isDone ? 'اقرأ بالعربية' : (canResume ? 'استكمل الترجمة' : 'ابدأ الترجمة');
+  const restart = job ? '<button class="gbtn" id="trRestart">' + (isDone ? 'أعد الترجمة' : 'ابدأ من جديد') + '</button>' : '';
+
+  openModal('<div class="mhead"><h3>ترجمة هذا الفصل</h3>' + closeBtn + '</div>' +
+    '<p class="tr-title" dir="auto">' + esc(title) + '</p>' + quality + pdfWarn + mismatchMsg +
+    '<div class="tr-grid"><div><b>' + trNum(est.words) + '</b><span>كلمة</span></div><div><b>' + trNum(est.chunks.length) + '</b><span>مقطع</span></div><div><b>' + trNum(est.inputTokens) + '</b><span>توكن إدخال</span></div><div><b>' + trNum(est.outputTokens) + '</b><span>توكن إخراج</span></div></div>' +
+    trCostHTML(est) + progressMsg +
+    '<p class="hint">النموذج: <bdi dir="ltr">' + esc(cfg.model) + '</bdi> · الترجمة آلية وتحتاج مراجعة.</p>' +
+    '<label class="flabel" for="trGloss">قاموس المصطلحات (اختياري)</label>' +
+    '<textarea class="inp tr-gloss" id="trGloss" rows="4" dir="auto" placeholder="Rivermere = ريفيرمير\nquantum entanglement = التشابك الكمي">' + esc((terms || []).map(t => t.en + ' = ' + t.ar).join('\n')) + '</textarea>' +
+    '<p class="hint">سطر لكل مصطلح: English = عربي. يُرسل فقط ما يظهر في المقطع.</p>' +
+    '<label class="tr-check"><input type="checkbox" id="trAck"' + (acked ? ' checked' : '') + '> أترجم نسخة أملكها للاستخدام الشخصي فقط، ولن أنشر الترجمة. نص هذا الفصل سيُرسل إلى مزود الذكاء الذي اخترته.</label>' +
+    '<div class="msg" id="trMsg"></div>' +
+    '<div class="sh-actions"><button class="pbtn" id="trGo"' + (acked ? '' : ' disabled') + '>' + primary + '</button>' + restart + '<button class="gbtn" data-close>إلغاء</button></div>', true);
+
+  const ack = $('#trAck'), go = $('#trGo');
+  ack.addEventListener('change', () => { go.disabled = !ack.checked; });
+  go.onclick = async () => {
+    if (!ack.checked) return;
+    trAck(it.id);
+    const nextTerms = parseGlossary($('#trGloss').value);
+    await trPutGlossary(it.id, nextTerms);
+    const nextFp = fingerprint({ sourceHash:chapterSourceHash(units), model:cfg.model, base:cfg.base, promptVersion:PROMPT_VERSION, glossaryHash:glossaryHash(nextTerms) });
+    if (isDone && same && nextFp === fp && !mismatch){ closeModal(true); trShowArabic(); return; }
+    if (job && nextFp === job.fingerprint && job.status !== 'done' && !mismatch){
+      TR_LAST = { it, ci, units, terms:nextTerms, cfg, chunks:trChunksFor(units), job };
+      closeModal(false); trRunChapter(TR_LAST); return;
+    }
+    if (job) await trDeleteJob(job.id);
+    trStart({ it, ci, units, terms:nextTerms, cfg, chunks:trChunksFor(units) });
+  };
+  const rb = $('#trRestart');
+  if (rb) rb.onclick = async () => {
+    if (!ack.checked) return;
+    trAck(it.id);
+    if (job) await trDeleteJob(job.id);
+    const nextTerms = parseGlossary($('#trGloss').value);
+    await trPutGlossary(it.id, nextTerms);
+    closeModal(true);
+    trStart({ it, ci, units, terms:nextTerms, cfg, chunks:trChunksFor(units) });
+  };
+}
+
+async function trStart(ctx){
+  const { it, ci, units, terms, cfg } = ctx;
+  const chunks = ctx.chunks || trChunksFor(units);
+  const jobId = trJobId(it, ci);
+  const job = {
+    id:jobId, bookId:it.id, chapterIndex:ci, chapterTitle:(arr(it.chapters)[ci] && arr(it.chapters)[ci].title) || ('الفصل ' + (ci + 1)),
+    sourceHash:chapterSourceHash(units), model:cfg.model, base:cfg.base, promptVersion:PROMPT_VERSION,
+    glossaryHash:glossaryHash(terms), fingerprint:fingerprint({ sourceHash:chapterSourceHash(units), model:cfg.model, base:cfg.base, promptVersion:PROMPT_VERSION, glossaryHash:glossaryHash(terms) }),
+    status:'paused', total:chunks.length, done:0, failed:0, createdAt:Date.now(), updatedAt:Date.now()
+  };
+  await trPutJob(job);
+  trInvalidate(it.id, ci);
+  TR_LAST = { it, ci, units, terms, cfg, chunks, job };
+  trRunChapter(TR_LAST);
+}
+
+async function trResume(){
+  if (!TR_LAST) { trOpenSetup(); return; }
+  const cfg = aiCfg();
+  if (cfg.model !== TR_LAST.job.model || cfg.base !== TR_LAST.job.base){ toast('تغيّرت إعدادات الذكاء؛ افتح الترجمة من جديد.'); trOpenSetup(); return; }
+  trRunChapter(TR_LAST);
+}
+
+function trProgressUI(job, current){
+  const bar = $('#trBar'), stats = $('#trStats'), now = $('#trNow');
+  if (!bar || !stats) return;
+  const pct = job.total ? Math.round(job.done / job.total * 100) : 0;
+  bar.style.width = pct + '%';
+  stats.textContent = trNum(job.done) + ' / ' + trNum(job.total) + ' مقطعًا';
+  if (now) now.textContent = current ? ('أترجم المقطع ' + trNum(current) + ' من ' + trNum(job.total) + '…') : 'أجهّز المقاطع…';
+}
+function trProgressHTML(job){
+  return '<p class="tr-title">أترجم هذا الفصل</p><p class="hint" id="trNow">أجهّز المقاطع…</p>' +
+    '<div class="pbar tr-bar" aria-hidden="true"><span id="trBar" style="width:0%"></span></div>' +
+    '<p class="hint" id="trStats">0 / ' + trNum(job.total) + ' مقطعًا</p><div class="msg" id="trMsg"></div>' +
+    '<div class="sh-actions"><button class="gbtn" id="trStop">إيقاف</button></div>';
+}
+
+async function trRunChapter(ctx){
+  const { job, chunks } = ctx;
+  const ctrl = new AbortController();
+  TR_RUN.set(job.id, ctrl);
+  job.status = 'running'; job.updatedAt = Date.now();
+  await trPutJob(job);
+  const box = $('#modalBox');
+  if (box) box.innerHTML = '<div class="mhead"><h3>ترجمة هذا الفصل</h3>' + closeBtn + '</div>' + trProgressHTML(job);
+  const stop = $('#trStop');
+  if (stop) stop.onclick = () => { ctrl.abort(); stop.disabled = true; stop.textContent = 'يتوقف…'; };
+  const existing = new Map((await trGetSegments(job.id)).map(s => [s.index, s]));
+  let done = 0, failed = 0, warnings = 0;
+  for (let i = 0; i < chunks.length; i++){
+    const old = existing.get(i);
+    if (old && (old.status === 'done' || old.status === 'warn')){
+      done++;
+      if (old.status === 'warn') warnings++;
+      continue;
+    }
+    if (ctrl.signal.aborted) break;
+    const context = i ? lastTwoSentences(chunks[i - 1].units.map(u => u.text).join(' ')) : '';
+    const text = chunks[i].units.map(u => u.text).join(' ');
+    const gloss = glossaryForText(ctx.terms, text);
+    trProgressUI(job, i + 1);
+    try {
+      const r = await trTranslateChunk({ units:chunks[i].units, context, glossary:gloss, signal:ctrl.signal, depth:0 });
+      const saved = await trPutSegment({ jobId:job.id, index:i, units:chunks[i].units, items:r.items, status:r.status, qa:r.qa, t:Date.now() });
+      if (saved){
+        done++;
+        if (r.status === 'error') failed++;
+        if (r.status === 'warn') warnings++;
+      } else failed++;
+    } catch (e) {
+      if (e && e.name === 'AbortError') break;
+      if (e && e.status === 429){
+        job.status = 'paused'; job.done = done; job.failed = failed; job.warnings = warnings; job.updatedAt = Date.now();
+        await trPutJob(job); TR_RUN.delete(job.id);
+        trPauseUI(job, 'المزوّد يطلب تهدئة الطلبات (429). توقفت الترجمة مؤقتًا.');
+        return;
+      }
+      await trPutSegment({ jobId:job.id, index:i, units:chunks[i].units, items:[], status:'error', qa:{ ok:false, hard:['request'], warn:[], details:{ error:String(e && (e.message || e.status) || e) } }, t:Date.now() });
+      failed++;
+      console.error('[translation]', e && (e.stack || e.message || e));
+    }
+    job.done = done; job.failed = failed; job.warnings = warnings; job.updatedAt = Date.now();
+    await trPutJob(job);
+    trProgressUI(job, i + 1);
+  }
+  job.done = done; job.failed = failed; job.warnings = warnings;
+  job.status = ctrl.signal.aborted ? 'paused' : (failed ? 'partial' : 'done');
+  job.updatedAt = Date.now();
+  await trPutJob(job);
+  TR_RUN.delete(job.id);
+  trInvalidate(job.bookId, job.chapterIndex);
+  if (job.status === 'paused') trPauseUI(job, 'توقفت الترجمة. تقدر تستكمل من آخر مقطع محفوظ.');
+  else trCompleteUI(job);
+}
+
+async function trAsk(messages, signal){
+  let lastErr = null;
+  for (let attempt = 0; attempt < 2; attempt++){
+    try {
+      const content = await aiCall({ messages, max:8000, temperature:0.2, jsonObject:true, signal });
+      return parseTranslation(content);
+    } catch (e) {
+      if (e && (e.name === 'AbortError' || e.status === 429)) throw e;
+      lastErr = e;
+      if (attempt === 0) await sleepAbortable(700, signal);
+    }
+  }
+  throw lastErr || new Error('translation request failed');
+}
+
+async function trTranslateChunk(o){
+  const { units, context, glossary, signal, depth = 0 } = o;
+  const messages = buildTranslationMessages({ units, context, glossary });
+  let first = await trAsk(messages, signal);
+  let qa = qaSegment({ units, items:first.items || [], glossary });
+  if (first.ok && qa.ok) return { items:first.items, qa, status:qa.warn.length ? 'warn' : 'done' };
+
+  const retry = await trAsk(messages.concat([{ role:'user', content:CORRECTIVE_MESSAGE }]), signal);
+  qa = qaSegment({ units, items:retry.items || [], glossary });
+  if (retry.ok && qa.ok) return { items:retry.items, qa, status:qa.warn.length ? 'warn' : 'done' };
+
+  if (units.length > 1 && depth < 2){
+    const mid = Math.floor(units.length / 2);
+    const a = await trTranslateChunk({ units:units.slice(0, mid), context, glossary, signal, depth:depth + 1 });
+    const bContext = lastTwoSentences(units.slice(0, mid).map(u => u.text).join(' '));
+    const b = await trTranslateChunk({ units:units.slice(mid), context:bContext, glossary, signal, depth:depth + 1 });
+    const items = [...(a.items || []), ...(b.items || [])];
+    const merged = qaSegment({ units, items, glossary });
+    return { items, qa:merged, status:merged.ok ? ((a.status === 'warn' || b.status === 'warn' || merged.warn.length) ? 'warn' : 'done') : 'error' };
+  }
+  return { items:retry.items || first.items || [], qa, status:'error' };
+}
+
+function trCompleteUI(job){
+  const box = $('#modalBox'); if (!box) return;
+  const warns = Number(job.warnings) || 0;
+  const errs = Number(job.failed) || 0;
+  const note = errs ? 'اكتملت مع أخطاء في ' + trNum(errs) + ' مقطعًا. راجع التحذيرات قبل الاعتماد.' : (warns ? 'اكتملت مع ' + trNum(warns) + ' مقطعًا يحتاج مراجعة.' : 'اكتملت الترجمة.');
+  box.innerHTML = '<div class="mhead"><h3>الترجمة جاهزة</h3>' + closeBtn + '</div>' +
+    '<div class="msg' + (errs ? '' : ' ok') + '">' + note + '</div>' +
+    '<div class="tr-grid"><div><b>' + trNum(job.done) + '</b><span>مقطعًا</span></div><div><b>' + trNum(warns) + '</b><span>تحذير</span></div><div><b>' + trNum(errs) + '</b><span>خطأ</span></div></div>' +
+    '<div class="sh-actions"><button class="pbtn" id="trRead">اقرأ بالعربية</button><button class="gbtn" data-close>إغلاق</button></div>';
+  const r = $('#trRead'); if (r) r.onclick = () => { closeModal(true); trShowArabic(); };
+  trRefreshButton();
+}
+function trPauseUI(job, message){
+  const box = $('#modalBox'); if (!box) return;
+  box.innerHTML = '<div class="mhead"><h3>توقفت الترجمة</h3>' + closeBtn + '</div>' +
+    '<div class="msg">' + esc(message) + '</div>' +
+    '<p class="hint">' + trNum(job.done) + ' من ' + trNum(job.total) + ' مقطعًا محفوظة. تقدر تستكمل من آخر مقطع.</p>' +
+    '<div class="sh-actions"><button class="pbtn" id="trResume">استكمل</button><button class="gbtn" id="trNew">ابدأ من جديد</button><button class="gbtn" data-close>إغلاق</button></div>';
+  const r = $('#trResume'); if (r) r.onclick = () => trResume();
+  const n = $('#trNew'); if (n) n.onclick = async () => { if (TR_LAST && TR_LAST.job) await trDeleteJob(TR_LAST.job.id); TR_LAST = null; closeModal(true); trOpenSetup(); };
+}
+
+async function trShowArabic(){
+  const cur = trCurrent(); if (!cur) return;
+  const data = await trLoad(cur.it.id, cur.ci, true);
+  if (!data || !data.segments.length){ toast('ما فيه ترجمة محفوظة لهذا الفصل'); return; }
+  const key = (topBlock() && topBlock().dataset.bk) || RD.screen;
+  closeModal(true);
+  TR_VIEW = { bookId:cur.it.id, ci:cur.ci };
+  renderReader(cur.it, key, { screen:RD.screen, noFlash:true, tr:data });
+}
+
+async function trToggle(){
+  const cur = trCurrent(); if (!cur) return;
+  if (trIsArabic(cur.it, cur.ci)){
+    const key = (topBlock() && topBlock().dataset.bk) || RD.screen;
+    TR_VIEW = null;
+    renderReader(cur.it, key, { screen:RD.screen, noFlash:true });
+    return;
+  }
+  const data = await trLoad(cur.it.id, cur.ci, false);
+  if (!data || !data.segments.some(s => s.status === 'done' || s.status === 'warn' || (s.status === 'error' && (s.items || []).length))){
+    trOpenSetup();
+    return;
+  }
+  const key = (topBlock() && topBlock().dataset.bk) || RD.screen;
+  TR_VIEW = { bookId:cur.it.id, ci:cur.ci };
+  renderReader(cur.it, key, { screen:RD.screen, noFlash:true, tr:data });
+}
+
+/** Replace block contents in the already-rendered chapter, before pagination runs. */
+function trApply(it, data, ci){
+  if (!data || !Array.isArray(data.segments)) return;
+  TR_VIEW = { bookId:it.id, ci };
+  const units = [], byId = new Map();
+  for (const seg of data.segments){
+    for (const u of seg.units || []) units.push(u);
+    for (const x of seg.items || []) byId.set(String(x.id), String(x.text == null ? '' : x.text));
+  }
+  const per = new Map();
+  for (const u of units){
+    if (!per.has(u.blockKey)) per.set(u.blockKey, []);
+    per.get(u.blockKey).push({ u, text:byId.has(String(u.id)) ? byId.get(String(u.id)) : null });
+  }
+  let missing = 0, translated = 0;
+  const setText = (el, html) => { el.innerHTML = html; translated++; };
+  const joined = (rows, kind, part) => rows
+    .filter(v => v.u.kind === kind && (part == null || Number(v.u.part) === part) && v.text != null)
+    .sort((a, b2) => (a.u.sub || 0) - (b2.u.sub || 0))
+    .map(v => v.text).filter(Boolean).join(' ');
+
+  $$('#v-read [data-bk]').forEach(el => {
+    const bk = el.dataset.bk, list = per.get(bk); if (!list) return;
+    const b = blockOf(it, bk); if (!b) return;
+    const type = b.type || 'p';
+    if (type === 'p'){
+      const orig = Array.isArray(b.text) ? b.text : [b.text];
+      const parts = new Map();
+      for (const x of list) if (x.u.kind === 'p'){ const p = Number(x.u.part) || 0; if (!parts.has(p)) parts.set(p, []); parts.get(p).push(x); }
+      const paras = [];
+      for (let i = 0; i < orig.length; i++){
+        const xs = (parts.get(i) || []).sort((a, b2) => (a.u.sub || 0) - (b2.u.sub || 0));
+        if (xs.length && xs.some(x => x.text != null && x.text !== '')) paras.push(xs.map(x => x.text || '').filter(Boolean).join(' '));
+        else { missing++; paras.push(String(orig[i] == null ? '' : orig[i])); }
+      }
+      setText(el, paras.map(t => '<p>' + md(t) + '</p>').join(''));
+    } else if (type === 'h4'){
+      const text = joined(list, 'h4', 0);
+      if (text) setText(el, '<h4>' + md(text) + '</h4>'); else { missing++; }
+    } else if (type === 'list'){
+      const orig = Array.isArray(b.items) ? b.items : [];
+      const its = orig.map((t, i) => {
+        const text = joined(list, 'li', i);
+        if (!text) missing++;
+        return '<li>' + md(text || t) + '</li>';
+      });
+      setText(el, '<ul>' + its.join('') + '</ul>');
+    } else if (type === 'box'){
+      if (b.html) return;
+      const k = BOX[b.kind] ? b.kind : 'key';
+      const title = joined(list, 'box-title', 0);
+      const textParts = list.filter(v => v.u.kind === 'box-text').map(v => Number(v.u.part) || 0);
+      const parts = [...new Set(textParts)].sort((a, b2) => a - b2);
+      let h = '<aside class="box ' + k + '"><div class="box-head">' + svg(k) + BOX[k] + '</div>';
+      if (b.title) h += '<p class="box-title">' + md(title || b.title) + '</p>';
+      if (parts.length) h += parts.map(i => '<p>' + md(joined(list, 'box-text', i) || '') + '</p>').join('');
+      else { const ot = Array.isArray(b.text) ? b.text : [b.text]; if (ot.some(Boolean)){ missing++; h += ot.map(t => '<p>' + md(t) + '</p>').join(''); } }
+      h += '</aside>'; setText(el, h);
+    } else if (type === 'html'){
+      const text = joined(list, 'html', 0);
+      if (text){ el.innerHTML = '<p>' + md(text) + '</p>'; el.classList.add('tr-html'); translated++; }
+      else missing++;
+    }
+  });
+
+  const chapter = arr(it.chapters)[ci];
+  const title = byId.get('c' + ci + ':title');
+  const sectionTitles = {};
+  if (RD) RD.trTitle = title || '';
+  const h2 = $('#v-read .divider#c' + ci + ' h2');
+  if (h2 && title) h2.innerHTML = md(title);
+  if (chapter) arr(chapter.sections).forEach((s, si) => {
+    const x = byId.get('s' + ci + '-' + si + ':title');
+    const h3 = $('#v-read .section#s-' + ci + '-' + si + ' h3');
+    if (h3 && x){ h3.innerHTML = md(x); sectionTitles[si] = x; }
+  });
+  if (RD) RD.trTitles = { chapter:title || '', sections:sectionTitles };
+  /* Adjacent chapter titles in the pager belong to un-translated chapters. Keep the
+     generic Arabic pager label and drop the English title in the Arabic view. */
+  $$('#v-read .pager b').forEach(b => { b.textContent = ''; b.hidden = true; });
+
+  $('#v-read').dir = 'rtl'; $('#v-read').lang = 'ar';
+  document.body.classList.add('tr-view');
+  const note = document.createElement('div');
+  note.className = 'tr-banner';
+  note.innerHTML = '<b>ترجمة آلية</b><span>' + (missing ? 'بقيت ' + trNum(missing) + ' فقرة بالأصل. راجعها قبل الاعتماد.' : 'راجع النص الأصلي عند الشك.') + '</span><button type="button" class="tr-banner-btn" data-tr-setup>إعدادات الترجمة</button>';
+  $('#v-read').prepend(note);
+  trRefreshButton();
+}
+
+
 
 /* ---------- reading memory + library map ---------- */
 const STL = { none:'ما بدأت', reading:'أقرأ', done:'خلّصت' };
@@ -3154,6 +3588,7 @@ async function wipeAll(includeSettings = false){
     }
     localStorage.removeItem(PK);
   }catch(e){ storageNotice('unavailable'); }
+  await trClearAll();
   PROF = null; await kv.set('seeded', true);
   return ok;
 }
@@ -4063,7 +4498,7 @@ const rtSlotX = (g, i) => !g.spread ? 0 : (g.rtl ? (i === 0 ? g.pw : 0) : (i ===
 const rtTextX = (g, i) => g.rtl ? g.vx + g.vw - (i + 1) * g.tw - i * g.gap : g.vx + i * (g.tw + g.gap);
 const rtOuterL = (g, i) => !g.spread ? g.rtl : rtSlotX(g, i) === 0;
 function rtChTitle(p){
-  if (RD.paged && RD.screen && RD.screen[0] === 'c') return plain(screenName(RD.it, RD.screen));
+  if (RD.paged && RD.screen && RD.screen[0] === 'c') return plain(RD.trTitle || screenName(RD.it, RD.screen));
   let t = ''; RT.chp.forEach(([a, ti]) => { if (a <= p) t = ti; }); return t || plain(RD.it.title);
 }
 const rtFrame = (x, y, w, h) => '<svg class="rt-frame" aria-hidden="true" style="left:' + x + 'px;top:' + y + 'px;width:' + w + 'px;height:' + h + 'px" viewBox="0 0 ' + w + ' ' + h + '"><rect x=".75" y=".75" width="' + (w - 1.5) + '" height="' + (h - 1.5) + '" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".8"/><rect x="5" y="5" width="' + (w - 10) + '" height="' + (h - 10) + '" fill="none" stroke="currentColor" stroke-width=".7" opacity=".6"/></svg>';
@@ -4541,6 +4976,8 @@ async function init(){
     if (!t.closest('#ctxm') && !t.closest('[data-cmenu]')) closeCtx();
     if (t.closest('[data-fnclose]')){ hideFn(); return; }
     const al = t.closest('a[href^="#/"]'); if (al){ if (isMobile()) side(false); if (al.getAttribute('href') === location.hash){ e.preventDefault(); route(); } return; }
+    if (t.closest('[data-tr-open]')){ e.preventDefault(); trToggle(); return; }
+    if (t.closest('[data-tr-setup]')){ e.preventDefault(); trOpenSetup(); return; }
     if (t.closest('[data-add]')){ if (isMobile()) side(false); openUpload(); return; }
     const cmb = t.closest('[data-cmenu]'); if (cmb){ ctxMenu(cmb, cmb.dataset.cmenu); return; }
     if (t.closest('[data-hintclose]')){ $('#selHint').hidden = true; pref.set('selHint', true); return; }
