@@ -3,7 +3,7 @@ import { runIngest } from '../ingest/client.js';
 import { EXPORT_VERSION, planLibraryImport, validateItem } from '../core/library.js';
 import { FILTER_ALL, FILTER_UNFILED, collectionKey, cleanName, makeCollection, collectionsFromKv, sortCollections, hasBook, addBookToCollection, removeBookFromCollection, renameCollection, countCollectionBooks, filterByCollection, removeBookFromAll } from '../core/collections.js';
 import { isPasteTooLarge, needsLowMemoryWarning } from '../core/limits.js';
-import { AI_DEFAULTS, basePolicy, keylessAllowed, estimateMessagesTokens, fitRequest, parseSSE, shouldRetry, retryDelayMs, validateCard, createTimeoutGuard, linkAbort } from '../core/ai.js';
+import { AI_DEFAULTS, basePolicy, keylessAllowed, estimateMessagesTokens, fitRequest, parseSSE, shouldRetry, retryDelayMs, validateCard, createTimeoutGuard, linkAbort, isDeepSeekBase, migrateDeepSeekModel } from '../core/ai.js';
 import { findNormalizedRange } from '../core/text.js';
 
 (function(){
@@ -2397,8 +2397,22 @@ function initTips(){
 
 /* ---------- AI: config + client ---------- */
 const AIK = 'maktabati:ai';
-const AI_DEF = { base:'https://api.deepseek.com', model:'deepseek-chat', key:'', max:AI_DEFAULTS.maxTokens, ctx:AI_DEFAULTS.contextWindow, first:AI_DEFAULTS.firstByteTimeoutMs };
-function aiCfg(){ try{ return Object.assign({}, AI_DEF, JSON.parse(localStorage.getItem(AIK) || '{}')); }catch(e){ return Object.assign({}, AI_DEF); } }
+const AI_DEF = { base:'https://api.deepseek.com', model:'deepseek-flash', key:'', max:AI_DEFAULTS.maxTokens, ctx:AI_DEFAULTS.contextWindow, first:AI_DEFAULTS.firstByteTimeoutMs };
+function aiCfg(){
+  try{
+    const c = Object.assign({}, AI_DEF, JSON.parse(localStorage.getItem(AIK) || '{}'));
+    c.model = migrateDeepSeekModel(c.base, c.model);
+    return c;
+  }catch(e){ return Object.assign({}, AI_DEF); }
+}
+function aiMigrate(){
+  try{
+    const raw = JSON.parse(localStorage.getItem(AIK) || '{}');
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return;
+    const next = migrateDeepSeekModel(raw.base || AI_DEF.base, raw.model || AI_DEF.model);
+    if (raw.model !== next){ raw.model = next; aiSave(raw); }
+  }catch(e){}
+}
 function aiSave(c){ try{ localStorage.setItem(AIK, JSON.stringify(c)); }catch(e){ localFail('ai'); } }
 const aiReady = () => {
   const c = aiCfg(), p = basePolicy(c.base, c.key);
@@ -2411,7 +2425,7 @@ function aiErr(e){
   if (e && e.timeout) return 'تأخر مزوّد الذكاء وما وصل رد في الوقت المتوقع. جرّب مرة ثانية.';
   if (e && e.context) return 'المحتوى أطول من نافذة النموذج حتى بعد الاختصار. قلّل الفصل أو النص المرسل أو ارفع نافذة السياق من الإعدادات.';
   if (e && e.insecure) return 'لا أرسل المفتاح إلى رابط غير مشفّر. استخدم https، أو localhost لتشغيل محلي.';
-  if (e && e.network) return 'ما وصل الطلب للخدمة، غالباً بسبب CORS أو الاتصال. بعض المزودين لا يسمحون بالطلبات من المتصفح: OpenAI الرسمي وAnthropic وGemini لا تعمل مباشرة، بينما DeepSeek وOpenRouter وأي خدمة متوافقة مع OpenAI وتسمح بـCORS تعمل.';
+  if (e && e.network) return 'ما وصل الطلب للخدمة، غالباً بسبب CORS أو الاتصال. DeepSeek وOpenRouter وأي خدمة متوافقة مع OpenAI وتسمح بـCORS تعمل من المتصفح. Gemini له واجهة متوافقة مع OpenAI، وAnthropic يحتاج ترويسة anthropic-dangerous-direct-browser-access، وOpenAI الرسمي قد يعمل لكنه غير موثق للمتصفح. راجع الرابط أو استخدم OpenRouter.';
   if (e && e.cfg) return 'اضبط الذكاء من «الإعدادات» أول: رابط الـAPI واسم النموذج والمفتاح (أو localhost بلا مفتاح).';
   if (e && (e.status === 401 || e.status === 403)) return 'المفتاح غير صالح أو غير مصرّح له. تأكد من المفتاح ومن صلاحياته.';
   if (e && (e.status === 402 || /insufficient|balance|credit|quota/i.test(String(e.detail || '')))) return 'رصيد المزوّد غير كافٍ. راجع رصيد الحساب أو استخدم مفتاحًا آخر.';
@@ -2444,6 +2458,9 @@ async function aiCall(o){
   const ctx = Math.max(1024, Number(c.ctx) || AI_DEFAULTS.contextWindow);
   if (estimated + max > ctx) throw { context:true, estimated:estimated, budget:ctx };
   const body = { model:c.model, messages, stream:!!o.stream, temperature:o.json ? 0.2 : 0.7, max_tokens:max };
+  /* deepseek-flash thinks by default; this reader wants a direct answer, and the
+     field is sent only to DeepSeek so other OpenAI-compatible providers never see it. */
+  if (isDeepSeekBase(c.base)) body.thinking = { type:'disabled' };
   const ctrl = new AbortController();
   let out = '';
   const firstMs = Math.max(5000, Math.min(300000, Number(c.first) || AI_DEFAULTS.firstByteTimeoutMs));
@@ -4500,6 +4517,7 @@ function menu(open, silent){
 /* ---------- init ---------- */
 async function init(){
   initBroadcast();
+  aiMigrate();
   const dbOpened = await openDB();
   let loaded = false;
   if (dbOpened){
