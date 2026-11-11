@@ -80,6 +80,7 @@ export async function startFakeAI() {
         hasUnits:/<units>/.test(raw),
         hasCorrective:isCorrective(body)
       };
+      stats.lastUserContent = (body.messages || []).filter(m => m && m.role === 'user').map(m => String(m.content || '')).join('\n');
 
       if (model.startsWith('fake-translate')){
         if (model === 'fake-translate-429' && translation429 < 3){
