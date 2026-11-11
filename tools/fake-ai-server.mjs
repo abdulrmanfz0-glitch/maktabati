@@ -88,6 +88,11 @@ export async function startFakeAI() {
           res.end(JSON.stringify({ error:{ message:'translation rate limited' } }));
           return;
         }
+        if (model === 'fake-translate-book'){
+          res.on('close', () => { stats.closed++; });
+          setTimeout(() => sendTranslation(res, body), 900);
+          return;
+        }
         if (model === 'fake-translate-slow' && !slowUsed){
           slowUsed = true;
           res.on('close', () => { stats.closed++; });
