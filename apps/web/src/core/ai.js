@@ -47,6 +47,18 @@ export function isLocalBase(base) {
   return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(String(base || '').trim());
 }
 
+/** True only for the DeepSeek API host, never for a look-alike domain. */
+export function isDeepSeekBase(base) {
+  return /^https?:\/\/api\.deepseek\.com(?::\d+)?(\/|$)/i.test(String(base || '').trim());
+}
+
+/** The two legacy names were retired on 2026-07-24; route them to the current Flash model. */
+export function migrateDeepSeekModel(base, model) {
+  const m = String(model || '').trim();
+  if (!isDeepSeekBase(base)) return m;
+  return m === 'deepseek-chat' || m === 'deepseek-reasoner' ? 'deepseek-flash' : m;
+}
+
 /** Whether this base/key combination is allowed. Local HTTP may be keyless; other HTTP may not carry a key. */
 export function basePolicy(base, key) {
   const b = String(base || '').trim();

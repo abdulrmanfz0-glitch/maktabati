@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   AI_DEFAULTS, basePolicy, keylessAllowed, estimateMessagesTokens,
   fitRequest, parseSSE, shouldRetry, retryDelayMs, validateCard, clipAround,
-  createTimeoutGuard, linkAbort
+  createTimeoutGuard, linkAbort, isDeepSeekBase, migrateDeepSeekModel
 } from '../../apps/web/src/core/ai.js';
 
 afterEach(() => { vi.useRealTimers(); });
@@ -19,6 +19,25 @@ describe('base URL and key policy', () => {
   it('omits auth for a local keyless base and sends it when a key exists', () => {
     expect(basePolicy('http://localhost:11434', '').sendAuth).toBe(false);
     expect(basePolicy('http://localhost:11434', 'k').sendAuth).toBe(true);
+  });
+});
+
+describe('DeepSeek defaults', () => {
+  it('recognizes only the DeepSeek host, not look-alike domains', () => {
+    expect(isDeepSeekBase('https://api.deepseek.com')).toBe(true);
+    expect(isDeepSeekBase('https://api.deepseek.com/')).toBe(true);
+    expect(isDeepSeekBase('https://api.deepseek.com/v1')).toBe(true);
+    expect(isDeepSeekBase('https://api.deepseek.com.evil.example')).toBe(false);
+    expect(isDeepSeekBase('https://openrouter.ai/api/v1')).toBe(false);
+    expect(isDeepSeekBase('')).toBe(false);
+  });
+
+  it('moves the retired model names to deepseek-flash on DeepSeek only', () => {
+    expect(migrateDeepSeekModel('https://api.deepseek.com', 'deepseek-chat')).toBe('deepseek-flash');
+    expect(migrateDeepSeekModel('https://api.deepseek.com', 'deepseek-reasoner')).toBe('deepseek-flash');
+    expect(migrateDeepSeekModel('https://api.deepseek.com', 'deepseek-flash')).toBe('deepseek-flash');
+    expect(migrateDeepSeekModel('https://api.deepseek.com', 'deepseek-v4-pro')).toBe('deepseek-v4-pro');
+    expect(migrateDeepSeekModel('https://openrouter.ai/api/v1', 'deepseek-chat')).toBe('deepseek-chat');
   });
 });
 

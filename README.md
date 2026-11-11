@@ -54,7 +54,7 @@ The old single-file `My Library.html` is no longer part of the repository.
 1. Create a key in the DeepSeek console. Use a key with a spending limit.
 2. Open **Profile → AI** (`#/profile/ai`).
 3. Keep the default base URL `https://api.deepseek.com` and model
-   `deepseek-chat`, or enter another OpenAI-compatible base URL and model.
+   `deepseek-flash`, or enter another OpenAI-compatible base URL and model.
 4. Paste the key and press **Save**, then **Test connection**.
 
 The key is stored only in this browser's `localStorage` under
@@ -68,15 +68,15 @@ the provider must allow **CORS** from the app's origin.
 
 | Provider | From the browser |
 |---|---|
-| DeepSeek | Works (default base URL and model) |
+| DeepSeek | Works (default base URL `https://api.deepseek.com`, model `deepseek-flash`) |
 | OpenRouter | Works with its OpenAI-compatible base URL |
+| Google Gemini API | Reachable through its OpenAI-compatible endpoint `https://generativelanguage.googleapis.com/v1beta/openai` with model `gemini-3.8-flash`; send the key as `Authorization: Bearer`. Test one request before relying on it. |
+| Anthropic API | CORS works when the request carries `anthropic-dangerous-direct-browser-access: true`, but this app speaks only OpenAI Chat Completions; the native Messages API needs an adapter. ZDR/Compliance organizations may reject browser requests. |
+| OpenAI official API | CORS is observed to work, but OpenAI does not document it and advises against exposing keys in browsers. Use a proxy or OpenRouter for production. |
 | Any OpenAI-compatible endpoint with CORS (Groq, Together, Fireworks, LM Studio, vLLM, Ollama with `OLLAMA_ORIGINS` configured) | Works when it accepts `Authorization: Bearer` and the OpenAI Chat Completions request/response shape |
-| OpenAI official API | Does **not** work directly from a browser (CORS) |
-| Anthropic API | Does **not** work directly; it uses a different endpoint, headers, and streaming format |
-| Google Gemini API | Does **not** work directly; it uses a different request shape |
 
-There is no server-side AI proxy in this repository. If you need OpenAI,
-Anthropic, Gemini, or a key that never reaches the browser, you need to add a
+There is no server-side AI proxy in this repository. For a key that never reaches
+the browser, or for a provider whose browser support is not documented, add a
 proxy (planned in `apps/api`, not implemented).
 
 ## Limits, timeouts, and destructive actions
@@ -224,8 +224,9 @@ Third-party components and assets are listed in
 - **التشغيل:** Node.js 22.13 أو أحدث، ثم `npm install` و`npm run dev`، وافتح
   <http://localhost:5173>.
 - **المفتاح:** من **الملف ← الرفيق الذكي** (`#/profile/ai`). الافتراضي
-  DeepSeek، ويمكن استخدام أي مزوّد متوافق مع OpenAI Chat Completions يدعم
-  CORS. مفتاح OpenAI الرسمي وAnthropic وGemini لا تعمل مباشرةً من المتصفح.
+  DeepSeek (`deepseek-flash`)، ويمكن استخدام أي مزوّد متوافق مع OpenAI Chat
+  Completions يدعم CORS. Gemini يعمل عبر واجهته المتوافقة مع OpenAI، وAnthropic
+  يحتاج ترويسة CORS خاصة وواجهة مختلفة، وOpenAI الرسمي غير موثق للمتصفح.
 - **الخصوصية:** الكتب والتظليلات في IndexedDB على جهازك، والمفتاح في
   `localStorage`. عند السؤال تُرسل المقاطع ذات الصلة إلى مزوّد الذكاء الذي
   اخترته. لا يوجد تتبّع. الصور الخارجية محجوبة وتظهر كروابط أو نص بديل.
