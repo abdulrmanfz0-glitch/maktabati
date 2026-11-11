@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   PROMPT_VERSION, SYSTEM_PROMPT, parseGlossary, glossaryHash, glossaryForText,
   extractChapterUnits, chunkUnits, buildMessages, parseTranslation, qaSegment,
-  estimateChapter, priceFor, isPeak, fingerprint, chapterSourceHash, countWords
+  estimateChapter, priceFor, isPeak, fingerprint, chapterSourceHash, countWords,
+  bookPlan, runConcurrent, needsCostConfirm
 } from '../../apps/web/src/core/translate.js';
 
 const book = () => ({
@@ -160,5 +161,50 @@ describe('cost and fingerprint', () => {
   });
   it('counts words for the preflight estimate', () => {
     expect(countWords('one two, three!')).toBe(3);
+  });
+});
+
+describe('whole-book planning', () => {
+  it('plans a range and keeps already-translated chapters out of the active cost', () => {
+    const b = book();
+    b.chapters.push({ title:'Chapter Two', sections:[{ title:'Second', blocks:[{ type:'p', text:'The second chapter has its own paragraph and 2025.' }] }] });
+    const first = bookPlan(b, { from:0, to:1, model:'deepseek-flash', base:'https://api.deepseek.com', glossary:[] });
+    expect(first.from).toBe(0);
+    expect(first.to).toBe(1);
+    expect(first.rows).toHaveLength(2);
+    expect(first.totals.segments).toBeGreaterThan(1);
+    expect(first.totals.cost).toBeGreaterThan(0);
+    expect(first.totals.timeHighSec).toBeGreaterThanOrEqual(first.totals.timeLowSec);
+    const skipped = bookPlan(b, {
+      from:0, to:1, model:'deepseek-flash', base:'https://api.deepseek.com', glossary:[],
+      states:{ 0:{ state:'done', fingerprint:first.rows[0].fingerprint } }
+    });
+    expect(skipped.rows[0].skipped).toBe(true);
+    expect(skipped.totals.done).toBe(1);
+    expect(skipped.totals.segments).toBeLessThan(first.totals.segments + skipped.rows[1].segments);
+  });
+  it('flags a cost above the confirmation threshold', () => {
+    expect(needsCostConfirm(1.01)).toBe(true);
+    expect(needsCostConfirm(1.00)).toBe(false);
+    expect(needsCostConfirm(0)).toBe(false);
+    const big = book();
+    big.chapters[0].sections[0].blocks = Array.from({ length:300 }, () => ({ type:'p', text:'word '.repeat(100) }));
+    const plan = bookPlan(big, { model:'claude-opus-5.5', base:'https://api.anthropic.com', glossary:[] });
+    expect(plan.totals.cost).toBeGreaterThan(1);
+    expect(plan.needsConfirm).toBe(true);
+  });
+});
+
+describe('concurrency helper', () => {
+  it('runs at most the limit and returns results in input order', async () => {
+    let active = 0, max = 0;
+    const out = await runConcurrent([0,1,2,3,4], async n => {
+      active++; max = Math.max(max, active);
+      await new Promise(r => setTimeout(r, (5 - n) * 5));
+      active--;
+      return n * 10;
+    }, { limit:2 });
+    expect(max).toBeLessThanOrEqual(2);
+    expect(out).toEqual([0,10,20,30,40]);
   });
 });

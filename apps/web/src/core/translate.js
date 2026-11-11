@@ -412,3 +412,77 @@ export function fingerprint(o = {}) {
 export function chapterSourceHash(units) {
   return hashString((units || []).map(u => String(u.id) + '\u0000' + String(u.text)).join('\u0001'));
 }
+
+/** A cost above this needs a second explicit confirmation. */
+export function needsCostConfirm(cost, limit = 1) {
+  return Number.isFinite(Number(cost)) && Number(cost) > Number(limit);
+}
+
+/** Run at most `limit` workers, preserving result order. Used by whole-book translation. */
+export async function runConcurrent(items, worker, o = {}) {
+  const list = Array.isArray(items) ? items : [];
+  const limit = Math.max(1, Math.min(list.length || 1, Number(o.limit) || 1));
+  const results = new Array(list.length);
+  let next = 0;
+  const work = async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= list.length) return;
+      results[i] = await worker(list[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, list.length) }, work));
+  return results;
+}
+
+/** Plan a whole-book run without touching storage or the network. */
+export function bookPlan(it, o = {}) {
+  const chapters = Array.isArray(it && it.chapters) ? it.chapters : [];
+  const from = Math.max(0, Math.min(chapters.length - 1, Number(o.from) || 0));
+  const to = Math.max(from, Math.min(chapters.length - 1, o.to == null ? chapters.length - 1 : Number(o.to)));
+  const states = o.states || {};
+  const glossaryHashValue = o.glossaryHash || glossaryHash(o.glossary || []);
+  const rows = [];
+  const totals = { chapters:0, done:0, partial:0, pending:0, words:0, segments:0, inputTokens:0, outputTokens:0, cost:0, peakCost:0, unknownPrice:false, timeLowSec:0, timeHighSec:0 };
+  for (let ci = from; ci <= to; ci++) {
+    const c = chapters[ci];
+    if (!c || typeof c !== 'object') continue;
+    const units = extractChapterUnits(it, ci, { pdf: !!o.pdf });
+    const title = String(c.title || ('الفصل ' + (ci + 1)));
+    if (!units.length){ rows.push({ ci, title, state:'none', empty:true, skipped:false, words:0, segments:0, inputTokens:0, outputTokens:0, cost:0, peakCost:0, timeLowSec:0, timeHighSec:0 }); totals.chapters++; totals.pending++; continue; }
+    const est = estimateChapter(it, ci, { model:o.model, base:o.base, glossary:o.glossary || [], pdf:!!o.pdf, date:o.date });
+    const fp = fingerprint({ sourceHash:chapterSourceHash(units), model:o.model, base:o.base, promptVersion:PROMPT_VERSION, glossaryHash:glossaryHashValue });
+    const st = states[ci] || {};
+    const state = st.state || 'none';
+    const skipped = state === 'done' && st.fingerprint === fp;
+    const row = {
+      ci, title, state, skipped,
+      fingerprint:fp, units:units.length, words:est ? est.words : 0,
+      segments:est ? est.chunks.length : 0,
+      inputTokens:est ? est.inputTokens : 0,
+      outputTokens:est ? est.outputTokens : 0,
+      cost:est && est.price ? est.cost : 0,
+      peakCost:est && est.price && est.price.deepseek ? est.peakCost : 0,
+      timeLowSec:0, timeHighSec:0
+    };
+    rows.push(row);
+    totals.chapters++;
+    if (state === 'done') totals.done++;
+    else if (state === 'partial') totals.partial++;
+    else totals.pending++;
+    if (!skipped && !row.empty) {
+      totals.words += row.words; totals.segments += row.segments; totals.inputTokens += row.inputTokens; totals.outputTokens += row.outputTokens;
+      if (est && est.price) totals.cost += row.cost; else totals.unknownPrice = true;
+      if (est && est.price && est.price.deepseek) totals.peakCost += row.peakCost;
+    }
+  }
+  const concurrency = Math.max(1, Math.min(3, Number(o.concurrency) || 3));
+  const perSegment = 5;
+  totals.timeLowSec = Math.round(totals.segments * (perSegment - 1) / concurrency);
+  totals.timeHighSec = Math.round(totals.segments * (perSegment + 3) / concurrency);
+  return {
+    from, to, concurrency, rows, totals,
+    needsConfirm: needsCostConfirm(Math.max(totals.cost, totals.peakCost), 1),
+    estimate: true
+  };
+}
