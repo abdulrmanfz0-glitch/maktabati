@@ -91,7 +91,8 @@ export const PROVIDERS = Object.freeze({
 export function detectProvider(key) {
   const k = String(key == null ? '' : key).trim();
   if (!k) return { kind:'empty' };
-  if (k.startsWith('AIza')) return { kind:'known', provider:'gemini' };
+  /* AI Studio migrated new keys to AQ. auth keys on 2026-05-28; both are Gemini. */
+  if (k.startsWith('AIza') || k.startsWith('AQ.')) return { kind:'known', provider:'gemini' };
   if (k.startsWith('sk-or-')) return { kind:'known', provider:'openrouter' };
   if (k.startsWith('gsk_')) return { kind:'known', provider:'groq' };
   if (k.startsWith('sk-ant-')) return {
@@ -166,15 +167,33 @@ function providerMessage(value) {
   return '';
 }
 
+/** Collect `details[].reason` values, such as ACCESS_TOKEN_TYPE_UNSUPPORTED. */
+function providerReasons(value) {
+  const out = [];
+  const walk = v => {
+    if (v == null) return;
+    if (Array.isArray(v)) { for (const item of v) walk(item); return; }
+    if (typeof v !== 'object') return;
+    if (typeof v.reason === 'string' && v.reason.trim() && !out.includes(v.reason.trim())) out.push(v.reason.trim());
+    if (v.details != null) walk(v.details);
+    if (v.error != null) walk(v.error);
+  };
+  walk(value);
+  return out;
+}
+
 /**
  * Gemini returns some errors as a JSON array: [{"error":{"message":"..."}}].
- * Return the provider's own message when there is one, else the raw body.
+ * Return the provider's own message and any structured reason, else the raw body.
  */
 export function parseProviderErrorBody(text) {
   const raw = String(text == null ? '' : text);
   try {
-    const message = providerMessage(JSON.parse(raw));
-    if (message) return message;
+    const parsed = JSON.parse(raw);
+    const message = providerMessage(parsed);
+    const reasons = providerReasons(parsed).filter(r => !message.includes(r));
+    if (message) return reasons.length ? message + ' (' + reasons.join(', ') + ')' : message;
+    if (reasons.length) return reasons.join(', ');
   } catch (e) { /* not JSON; use the raw body */ }
   return raw.trim();
 }

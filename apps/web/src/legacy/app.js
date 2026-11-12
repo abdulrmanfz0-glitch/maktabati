@@ -2461,6 +2461,11 @@ const aiReady = () => {
   return !!(c.base && c.model && p.ok && (c.key || keylessAllowed(c.base)));
 };
 const SERVE_CMD = 'python3 -m http.server 8000';
+const errDetail = e => {
+  const d = e && e.detail ? String(e.detail) : '';
+  const k = aiCfg().key;
+  return k ? d.split(k).join('[hidden]') : d;
+};
 function aiErr(e){
   if (e && e.name === 'AbortError') return 'انوقف.';
   if (e && e.empty) return e.message || 'المزوّد رجّع ردًّا فارغًا بدون نص.';
@@ -2470,11 +2475,14 @@ function aiErr(e){
   if (e && e.insecure) return 'لا أرسل المفتاح إلى رابط غير مشفّر. استخدم https، أو localhost لتشغيل محلي.';
   if (e && e.network) return 'ما وصل الطلب للخدمة، غالباً بسبب CORS أو الاتصال. DeepSeek وOpenRouter وأي خدمة متوافقة مع OpenAI وتسمح بـCORS تعمل من المتصفح. Gemini له واجهة متوافقة مع OpenAI، وAnthropic يحتاج ترويسة anthropic-dangerous-direct-browser-access، وOpenAI الرسمي قد يعمل لكنه غير موثق للمتصفح. راجع الرابط أو استخدم OpenRouter.';
   if (e && e.cfg) return 'اضبط الذكاء من «الإعدادات» أول: رابط الـAPI واسم النموذج والمفتاح (أو localhost بلا مفتاح).';
-  if (e && (e.status === 401 || e.status === 403)) return 'المفتاح غير صالح أو غير مصرّح له. تأكد من المفتاح ومن صلاحياته.';
+  if (e && (e.status === 401 || e.status === 403)){
+    const d = errDetail(e);
+    return 'المفتاح غير صالح أو غير مصرّح له.' + (d ? ' ' + d : '') + ' تأكد من المفتاح ومن صلاحياته.';
+  }
   if (e && (e.status === 402 || /insufficient|balance|credit|quota/i.test(String(e.detail || '')))) return 'رصيد المزوّد غير كافٍ. راجع رصيد الحساب أو استخدم مفتاحًا آخر.';
   if (e && e.status === 429) return 'المزوّد يطلب تهدئة الطلبات (429). انتظر قليلًا ثم جرّب.';
   if (e && e.status){
-    const k = aiCfg().key, d = e.detail && k ? String(e.detail).split(k).join('[hidden]') : (e.detail || '');
+    const d = errDetail(e);
     return 'الخدمة ردّت بخطأ ' + e.status + (d ? ': ' + d : '') + (e.status === 404 ? ' — تأكد من الرابط واسم النموذج.' : '');
   }
   return 'ما وصل الطلب للخدمة' + (location.protocol === 'file:' ? '، لأن الصفحة مفتوحة كملف محلي والمتصفح يمنع الطلب (CORS).' : '، غالباً بسبب CORS أو الاتصال.') + ' افتح الصفحة من سيرفر محلي أو استضافة، أو استخدم وسيط.';
@@ -2510,6 +2518,9 @@ async function aiCall(o){
   const guard = createTimeoutGuard({ firstMs, idleMs:AI_DEFAULTS.idleStreamTimeoutMs, onTimeout:() => { try{ ctrl.abort(new DOMException('Timeout', 'TimeoutError')); }catch(e){ ctrl.abort(); } } });
   const unlink = linkAbort(o.signal, ctrl);
   const headers = { 'Content-Type':'application/json' };
+  /* Gemini's OpenAI-compatible path takes the key as Bearer only. Never add
+     x-goog-api-key or ?key= here: Google rejects a second credential with a 400
+     "Multiple authentication credentials received". */
   if (c.key) headers.Authorization = 'Bearer ' + c.key;
   try{
     for (let attempt = 0; ; attempt++){
@@ -4191,6 +4202,11 @@ function renderProfile(tab){
     const status = html => { const el = $('#sDetect'); if (el) el.innerHTML = html; };
     const openAdv = () => { const d = $('#sAdv'); if (d) d.open = true; const b = $('#sBase'); if (b) b.focus(); };
     const why = e => e && e.status ? 'HTTP ' + e.status : e && e.timeout ? 'انتهت المهلة' : 'CORS أو اتصال';
+    /* Defaults are pre-filled, so only a changed base/model counts as a custom endpoint. */
+    const advancedReady = () => {
+      const base = $('#sBase').value.trim(), model = $('#sModel').value.trim();
+      return !!base && !!model && (base !== AI_DEF.base || model !== AI_DEF.model);
+    };
     /* DEV ONLY: the settings e2e points the real provider bases at its fake server. */
     const providerBase = id => (import.meta.env.DEV && window.__aiTestProviderBase && window.__aiTestProviderBase[id]) || (PROVIDERS[id] ? PROVIDERS[id].base : '');
     const fetchModels = async (base, key) => {
@@ -4198,6 +4214,8 @@ function renderProfile(tab){
       const timer = setTimeout(() => { try{ ctrl.abort(); }catch(e){} }, 15000);
       try{
         let res;
+        /* Bearer only, including for Gemini: a second credential (x-goog-api-key or
+           ?key=) makes Google return 400 "Multiple authentication credentials received". */
         try{ res = await fetch(modelsEndpoint(base), { headers:key ? { Authorization:'Bearer ' + key } : {}, signal:ctrl.signal }); }
         catch(e){ if (ctrl.signal.aborted) throw { timeout:true }; throw { network:true }; }
         if (!res.ok){ let detail = ''; try{ detail = await readProviderError(res); }catch(e){} throw { status:res.status, detail }; }
@@ -4234,7 +4252,11 @@ function renderProfile(tab){
       const d = detectProvider(key);
       if (d.kind === 'empty'){ status('الصق المفتاح أول عشان أكتشف المزوّد.'); return false; }
       if (d.kind === 'unsupported'){ status(esc(d.message)); return false; }
-      if (d.kind === 'unknown'){ status(esc(d.message)); openAdv(); return false; }
+      if (d.kind === 'unknown'){
+        if (advancedReady()) status('المزوّد غير معروف من صيغة المفتاح. بستخدم الرابط والنموذج من «خيارات متقدمة».');
+        else { status(esc(d.message)); openAdv(); }
+        return false;
+      }
       const ids = d.kind === 'ambiguous' ? d.providers : [d.provider];
       status('أتحقّق من المفتاح…');
       let firstFail = null, authFails = 0;
@@ -4277,6 +4299,14 @@ function renderProfile(tab){
     };
     $('#sTest').onclick = async () => {
       try{ if (detecting) await detecting; }catch(e){}
+      const key = $('#sKey').value.trim();
+      const d = key ? detectProvider(key) : null;
+      if (d && d.kind === 'unknown' && !advancedReady()){
+        status(esc(d.message)); openAdv();
+        msg('<b>ما جرّبت.</b> أدخل رابط الـAPI واسم النموذج في «خيارات متقدمة» أول.', false);
+        return;
+      }
+      if (d && d.kind === 'unknown') status('المزوّد غير معروف من صيغة المفتاح. بستخدم الرابط والنموذج من «خيارات متقدمة».');
       aiSave(read()); msg('<b>أجرّب…</b>', true);
       try{
         /* Room for a short answer plus a Gemini thinking round; an empty or failed

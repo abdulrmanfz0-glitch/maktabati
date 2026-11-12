@@ -36,7 +36,7 @@ try {
   await b.waitFor(`!!document.querySelector('#sKey')`, 10000);
 
   // 1) A Gemini key is detected, /models is verified, the newest Flash is chosen, and it saves
-  await paste('AIzaE2EKey');
+  await paste('AQ.AbE2EKey');
   await waitText('#sDetect', 'تم التعرّف:');
   assert((await text('#sDetect')).includes('Gemini'), 'Gemini label missing: ' + await text('#sDetect'));
   const base1 = await ev(`document.querySelector('#sBase').value`);
@@ -45,7 +45,7 @@ try {
   assert(fake.stats.modelFetches[0].path === '/gemini/v1/models', 'wrong /models path');
   assert(fake.stats.modelFetches[0].hasAuth, 'no Authorization header on /models');
   const c1 = await cfg();
-  assert(c1.key === 'AIzaE2EKey' && c1.base === fake.url + '/gemini/v1' && c1.model === 'gemini-2.5-flash', 'detected config was not saved');
+  assert(c1.key === 'AQ.AbE2EKey' && c1.base === fake.url + '/gemini/v1' && c1.model === 'gemini-2.5-flash', 'detected config was not saved');
   ok('Gemini key detected, verified and saved', c1.model);
 
   // 2) Chat works with the saved detected config
@@ -55,12 +55,25 @@ try {
   await b.waitFor(`(() => { const e = document.querySelector('#v-home .cm-a'); return !!e && e.textContent.trim() === 'تم'; })()`, 15000);
   ok('chat uses the detected config', 'assistant answered');
 
-  // 3) An unknown prefix opens Advanced and asks for the base URL
-  await go('#/profile/ai');
+  // 3) An unknown prefix opens Advanced and asks for the base URL (fresh default config)
+  await ev(`localStorage.removeItem('maktabati:ai')`);
+  await go('#/'); await go('#/profile/ai');
   await paste('not-a-known-key');
   await waitText('#sDetect', 'ما عرفت المزوّد');
   assert(await ev(`document.querySelector('#sAdv').open`), 'Advanced section did not open');
   ok('unknown key opens Advanced', 'base URL requested');
+
+  // 3b) The same unknown key uses the custom Advanced base/model for the test connection
+  await ev(`document.querySelector('#sBase').value = ${JSON.stringify(fake.url + '/v1')}`);
+  await ev(`document.querySelector('#sModel').value = 'fake-ok-json'`);
+  await ev(`document.querySelector('#sTest').click()`);
+  await waitText('#sMsg', 'الاتصال شغّال', 15000);
+  const last = fake.stats.last;
+  assert(last.model === 'fake-ok-json', 'Advanced model was not used: ' + last.model);
+  assert(last.hasAuth, 'Authorization header missing');
+  assert(!last.apiKeyHeader, 'x-goog-api-key must not be sent');
+  assert(!last.queryKey, '?key= must not be sent');
+  ok('unknown key uses Advanced base/model', 'Bearer only, no duplicate credentials');
 
   // 4) A failed /models call falls back to the hardcoded default and says so
   await ev(`window.__aiTestProviderBase.groq = ${JSON.stringify(fake.url + '/broken/v1')}`);

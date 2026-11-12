@@ -74,6 +74,14 @@ describe('provider errors and empty answers', () => {
     expect(parseProviderErrorBody('plain failure')).toBe('plain failure');
   });
 
+  it('keeps the provider text and reason for 400 and 401 bodies', () => {
+    expect(parseProviderErrorBody('{"error":{"code":400,"message":"Invalid Auth key."}}')).toBe('Invalid Auth key.');
+    expect(parseProviderErrorBody('{"error":{"code":401,"message":"Unauthorized","status":"UNAUTHENTICATED","details":[{"reason":"ACCESS_TOKEN_TYPE_UNSUPPORTED"}]}}'))
+      .toBe('Unauthorized (ACCESS_TOKEN_TYPE_UNSUPPORTED)');
+    expect(parseProviderErrorBody('[{"error":{"code":401,"message":"ACCESS_TOKEN_TYPE_UNSUPPORTED","details":[{"reason":"ACCESS_TOKEN_TYPE_UNSUPPORTED"}]}}]'))
+      .toBe('ACCESS_TOKEN_TYPE_UNSUPPORTED');
+  });
+
   it('captures finish_reason from the last streamed chunk', () => {
     const r = parseSSE('data: {"choices":[{"delta":{"content":"A"},"finish_reason":"stop"}]}\n');
     expect(r.events).toEqual([{ delta:'A' }, { finish:'stop' }]);
@@ -102,6 +110,7 @@ describe('provider errors and empty answers', () => {
 describe('provider detection from an API key', () => {
   it('detects every supported prefix', () => {
     expect(detectProvider('AIzaSyExampleKey')).toEqual({ kind:'known', provider:'gemini' });
+    expect(detectProvider('AQ.AbExampleAuthKey')).toEqual({ kind:'known', provider:'gemini' });
     expect(detectProvider('sk-or-v1-example')).toEqual({ kind:'known', provider:'openrouter' });
     expect(detectProvider('gsk_example')).toEqual({ kind:'known', provider:'groq' });
     expect(detectProvider('sk-ant-api03-example').kind).toBe('unsupported');

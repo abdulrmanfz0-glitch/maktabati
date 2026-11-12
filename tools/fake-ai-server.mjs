@@ -108,10 +108,30 @@ export async function startFakeAI() {
         temperature:body.temperature,
         response_format:body.response_format || null,
         thinking:body.thinking || null,
+        reasoning_effort:body.reasoning_effort || null,
+        hasAuth:!!req.headers.authorization,
+        apiKeyHeader:!!req.headers['x-goog-api-key'],
+        queryKey:u.searchParams.has('key'),
         hasUnits:/<units>/.test(raw),
         hasCorrective:isCorrective(body)
       };
       stats.lastUserContent = (body.messages || []).filter(m => m && m.role === 'user').map(m => String(m.content || '')).join('\n');
+
+      if (model === 'fake-error-400') {
+        res.writeHead(400, { 'Content-Type':'application/json', 'Cache-Control':'no-cache' });
+        res.end(JSON.stringify({ error:{ code:400, message:'Invalid Auth key.' } }));
+        return;
+      }
+      if (model === 'fake-error-401') {
+        res.writeHead(401, { 'Content-Type':'application/json', 'Cache-Control':'no-cache' });
+        res.end(JSON.stringify({ error:{ code:401, message:'Unauthorized', status:'UNAUTHENTICATED', details:[{ reason:'ACCESS_TOKEN_TYPE_UNSUPPORTED' }] } }));
+        return;
+      }
+      if (model === 'fake-ok-json') {
+        res.writeHead(200, { 'Content-Type':'application/json', 'Cache-Control':'no-cache' });
+        res.end(JSON.stringify({ choices:[{ message:{ role:'assistant', content:'تم' }, finish_reason:'stop' }] }));
+        return;
+      }
 
       if (model.startsWith('fake-translate')){
         if (model === 'fake-translate-429' && translation429 < 3){

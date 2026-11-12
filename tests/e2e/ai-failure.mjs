@@ -22,6 +22,11 @@ async function sendHome(text) {
   await ev(`(() => { const t = document.querySelector('#v-home #chIn'); t.value = ${JSON.stringify(text)}; t.dispatchEvent(new Event('input', { bubbles:true })); document.querySelector('#v-home #chSend').click(); })()`);
 }
 async function waitReady() { await b.waitFor(`!!document.querySelector('#v-home #chIn')`, 20000); }
+async function openSettingsTest() {
+  await go('#/'); await waitReady();
+  await go('#/profile/ai');
+  await b.waitFor(`!!document.querySelector('#sTest')`, 10000);
+}
 
 try {
   await b.goto(page); await waitReady();
@@ -92,9 +97,23 @@ try {
   await ev(`document.querySelector('#sTest').click()`);
   await waitText('#sMsg', 'استهلك حدّ التوكنز', 12000);
   ok('test connection empty JSON', 'Arabic error shown');
+
+  // 7) test connection shows the provider's own 400 text
+  await setModel('fake-error-400');
+  await openSettingsTest();
+  await ev(`document.querySelector('#sTest').click()`);
+  await waitText('#sMsg', 'Invalid Auth key.', 12000);
+  ok('test connection 400 provider text', 'Invalid Auth key.');
+
+  // 8) test connection shows the provider's 401 reason
+  await setModel('fake-error-401');
+  await openSettingsTest();
+  await ev(`document.querySelector('#sTest').click()`);
+  await waitText('#sMsg', 'ACCESS_TOKEN_TYPE_UNSUPPORTED', 12000);
+  ok('test connection 401 reason', 'ACCESS_TOKEN_TYPE_UNSUPPORTED');
   await go('#/'); await waitReady();
 
-  // 7) two tabs: a write in tab A shows the reload notice in tab B
+  // 9) two tabs: a write in tab A shows the reload notice in tab B
   await ev(`(() => { const b = document.createElement('button'); b.id = '__openOther'; b.textContent = 'open'; b.style = 'position:fixed;top:0;left:0;z-index:99999'; b.onclick = () => { window.__other = window.open(location.href, '_blank'); }; document.body.appendChild(b); })()`);
   const r = await ev(`(() => { const x = document.querySelector('#__openOther').getBoundingClientRect(); return { x:x.left + 5, y:x.top + 5 }; })()`);
   await b.tap(r.x, r.y);
