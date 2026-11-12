@@ -49,13 +49,18 @@ backend. The first load creates two demo items so the library is not empty.
 
 The old single-file `My Library.html` is no longer part of the repository.
 
-## Add a DeepSeek key
+## Add an AI key
 
-1. Create a key in the DeepSeek console. Use a key with a spending limit.
+1. Create a key with a spending limit.
 2. Open **Profile → AI** (`#/profile/ai`).
-3. Keep the default base URL `https://api.deepseek.com` and model
-   `deepseek-flash`, or enter another OpenAI-compatible base URL and model.
-4. Paste the key and press **Save**, then **Test connection**.
+3. Paste the key and press **Save**. The app detects the provider, fills the
+   base URL, model and token limits, verifies `GET /models`, and saves.
+4. Press **Test connection**.
+
+Use the **custom / local endpoint** link only for Ollama, LM Studio, or another
+endpoint that is not one of the known providers. A generic `sk-` key is checked
+against DeepSeek, then OpenAI; every other key is sent only to the detected or
+chosen provider.
 
 The key is stored only in this browser's `localStorage` under
 `maktabati:ai`. It is never included in library exports. See

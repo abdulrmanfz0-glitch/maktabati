@@ -65,46 +65,97 @@ export function isGeminiBase(base) {
 export const GEMINI_REASONING_EFFORT = 'low';
 
 /**
+ * The provider table is the single source of truth. Adding a provider is one entry:
+ * prefixes drive detection, model/prefs drive selection, limits are copied when the
+ * reader switches provider, and requestOptions are added to every Chat Completions body.
+ */
+export const PROVIDERS = Object.freeze({
+  deepseek: {
+    id:'deepseek', label:'DeepSeek', base:'https://api.deepseek.com',
+    prefixes:['sk-'], model:'deepseek-flash', prefs:['deepseek-flash'],
+    requestOptions:{ thinking:{ type:'disabled' } },
+    limits:{ max:AI_DEFAULTS.maxTokens, ctx:AI_DEFAULTS.contextWindow, first:AI_DEFAULTS.firstByteTimeoutMs }
+  },
+  gemini: {
+    id:'gemini', label:'Gemini', base:'https://generativelanguage.googleapis.com/v1beta/openai',
+    prefixes:['AIza', 'AQ.'], model:'gemini-3.8-flash', prefs:[],
+    requestOptions:{ reasoning_effort:GEMINI_REASONING_EFFORT },
+    limits:{ max:4096, ctx:1000000, first:AI_DEFAULTS.firstByteTimeoutMs }
+  },
+  openrouter: {
+    id:'openrouter', label:'OpenRouter', base:'https://openrouter.ai/api/v1',
+    prefixes:['sk-or-'], model:'openai/gpt-4o-mini',
+    prefs:['openai/gpt-4o-mini', 'google/gemini-2.5-flash', 'anthropic/claude-3.5-haiku', 'openrouter/auto'],
+    requestOptions:{},
+    limits:{ max:AI_DEFAULTS.maxTokens, ctx:AI_DEFAULTS.contextWindow, first:AI_DEFAULTS.firstByteTimeoutMs }
+  },
+  groq: {
+    id:'groq', label:'Groq', base:'https://api.groq.com/openai/v1',
+    prefixes:['gsk_'], model:'llama-3.3-70b-versatile',
+    prefs:['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it'],
+    requestOptions:{},
+    limits:{ max:AI_DEFAULTS.maxTokens, ctx:AI_DEFAULTS.contextWindow, first:AI_DEFAULTS.firstByteTimeoutMs }
+  },
+  openai: {
+    id:'openai', label:'OpenAI', base:'https://api.openai.com/v1',
+    prefixes:['sk-'], model:'gpt-4o-mini',
+    prefs:['gpt-4o-mini', 'gpt-4.1-mini', 'gpt-4o'],
+    requestOptions:{},
+    limits:{ max:AI_DEFAULTS.maxTokens, ctx:128000, first:AI_DEFAULTS.firstByteTimeoutMs }
+  }
+});
+
+/** Infer the provider from a saved base URL. A non-provider base is a custom endpoint. */
+export function providerForBase(base) {
+  const raw = String(base || '').trim();
+  if (!raw) return null;
+  let url;
+  try { url = new URL(raw); } catch (e) { return null; }
+  const path = url.pathname.replace(/\/+$/, '');
+  for (const provider of Object.values(PROVIDERS)) {
+    const providerUrl = new URL(provider.base);
+    if (url.hostname.toLowerCase() !== providerUrl.hostname.toLowerCase()) continue;
+    const providerPath = providerUrl.pathname.replace(/\/+$/, '');
+    if (path === providerPath || path.startsWith(providerPath ? providerPath + '/' : '/')) return provider;
+  }
+  return null;
+}
+
+/**
  * Provider-specific request fields. DeepSeek gets its explicit "no thinking" switch;
  * Gemini gets a low reasoning budget. Every other OpenAI-compatible provider gets neither.
  */
 export function providerRequestOptions(base) {
-  if (isDeepSeekBase(base)) return { thinking:{ type:'disabled' } };
-  if (isGeminiBase(base)) return { reasoning_effort:GEMINI_REASONING_EFFORT };
-  return {};
+  const provider = providerForBase(base);
+  return provider ? Object.assign({}, provider.requestOptions) : {};
 }
 
 /**
- * Known providers for key-prefix detection. "model" is the hardcoded fallback used
- * only when GET /models cannot answer; "prefs" is the small preference list tried
- * against the model ids the provider actually returns.
+ * Detect a provider from the key prefix only. No network and no key is logged.
+ * The longest matching prefix wins. A generic sk- key matches both DeepSeek and
+ * OpenAI, so it is the only ambiguous case and keeps the table order.
  */
-export const PROVIDERS = Object.freeze({
-  deepseek: { id:'deepseek', label:'DeepSeek', base:'https://api.deepseek.com', model:'deepseek-flash', prefs:['deepseek-flash'] },
-  gemini: { id:'gemini', label:'Gemini', base:'https://generativelanguage.googleapis.com/v1beta/openai', model:'gemini-3.8-flash', prefs:[] },
-  openrouter: { id:'openrouter', label:'OpenRouter', base:'https://openrouter.ai/api/v1', model:'openai/gpt-4o-mini', prefs:['openai/gpt-4o-mini', 'google/gemini-2.5-flash', 'anthropic/claude-3.5-haiku', 'openrouter/auto'] },
-  groq: { id:'groq', label:'Groq', base:'https://api.groq.com/openai/v1', model:'llama-3.3-70b-versatile', prefs:['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it'] },
-  openai: { id:'openai', label:'OpenAI', base:'https://api.openai.com/v1', model:'gpt-4o-mini', prefs:['gpt-4o-mini', 'gpt-4.1-mini', 'gpt-4o'] }
-});
-
-/** Detect a provider from the key prefix only. No network and no key is logged. */
 export function detectProvider(key) {
   const k = String(key == null ? '' : key).trim();
   if (!k) return { kind:'empty' };
-  /* AI Studio migrated new keys to AQ. auth keys on 2026-05-28; both are Gemini. */
-  if (k.startsWith('AIza') || k.startsWith('AQ.')) return { kind:'known', provider:'gemini' };
-  if (k.startsWith('sk-or-')) return { kind:'known', provider:'openrouter' };
-  if (k.startsWith('gsk_')) return { kind:'known', provider:'groq' };
   if (k.startsWith('sk-ant-')) return {
     kind:'unsupported',
     provider:'anthropic',
     message:'مفاتيح Anthropic تحتاج واجهة Messages API مختلفة، والتطبيق يتكلم OpenAI Chat Completions. استخدم OpenRouter بمفتاح يبدأ بـsk-or- بدلًا منها.'
   };
-  if (k.startsWith('sk-')) return { kind:'ambiguous', providers:['deepseek', 'openai'] };
-  return {
+  const hits = [];
+  for (const provider of Object.values(PROVIDERS)) {
+    for (const prefix of provider.prefixes) if (k.startsWith(prefix)) hits.push({ id:provider.id, length:prefix.length });
+  }
+  if (!hits.length) return {
     kind:'unknown',
-    message:'ما عرفت المزوّد من صيغة المفتاح. افتح «خيارات متقدمة» وأدخل رابط الـAPI واسم النموذج.'
+    message:'ما عرفت المزوّد من صيغة المفتاح. اختر المزوّد من القائمة.'
   };
+  const longest = Math.max(...hits.map(hit => hit.length));
+  const providers = [...new Set(hits.filter(hit => hit.length === longest).map(hit => hit.id))];
+  return providers.length === 1
+    ? { kind:'known', provider:providers[0] }
+    : { kind:'ambiguous', providers };
 }
 
 /** GET {base}/models, without duplicating a trailing /models. */

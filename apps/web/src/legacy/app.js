@@ -4,7 +4,7 @@ import { EXPORT_VERSION, planLibraryImport, validateItem } from '../core/library
 import { FILTER_ALL, FILTER_UNFILED, collectionKey, cleanName, makeCollection, collectionsFromKv, sortCollections, hasBook, addBookToCollection, removeBookFromCollection, renameCollection, countCollectionBooks, filterByCollection, removeBookFromAll } from '../core/collections.js';
 import { isPasteTooLarge, needsLowMemoryWarning } from '../core/limits.js';
 import { AI_DEFAULTS, basePolicy, keylessAllowed, estimateMessagesTokens, fitRequest, parseSSE, shouldRetry, retryDelayMs, validateCard, createTimeoutGuard, linkAbort, migrateDeepSeekModel, providerRequestOptions, parseProviderErrorBody, finishAnswer,
-  PROVIDERS, detectProvider, pickDefaultModel, parseModels, modelsEndpoint } from '../core/ai.js';
+  PROVIDERS, providerForBase, detectProvider, pickDefaultModel, parseModels, modelsEndpoint } from '../core/ai.js';
 import { findNormalizedRange } from '../core/text.js';
 import { PROMPT_VERSION, CORRECTIVE_MESSAGE, parseGlossary, glossaryHash, glossaryForText, extractChapterUnits, chunkUnits, buildMessages as buildTranslationMessages, parseTranslation, qaSegment, estimateChapter, fingerprint, chapterSourceHash, lastTwoSentences, bookPlan, runConcurrent, hashString, isPeak, isArabicHighlight, isSourceHighlight } from '../core/translate.js';
 import { trGetJob, trPutJob, trListJobs, trGetSegments, trPutSegment, trDeleteJob, trGetGlossary, trPutGlossary, trDeleteBook, trClearAll } from '../core/translate-store.js';
@@ -4077,16 +4077,21 @@ function tabAi(){
   const jobs = []; allItems().forEach(it => needCards(it).forEach(ci => jobs.push([it, ci])));
   const tot = allItems().reduce((a, it) => { const r = readyOf(it); a.t += r.total; a.r += r.done; return a; }, { t:0, r:0 });
   const chars = jobs.reduce((n, j) => n + Math.min(14000, chapterText(j[0], j[1]).length), 0), books = new Set(jobs.map(j => j[0].id)).size;
-  return '<h2 class="pf-h">الاتصال</h2><p class="quiet" style="margin:0">أي خدمة متوافقة مع <bdi dir="ltr">OpenAI (Chat Completions)</bdi>. الصق المفتاح بس، وبنكتشف المزوّد ونعبّي الرابط والنموذج ونتحقّق منه. المفتاح ينحفظ في هالمتصفح بهالجهاز بس، وما يدخل في «تصدير المكتبة».</p>' +
+  const savedProvider = providerForBase(c.base);
+  const initialStatus = c.key && c.base && c.model
+    ? 'تم التعرّف: <b>' + esc(savedProvider ? savedProvider.label : 'مخصّص') + '</b> · <bdi dir="ltr">' + esc(c.model) + '</bdi>'
+    : 'الصق المفتاح عشان أكتشف المزوّد.';
+  return '<h2 class="pf-h">الاتصال</h2><p class="quiet" style="margin:0">الصق مفتاح الـAPI بس. بنكتشف المزوّد ونضبط الرابط والنموذج والحدود تلقائيًا. المفتاح ينحفظ في هالمتصفح بهالجهاز بس، وما يدخل في «تصدير المكتبة».</p>' +
     '<label class="flabel" for="sKey">المفتاح</label><div style="display:flex; gap:.4rem"><input class="inp" id="sKey" type="password" value="' + esc(c.key) + '" dir="ltr" style="text-align:left" autocomplete="off" spellcheck="false"><button class="gbtn" id="sShow" type="button">أظهر</button></div>' +
-    '<div id="sDetect" class="hint" role="status" aria-live="polite" style="margin:.5rem 0 0; min-height:1.4em">' + (c.base && c.model ? 'محفوظ حاليًا: <bdi dir="ltr">' + esc(c.base) + '</bdi> · <bdi dir="ltr">' + esc(c.model) + '</bdi>' : '') + '</div>' +
+    '<div id="sDetect" class="hint" role="status" aria-live="polite" style="margin:.5rem 0 0; min-height:1.4em">' + initialStatus + '</div>' +
     '<div class="pbtns"><button class="pbtn" id="sSave">احفظ</button><button class="gbtn" id="sTest">جرّب الاتصال</button><button class="linkbtn" id="sClear" style="color:var(--m-fg)">امسح المفتاح</button></div><div id="sMsg"></div>' +
-    '<details id="sAdv" style="margin-top:.75rem"><summary style="cursor:pointer; font-weight:600; min-height:44px; display:flex; align-items:center">خيارات متقدمة</summary>' +
+    '<button type="button" id="sCustomLink" class="linkbtn" style="font-size:.85rem; color:var(--soft); padding:0; margin-top:.75rem; text-align:start">custom / local endpoint — نقطة نهاية مخصّصة أو محلية (Ollama، LM Studio)</button>' +
+    '<div id="sAdv" hidden style="margin-top:.5rem">' +
     inp('sBase', tx('رابط الـAPI') + ' <bdi dir="ltr">(Base URL)</bdi>', c.base, 'https://api.deepseek.com') + inp('sModel', 'اسم النموذج', c.model, 'deepseek-flash') +
-    '<p class="hint" style="margin:0 0 .5rem">للمزوّدات المخصّصة أو المحلية (Ollama، LM Studio)، أو إذا حبيت تغيّر الاكتشاف.</p>' +
+    '<p class="hint" style="margin:0 0 .5rem">للمزوّدات المخصّصة أو المحلية فقط. المفاتيح المعروفة تُضبط تلقائيًا.</p>' +
     inp('sMax', 'أقصى توكنز للرد', c.max, '1200', 'number') + inp('sCtx', 'نافذة السياق (توكنز)', c.ctx, '64000', 'number') +
     inp('sFirst', 'مهلة أول رد (ثانية)', Math.round((Number(c.first) || AI_DEFAULTS.firstByteTimeoutMs) / 1000), '90', 'number') +
-    '<p class="hint" style="margin:0 0 .5rem">النافذة تشمل التعليمات والسياق والرد. Gemini 3 يصرف جزءًا من الحد على التفكير.</p></details>' +
+    '<p class="hint" style="margin:0 0 .5rem">النافذة تشمل التعليمات والسياق والرد. Gemini 3 يصرف جزءًا من الحد على التفكير.</p></div>' +
     '<h2 class="pf-h">أسلوب الرد</h2>' +
     pfield('اللغة', pseg('ai.lang', [['msa', 'بسيطة فصحى'], ['gulf', 'خليجي'], ['mirror', 'مثل ما أكتب']], A.lang)) +
     pfield('الطول', pseg('ai.len', [['short', 'مختصر'], ['normal', 'عادي'], ['long', 'مفصّل']], A.len)) +
@@ -4200,15 +4205,8 @@ function renderProfile(tab){
     });
     const msg = (h, ok) => { $('#sMsg').innerHTML = '<div class="msg' + (ok ? ' ok' : '') + '">' + h + '</div>'; };
     const status = html => { const el = $('#sDetect'); if (el) el.innerHTML = html; };
-    const openAdv = () => { const d = $('#sAdv'); if (d) d.open = true; const b = $('#sBase'); if (b) b.focus(); };
+    const openAdv = () => { const d = $('#sAdv'); if (d) d.hidden = false; const b = $('#sBase'); if (b) b.focus(); };
     const why = e => e && e.status ? 'HTTP ' + e.status : e && e.timeout ? 'انتهت المهلة' : 'CORS أو اتصال';
-    /* Defaults are pre-filled, so only a changed base/model counts as a custom endpoint. */
-    const advancedReady = () => {
-      const base = $('#sBase').value.trim(), model = $('#sModel').value.trim();
-      return !!base && !!model && (base !== AI_DEF.base || model !== AI_DEF.model);
-    };
-    /* DEV ONLY: the settings e2e points the real provider bases at its fake server. */
-    const providerBase = id => (import.meta.env.DEV && window.__aiTestProviderBase && window.__aiTestProviderBase[id]) || (PROVIDERS[id] ? PROVIDERS[id].base : '');
     const fetchModels = async (base, key) => {
       const ctrl = new AbortController();
       const timer = setTimeout(() => { try{ ctrl.abort(); }catch(e){} }, 15000);
@@ -4223,91 +4221,260 @@ function renderProfile(tab){
         return parseModels(j);
       } finally { clearTimeout(timer); }
     };
-    let detected = null;
-    const renderDetected = (id, model, models, note) => {
-      const p = PROVIDERS[id] || { label:id };
-      let h = 'تم التعرّف: <b>' + esc(p.label) + '</b>' + (model ? ' · <bdi dir="ltr">' + esc(model) + '</bdi>' : ' · اختر موديلًا');
-      if (models && models.length) h += '<label style="display:block; margin-top:.35rem">غيّر الموديل <select id="sModelPick" class="inp" dir="ltr" style="margin-top:.25rem; max-width:100%">' + (model ? '' : '<option value="" disabled selected>اختر موديلًا</option>') + models.map(m => '<option value="' + esc(m) + '"' + (m === model ? ' selected' : '') + '>' + esc(m) + '</option>').join('') + '</select></label>';
+
+    const startCfg = aiCfg();
+    const startProvider = providerForBase(startCfg.base);
+    let currentProvider = startProvider ? startProvider.id : ((startCfg.base && startCfg.model && (startCfg.base !== AI_DEF.base || startCfg.model !== AI_DEF.model)) ? 'custom' : null);
+    let customMode = currentProvider === 'custom';
+    let currentModels = [];
+    let detecting = null, detectSeq = 0, detectTimer = null;
+    let lastVerified = { key:'', base:'' };
+
+    const saveConfig = () => { const c = read(); aiSave(c); return c; };
+
+    const renderStatus = (id, model, note = '') => {
+      let h;
+      if (id && id !== 'custom' && PROVIDERS[id]){
+        h = 'تم التعرّف: <b>' + esc(PROVIDERS[id].label) + '</b>' + (model ? ' · <bdi dir="ltr">' + esc(model) + '</bdi>' : ' · اختر موديلًا');
+      } else if (id === 'custom'){
+        h = 'تم التعرّف: <b>مخصّص</b>' + (model ? ' · <bdi dir="ltr">' + esc(model) + '</bdi>' : ' · اختر موديلًا');
+      } else {
+        h = 'الصق المفتاح عشان أكتشف المزوّد.';
+      }
+      if (id && currentModels.length){
+        const opts = currentModels.slice();
+        if (model && !opts.includes(model)) opts.unshift(model);
+        h += '<label style="display:block; margin-top:.35rem">غيّر الموديل <select id="sModelPick" class="inp" dir="ltr" style="margin-top:.25rem; max-width:100%">' +
+          (!model ? '<option value="" disabled selected>اختر موديلًا</option>' : '') +
+          opts.map(m => '<option value="' + esc(m) + '"' + (m === model ? ' selected' : '') + '>' + esc(m) + '</option>').join('') +
+          '</select></label>';
+      }
       if (note) h += '<div class="hint" style="margin-top:.35rem">' + note + '</div>';
       status(h);
       const pick = $('#sModelPick');
       if (pick) pick.onchange = () => {
         const m = pick.value; if (!m) return;
         $('#sModel').value = m;
-        const c2 = read(); aiSave(c2);
-        detected = detected ? Object.assign({}, detected, { model:m }) : null;
-        renderDetected(id, m, models, '');
+        saveConfig();
+        renderStatus(id, m, '');
       };
     };
-    const applyProvider = (id, base, model, models, note) => {
-      $('#sBase').value = base;
-      $('#sModel').value = model;
-      const c2 = read(); c2.key = $('#sKey').value.trim();
-      aiSave(c2);
-      detected = { id, base, model, models };
-      renderDetected(id, model, models, note);
+
+    const setLimits = id => {
+      const l = PROVIDERS[id].limits;
+      $('#sMax').value = l.max; $('#sCtx').value = l.ctx; $('#sFirst').value = Math.round(l.first / 1000);
     };
-    const detectKey = async () => {
-      const key = $('#sKey').value.trim();
-      const d = detectProvider(key);
-      if (d.kind === 'empty'){ status('الصق المفتاح أول عشان أكتشف المزوّد.'); return false; }
-      if (d.kind === 'unsupported'){ status(esc(d.message)); return false; }
-      if (d.kind === 'unknown'){
-        if (advancedReady()) status('المزوّد غير معروف من صيغة المفتاح. بستخدم الرابط والنموذج من «خيارات متقدمة».');
-        else { status(esc(d.message)); openAdv(); }
-        return false;
+
+    const applyProvider = (id, model, list, note = '') => {
+      const p = PROVIDERS[id];
+      const changed = currentProvider !== id;
+      $('#sBase').value = p.base;
+      $('#sModel').value = model || '';
+      if (changed) setLimits(id);
+      currentProvider = id;
+      customMode = false;
+      const adv = $('#sAdv'); if (adv) adv.hidden = true;
+      currentModels = Array.isArray(list) ? list.slice() : [];
+      saveConfig();
+      lastVerified = { key:$('#sKey').value.trim(), base:p.base };
+      renderStatus(id, model || '', note);
+    };
+
+    const applyCustom = (base, model, list, note = '') => {
+      currentProvider = 'custom';
+      customMode = true;
+      const adv = $('#sAdv'); if (adv) adv.hidden = false;
+      currentModels = Array.isArray(list) ? list.slice() : [];
+      saveConfig();
+      lastVerified = { key:$('#sKey').value.trim(), base };
+      renderStatus('custom', model || '', note);
+    };
+
+    const chooseCustom = () => {
+      detectSeq++; clearTimeout(detectTimer);
+      currentProvider = 'custom'; customMode = true; currentModels = [];
+      $('#sBase').value = ''; $('#sModel').value = '';
+      $('#sMax').value = AI_DEFAULTS.maxTokens; $('#sCtx').value = AI_DEFAULTS.contextWindow; $('#sFirst').value = Math.round(AI_DEFAULTS.firstByteTimeoutMs / 1000);
+      lastVerified = { key:'', base:'' };
+      openAdv();
+      status('أدخل رابط الـAPI واسم النموذج، ثم احفظ.');
+    };
+
+    const showProviderPicker = () => {
+      const opts = Object.values(PROVIDERS).map(p => '<option value="' + esc(p.id) + '">' + esc(p.label) + '</option>').join('');
+      status('<div>ما عرفت المزوّد من صيغة المفتاح. اختر المزوّد:</div>' +
+        '<select id="sProviderPick" class="inp" dir="ltr" style="margin-top:.35rem; max-width:280px" aria-label="اختر المزوّد">' +
+        '<option value="" disabled selected>اختر المزوّد…</option>' + opts + '<option value="custom">آخر / مخصّص</option></select>');
+      const sel = $('#sProviderPick');
+      if (!sel) return;
+      sel.onchange = () => {
+        const v = sel.value; if (!v) return;
+        if (v === 'custom'){ chooseCustom(); return; }
+        startDetect({ ids:[v] }).catch(() => {});
+      };
+    };
+
+    const verifyCustom = async (key, isCurrent) => {
+      const base = $('#sBase').value.trim(), model = $('#sModel').value.trim();
+      if (!base || !model){ status('أدخل رابط الـAPI واسم النموذج أول.'); openAdv(); return false; }
+      status('أتحقّق من الرابط…');
+      try{
+        const list = await fetchModels(base, key);
+        if (!isCurrent()) return false;
+        if (!list.length) throw { models:true };
+        applyCustom(base, model, list);
+        return true;
+      }catch(e){
+        if (!isCurrent()) return false;
+        if (e && (e.status === 401 || e.status === 403)){ status('المفتاح غير صالح أو غير مصرّح له.'); return false; }
+        /* The reader explicitly chose this endpoint; keep it even if /models is unavailable. */
+        applyCustom(base, model, [], 'تعذّر جلب <bdi dir="ltr">/models</bdi> (' + esc(why(e)) + '). حفظت نقطة النهاية المخصّصة كما هي.');
+        return true;
       }
-      const ids = d.kind === 'ambiguous' ? d.providers : [d.provider];
+    };
+
+    const detectNow = async (opts, isCurrent) => {
+      const key = String(opts.key || '');
+      if (!key){
+        if (customMode){ status('نقطة نهاية مخصّصة. عدّل الرابط والنموذج أو الصق مفتاحًا.'); return true; }
+        status('الصق المفتاح عشان أكتشف المزوّد.'); return false;
+      }
+      if (customMode && !opts.ids) return verifyCustom(key, isCurrent);
+      const d = detectProvider(key);
+      let ids = opts.ids;
+      if (!ids){
+        if (d.kind === 'empty'){ status('الصق المفتاح عشان أكتشف المزوّد.'); return false; }
+        if (d.kind === 'unsupported'){ status(esc(d.message)); return false; }
+        if (d.kind === 'unknown'){ showProviderPicker(); return false; }
+        ids = d.kind === 'known' ? [d.provider] : d.providers.slice();
+      }
       status('أتحقّق من المفتاح…');
       let firstFail = null, authFails = 0;
       for (const id of ids){
-        const base = providerBase(id);
+        if (!isCurrent()) return false;
+        const p = PROVIDERS[id];
+        if (!p) continue;
         try{
-          const list = await fetchModels(base, key);
+          const list = await fetchModels(p.base, key);
+          if (!isCurrent()) return false;
           if (!list.length) throw { models:true };
-          /* Use the preference-list default only when the provider actually has it.
-             Otherwise leave the model empty and let the reader choose from the list. */
-          const model = pickDefaultModel(id, list) || '';
-          const note = model ? '' : 'المزوّد ما رجّع الموديل الافتراضي المتوقع. اختر موديلًا من القائمة عشان يُحفظ.';
-          applyProvider(id, base, model, list, note);
+          const changed = currentProvider !== id;
+          const prev = $('#sModel').value.trim();
+          const model = !changed && list.includes(prev) ? prev : (pickDefaultModel(id, list) || '');
+          const note = model ? '' : 'المزوّد ما رجّع الموديل الافتراضي المتوقع. اختر موديلًا من القائمة.';
+          applyProvider(id, model, list, note);
           return true;
         }catch(e){
+          if (!isCurrent()) return false;
           if (e && (e.status === 401 || e.status === 403)) authFails++;
           if (!firstFail) firstFail = e;
         }
       }
+      if (!ids.length){ status('ما قدرت أتحقّق من المزوّد.'); return false; }
       if (authFails === ids.length){ status('المفتاح غير صالح أو غير مصرّح له. تأكد من المفتاح وصلاحياته.'); return false; }
-      /* CORS, 404, timeouts and provider outages: keep the hardcoded default and say so. */
-      const id = ids[0], base = providerBase(id), model = PROVIDERS[id].model;
-      const note = 'تعذّر جلب <bdi dir="ltr">/models</bdi> (' + esc(why(firstFail)) + '). استخدمنا الموديل الافتراضي «' + esc(model) + '».';
-      applyProvider(id, base, model, [], note);
+      const id = ids[0], p = PROVIDERS[id];
+      const changed = currentProvider !== id;
+      const model = changed ? p.model : ($('#sModel').value.trim() || p.model);
+      const note = 'تعذّر جلب <bdi dir="ltr">/models</bdi> (' + esc(why(firstFail)) + '). استخدمنا «' + esc(model) + '».';
+      applyProvider(id, model, [], note);
       return true;
     };
-    let detecting = null;
-    const runDetect = () => {
-      if (detecting) return detecting;
-      const p = detectKey();
+
+    const startDetect = opts => {
+      opts = opts || {};
+      const msgBox = $('#sMsg'); if (msgBox) msgBox.innerHTML = '';
+      const seq = ++detectSeq;
+      const key = opts.key != null ? String(opts.key).trim() : $('#sKey').value.trim();
+      const isCurrent = () => seq === detectSeq && $('#sKey').value.trim() === key;
+      status('أتحقّق…');
+      const p = (async () => {
+        try{ return await detectNow(Object.assign({}, opts, { key }), isCurrent); }
+        catch(e){ if (isCurrent()) status('ما قدرت أتحقّق: ' + esc(why(e))); return false; }
+      })();
       detecting = p;
       p.finally(() => { if (detecting === p) detecting = null; }).catch(() => {});
       return p;
     };
+
+    const scheduleDetect = () => {
+      clearTimeout(detectTimer);
+      detectTimer = setTimeout(() => { startDetect().catch(() => {}); }, 400);
+    };
+
+    const ensureDetected = async forceProbe => {
+      clearTimeout(detectTimer);
+      if (detecting){ try{ await detecting; }catch(e){} }
+      const runAndCheck = async () => {
+        const ok = await startDetect();
+        if (!ok) return false;
+        if (!$('#sModel').value.trim()){ status('اختر موديلًا من القائمة أول.'); return false; }
+        return true;
+      };
+      const key = $('#sKey').value.trim();
+      const model = $('#sModel').value.trim();
+      if (!key){
+        if (!model){ status('اختر موديلًا من القائمة أول.'); return false; }
+        if (customMode){
+          if ($('#sBase').value.trim() && model) return true;
+          status('أدخل رابط الـAPI واسم النموذج أول.'); openAdv(); return false;
+        }
+        status('الصق المفتاح عشان أكتشف المزوّد.');
+        return true;
+      }
+      if (customMode){
+        const base = $('#sBase').value.trim();
+        if (!base || !model){ status('أدخل رابط الـAPI واسم النموذج أول.'); openAdv(); return false; }
+        if (lastVerified.key === key && lastVerified.base === base) return true;
+        return runAndCheck();
+      }
+      const d = detectProvider(key);
+      if (d.kind === 'unknown'){ showProviderPicker(); return false; }
+      if (d.kind === 'unsupported'){ status(esc(d.message)); return false; }
+      const saved = providerForBase(aiCfg().base);
+      const savedId = saved ? saved.id : null;
+      const canonical = id => $('#sBase').value.trim() === PROVIDERS[id].base;
+      if (d.kind === 'known'){
+        if (!forceProbe && model && savedId === d.provider && canonical(d.provider)) return true;
+        return runAndCheck();
+      }
+      /* A generic sk- key can belong to DeepSeek or OpenAI; resolve it on Save/Test
+         even when the saved base already points at one of them. */
+      return runAndCheck();
+    };
+
     $('#sShow').onclick = () => { const k = $('#sKey'); k.type = k.type === 'password' ? 'text' : 'password'; $('#sShow').textContent = k.type === 'password' ? 'أظهر' : 'أخفِ'; };
-    $('#sKey').addEventListener('paste', () => setTimeout(() => { runDetect().catch(() => {}); }, 0));
+    $('#sKey').addEventListener('input', scheduleDetect);
+    $('#sKey').addEventListener('change', scheduleDetect);
+    $('#sKey').addEventListener('paste', () => setTimeout(scheduleDetect, 0));
+    $('#sCustomLink').onclick = () => {
+      detectSeq++; clearTimeout(detectTimer);
+      const adv = $('#sAdv');
+      if (!adv.hidden){
+        adv.hidden = true;
+        customMode = false;
+        currentModels = [];
+        const p = providerForBase($('#sBase').value.trim());
+        currentProvider = p ? p.id : null;
+        if (p) renderStatus(p.id, $('#sModel').value.trim());
+        else status('الصق المفتاح عشان أكتشف المزوّد.');
+      } else {
+        adv.hidden = false;
+        customMode = true; currentProvider = 'custom'; currentModels = [];
+        status('نقطة نهاية مخصّصة. عدّل الرابط والنموذج والحدود.');
+      }
+    };
     $('#sSave').onclick = async () => {
-      try{ if (detecting) await detecting; }catch(e){}
-      aiSave(read()); msg('<b>انحفظت.</b> في هالمتصفح بس.', true);
+      $('#sMsg').innerHTML = '';
+      const ok = await ensureDetected(false);
+      if (!ok) return;
+      saveConfig();
+      msg('<b>انحفظت.</b> في هالمتصفح بس.', true);
     };
     $('#sTest').onclick = async () => {
-      try{ if (detecting) await detecting; }catch(e){}
-      const key = $('#sKey').value.trim();
-      const d = key ? detectProvider(key) : null;
-      if (d && d.kind === 'unknown' && !advancedReady()){
-        status(esc(d.message)); openAdv();
-        msg('<b>ما جرّبت.</b> أدخل رابط الـAPI واسم النموذج في «خيارات متقدمة» أول.', false);
-        return;
-      }
-      if (d && d.kind === 'unknown') status('المزوّد غير معروف من صيغة المفتاح. بستخدم الرابط والنموذج من «خيارات متقدمة».');
-      aiSave(read()); msg('<b>أجرّب…</b>', true);
+      $('#sMsg').innerHTML = '';
+      const ok = await ensureDetected(true);
+      if (!ok) return;
+      saveConfig(); msg('<b>أجرّب…</b>', true);
       try{
         /* Room for a short answer plus a Gemini thinking round; an empty or failed
            answer now throws, so the error path below shows the real reason. */
@@ -4316,8 +4483,11 @@ function renderProfile(tab){
       }catch(e){ msg('<b>ما اشتغل.</b>' + errHTML(e)); }
     };
     $('#sClear').onclick = () => {
+      detectSeq++; clearTimeout(detectTimer);
       const c2 = aiCfg(); c2.key = ''; aiSave(c2); $('#sKey').value = '';
-      detected = null; status(''); msg('<b>انمسح المفتاح.</b>', true);
+      lastVerified = { key:'', base:'' }; currentModels = [];
+      status('الصق المفتاح عشان أكتشف المزوّد.');
+      msg('<b>انمسح المفتاح.</b>', true);
     };
   }
 }

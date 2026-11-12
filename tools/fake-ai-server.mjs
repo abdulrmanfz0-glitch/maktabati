@@ -127,6 +127,11 @@ export async function startFakeAI() {
         res.end(JSON.stringify({ error:{ code:401, message:'Unauthorized', status:'UNAUTHENTICATED', details:[{ reason:'ACCESS_TOKEN_TYPE_UNSUPPORTED' }] } }));
         return;
       }
+      if (model === 'fake-empty-json') {
+        res.writeHead(200, { 'Content-Type':'application/json', 'Cache-Control':'no-cache' });
+        res.end(JSON.stringify({ choices:[{ message:{ role:'assistant', content:'' }, finish_reason:'length' }] }));
+        return;
+      }
       if (model === 'fake-ok-json') {
         res.writeHead(200, { 'Content-Type':'application/json', 'Cache-Control':'no-cache' });
         res.end(JSON.stringify({ choices:[{ message:{ role:'assistant', content:'تم' }, finish_reason:'stop' }] }));
@@ -155,15 +160,16 @@ export async function startFakeAI() {
         return;
       }
 
+      if (!body.stream) {
+        res.writeHead(200, { 'Content-Type':'application/json', 'Cache-Control':'no-cache' });
+        res.end(JSON.stringify({ choices:[{ message:{ role:'assistant', content:'تم' }, finish_reason:'stop' }] }));
+        return;
+      }
+
       if (model === 'fake-429' && !first429) {
         first429 = true;
         res.writeHead(429, { 'Content-Type':'application/json', 'Retry-After':'0' });
         res.end(JSON.stringify({ error:{ message:'rate limited once' } }));
-        return;
-      }
-      if (model === 'fake-empty-json') {
-        res.writeHead(200, { 'Content-Type':'application/json', 'Cache-Control':'no-cache' });
-        res.end(JSON.stringify({ choices:[{ message:{ role:'assistant', content:'' }, finish_reason:'length' }] }));
         return;
       }
       res.writeHead(200, { 'Content-Type':'text/event-stream', 'Cache-Control':'no-cache', 'Connection':'keep-alive' });

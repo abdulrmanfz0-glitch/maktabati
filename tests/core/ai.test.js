@@ -4,7 +4,7 @@ import {
   fitRequest, parseSSE, shouldRetry, retryDelayMs, validateCard, clipAround,
   createTimeoutGuard, linkAbort, isDeepSeekBase, isGeminiBase, migrateDeepSeekModel,
   GEMINI_REASONING_EFFORT, providerRequestOptions, parseProviderErrorBody, emptyAnswerError, finishAnswer,
-  PROVIDERS, detectProvider, pickDefaultModel, parseModels, modelsEndpoint
+  PROVIDERS, providerForBase, detectProvider, pickDefaultModel, parseModels, modelsEndpoint
 } from '../../apps/web/src/core/ai.js';
 
 afterEach(() => { vi.useRealTimers(); });
@@ -61,7 +61,9 @@ describe('Gemini request controls', () => {
     const deepseek = providerRequestOptions('https://api.deepseek.com');
     expect(deepseek).toEqual({ thinking:{ type:'disabled' } });
     expect(deepseek.reasoning_effort).toBeUndefined();
+    expect(providerRequestOptions('https://api.deepseek.com/v1')).toEqual({ thinking:{ type:'disabled' } });
     expect(providerRequestOptions('https://openrouter.ai/api/v1')).toEqual({});
+    expect(providerRequestOptions('http://localhost:11434/v1')).toEqual({});
   });
 });
 
@@ -130,13 +132,31 @@ describe('provider detection from an API key', () => {
     expect(d.providers).toEqual(['deepseek', 'openai']);
   });
 
-  it('has a hardcoded fallback base and model for each known provider', () => {
+  it('has one complete table entry per known provider', () => {
     for (const id of ['deepseek', 'gemini', 'openrouter', 'groq', 'openai']) {
-      expect(PROVIDERS[id].base).toMatch(/^https:\/\//);
-      expect(PROVIDERS[id].model.length).toBeGreaterThan(0);
+      const p = PROVIDERS[id];
+      expect(p.id).toBe(id);
+      expect(p.label.length).toBeGreaterThan(0);
+      expect(p.base).toMatch(/^https:\/\//);
+      expect(p.prefixes.length).toBeGreaterThan(0);
+      expect(p.model.length).toBeGreaterThan(0);
+      expect(p.limits.max).toBeGreaterThan(0);
+      expect(p.limits.ctx).toBeGreaterThan(p.limits.max);
+      expect(p.limits.first).toBeGreaterThan(0);
+      expect(p.requestOptions).toBeTypeOf('object');
     }
     expect(modelsEndpoint('https://api.deepseek.com/')).toBe('https://api.deepseek.com/models');
     expect(modelsEndpoint('https://api.deepseek.com/v1/models')).toBe('https://api.deepseek.com/v1/models');
+  });
+
+  it('infers a provider from a saved base and treats other bases as custom', () => {
+    expect(providerForBase('https://api.deepseek.com').id).toBe('deepseek');
+    expect(providerForBase('https://api.deepseek.com/v1').id).toBe('deepseek');
+    expect(providerForBase('https://generativelanguage.googleapis.com/v1beta/openai').id).toBe('gemini');
+    expect(providerForBase('https://api.openai.com/v1').id).toBe('openai');
+    expect(providerForBase('https://api.deepseek.com.evil.example')).toBe(null);
+    expect(providerForBase('http://localhost:11434/v1')).toBe(null);
+    expect(providerForBase('')).toBe(null);
   });
 });
 
