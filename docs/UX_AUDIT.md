@@ -36,22 +36,30 @@ pills, EN UI switch (LTR + translated strings), reduced-motion support, empty st
 glossary/quotes/map/search, delete-book confirm with export-first, and a clean console on all
 walked flows (no errors).
 
-## What will be fixed (Phase 2)
+## What was fixed (Phase 2) — all shipped in this branch
 
-1. Undo toast for highlight deletion (also restores card + links). — high #1
-2. Focus trap + focus restore for modals/sheets/chat panel. — high #2
-3. iOS input zoom fix for `.inp` / `.search input`. — high #3
-4. Undo toast for conversation deletion. — medium #4
-5. Inline add action in the empty library. — medium #5
-6. Dismissible demo hint on first run. — medium #6
-7. Tap-target bumps: `.read-btn`, `.ch-full`, `.brand`. — medium #7
-8. Toast duration scaling + safe-area bottom. — medium #8 + low #10
-9. Enter-to-submit in rename/note dialogs. — medium #9
+1. Undo toast for highlight deletion (also restores card + links). — high #1 ✓ (`ux(highlights)`)
+2. Focus trap + focus restore for modals/sheets/chat panel. — high #2 ✓ (`ux(dialogs)`)
+3. iOS input zoom fix for `.inp` / `.search input`. — high #3 ✓ (`ux(styles)`)
+4. Undo toast for conversation deletion. — medium #4 ✓ (`ux(chat)`)
+5. Inline add action in the empty library. — medium #5 ✓ (`ux(library)`)
+6. Dismissible demo hint on first run. — medium #6 ✓ (`ux(library)`)
+7. Tap-target bumps: `.read-btn`, `.ch-full`, `.brand`. — medium #7 ✓ (`ux(styles)`)
+8. Toast duration scaling + safe-area bottom. — medium #8 + low #10 ✓ (`ux(toast)`)
+9. Enter-to-submit in rename/note dialogs (rename already had it; note added). — medium #9 ✓ (`ux(dialogs)`)
 
-## Small additions planned (Phase 3, ≤8)
+## Small additions built (Phase 3)
 
 1. Undo toast after deleting a highlight (restores highlight, note, links, review card).
 2. Undo toast after deleting a chat conversation.
 3. Inline "أضف كتاب" action in the empty library state.
 4. First-run hint that the seeded books are samples.
 5. "وصل الرد" toast includes the conversation's title snippet so several background replies are distinguishable.
+
+## Verification
+
+- `npm test`: 306 passed, 1 skipped.
+- e2e: smoke 40 · ai-failure 10 · ai-providers 14 · ai-gemini-fallback 4 · ai-background 5 · ux-polish 5 (new) · translate 7 · translate-book 4 · translate-annos 2.
+- `npm run build`: exit 0.
+- Before/after screenshots of the six most-improved screens, mobile and desktop: `docs/ux/screens/`.
+
