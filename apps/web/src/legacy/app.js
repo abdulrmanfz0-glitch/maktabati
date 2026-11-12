@@ -3725,7 +3725,7 @@ let CH = null, msgRaf = 0, lastHomeConv = null;
 /* one conversation record, two views (panel in the reader, page in the main chat) */
 const RUN = new Map(); /* conv.id -> { conv, am, full, ctrl } */
 const isBusy = C => RUN.has(C.conv.id);
-const abortRun = id => { const r = RUN.get(id); if (r && r.ctrl) r.ctrl.abort(); };
+const abortRun = (id, stop) => { const r = RUN.get(id); if (r){ if (stop) r.stop = true; r.ctrl.abort(); } };
 const scopeOfConv = conv => conv.bookId && itemById(conv.bookId) && conv.scope !== 'lib' ? 'book' : 'lib';
 const scopeOf = C => scopeOfConv(C.conv);
 const convKey = conv => conv.bookId ? 'chat:b:' + conv.bookId : 'chat:lib';
@@ -3810,10 +3810,10 @@ function openPara(bid, bk){
   location.hash = '#/read/' + enc(bid) + '/' + enc(bk);
 }
 function deleteConv(conv){
-  conv.deleted = true; abortRun(conv.id); const key = convKey(conv); kv.set(key, listOf(key).filter(x => x.id !== conv.id));
+  conv.deleted = true; abortRun(conv.id, true); const key = convKey(conv); kv.set(key, listOf(key).filter(x => x.id !== conv.id));
   const was = CH && CH.conv.id === conv.id;
   if (was){ if (CH.view === 'panel') closeChat(); else { CH = null; location.hash = '#/'; } }
-  drawSide(); toast('انحذفت المحادثة');
+  drawSide(); toast(tx('انحذفت المحادثة'), { label:tx('تراجع'), run:() => { delete conv.deleted; if (conv.msgs.length) saveRec(conv); toast(tx('رجعت المحادثة')); } });
 }
 function renameConv(conv){
   openModal('<div class="mhead"><h3>أعد التسمية</h3>' + closeBtn + '</div><label class="flabel" for="rnT">اسم المحادثة</label><input class="inp" id="rnT" dir="auto" maxlength="80" value="' + esc(conv.title || firstMsg(conv)) + '"><div class="sh-actions"><button class="pbtn" id="rnS">احفظ</button></div>');
@@ -3927,7 +3927,7 @@ function drawChat(){
   const upd = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 200) + 'px'; if (!isBusy(C)) send.disabled = !ta.value.trim() && !C.attach; };
   upd(); ta.addEventListener('input', upd);
   ta.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); if (!isBusy(C)) chatSend(ta.value); } });
-  send.onclick = () => { if (isBusy(C)){ abortRun(C.conv.id); return; } chatSend(ta.value); };
+  send.onclick = () => { if (isBusy(C)){ abortRun(C.conv.id, true); return; } chatSend(ta.value); };
   const ff = hq(C, '#chFile'); if (ff) ff.onchange = e => { const f = e.target.files[0]; e.target.value = ''; importFile(f); };
   const fu = hq(C, '#chFull'); if (fu) fu.onchange = () => { C.full = fu.checked; kv.set('chatfull:' + C.conv.bookId, C.full); };
   C.host.onclick = e => {
@@ -4052,9 +4052,9 @@ async function runStream(run){
     const wasOpen = open();
     if (wasOpen) drawChat();
     if (!conv.deleted){
-      if (!wasOpen) conv.unread = true;
+      if (!wasOpen && !run.stop) conv.unread = true;
       try{ await saveRec(conv); }catch(e){}
-      if (!wasOpen) toast(tx('وصل الرد'), { label:tx('افتح'), run:() => { location.hash = '#/c/' + enc(conv.id); } });
+      if (!wasOpen && !run.stop) toast(tx('وصل الرد'), { label:tx('افتح'), run:() => { location.hash = '#/c/' + enc(conv.id); } });
     }
   }
 }
@@ -5719,7 +5719,7 @@ const EN_UI = {
   'ارجع':'Back','ارجع للشات':'Back to chat','ارجع للمكتبة':'Back to library','ناقش':'Discuss','السابقة':'History','المحادثات السابقة':'Previous chats','ما فيه محادثات محفوظة.':'No saved chats.','رسالة':'messages',
   'اشرح':'Explain','اسألني':'Quiz me','ناقشني':'Debate me','اربط':'Connect','اشرح لي':'Explain this to me','اسألني في اللي قريته':'Quiz me on what I read','ناقشني في فكرة هالفصل':"Debate me on this chapter's idea",'اربط هالفصل بكتبي الثانية':'Connect this chapter to my other books','اشرح لي هالفقرة':'Explain this passage',
   'اسمح بالكتاب كامل':'Allow the whole book','إغلاق':'Close','وش اللي ما وضح؟ أو أرسل مباشرة':"What wasn't clear? Or just send",'اكتب سؤالك أو رأيك…':'Write your question or view…','اختر وضع أو اكتب سؤالك.':'Pick a mode or write your question.','نص الفصول اللي بعد مكانك ما ينرسل إلا إذا سمحت بالكتاب كامل.':"Chapters after your place aren't sent unless you allow the whole book.",
-  'اضبط الذكاء من':'Set up AI in','أول: رابط الـAPI واسم النموذج والمفتاح.':'first: API URL, model name and key.','(ما وصل رد)':'(no reply)','(انوقف)':'(stopped)','وصل الرد':'Reply arrived','افتح':'Open','انقطع الرد، أرسل رسالة جديدة للمتابعة.':'Reply was cut off — send a new message to continue.','تراجع':'Undo','رجع التظليل':'Highlight restored',
+  'اضبط الذكاء من':'Set up AI in','أول: رابط الـAPI واسم النموذج والمفتاح.':'first: API URL, model name and key.','(ما وصل رد)':'(no reply)','(انوقف)':'(stopped)','وصل الرد':'Reply arrived','افتح':'Open','انقطع الرد، أرسل رسالة جديدة للمتابعة.':'Reply was cut off — send a new message to continue.','تراجع':'Undo','رجع التظليل':'Highlight restored','رجعت المحادثة':'Chat restored',
   'ابحث في النصوص والتظليلات والملاحظات':'Search texts, highlights and notes','باقي المكتبة':'Rest of the library','مكتبتك فاضية. اضغط «أضف» والصق نص أو ارفع ملف.':'Your library is empty. Tap “Add” and paste text or upload a file.','تصدير المكتبة':'Export library','استيراد مكتبة':'Import library','جهّز للذكاء':'Prepare for AI','+ أضف':'+ Add','بحث':'Search',
   'خلّصته':'Finished','ما فتحته بعد':'Not opened yet','اليوم':'today','أمس':'yesterday','قبل شوي':'just now','ما قريت شي هالأسبوع بعد.':"You haven't read anything this week yet.",'في العناوين':'In titles','في النصوص':'In texts','في تظليلاتي':'In my highlights','في ملاحظاتي':'In my notes','أهم فكرة في جلسة':'Key idea from a session',
   'حاول تتذكّر الجواب قبل ما تفتحه. البطاقة ترجع لك بعد يوم، ثم أسبوع، ثم شهر.':'Try to recall the answer before revealing it. The card returns after a day, a week, then a month.','اضغط لترى الجواب':'Tap to see the answer','تذكّرتها':'I remembered','ما تذكّرت':'I forgot','خلّصت مراجعة اليوم.':"You're done for today.",'الباقي يرجع لك في وقته.':'The rest comes back on schedule.','ما عندك بطاقات اليوم.':'No cards today.','ما فيه بطاقات بعد.':'No cards yet.','وش الفكرة اللي ظللتها هنا؟':"What's the idea you highlighted here?",'تطبيق':'Applied',
