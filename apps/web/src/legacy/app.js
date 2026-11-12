@@ -410,15 +410,19 @@ function toast(t, action){
     toastT = setTimeout(() => el.classList.remove('show'), 6000);
   } else {
     el.textContent = t;
-    toastT = setTimeout(() => el.classList.remove('show'), 2200);
+    /* longer messages need longer to read; keep it snappy */
+    toastT = setTimeout(() => el.classList.remove('show'), Math.min(5000, 2200 + String(t).length * 25));
   }
   el.classList.add('show');
 }
 let modalLock = false;
-function openModal(html, lock){ closeSheet(); $('#modalBox').innerHTML = html; $('#modal').hidden = false; modalLock = !!lock; const f = $('#modalBox').querySelector('input:not([type=file]),textarea,button'); if (f) setTimeout(() => f.focus(), 30); }
-function closeModal(force){ if (modalLock && !force) return; $('#modal').hidden = true; $('#modalBox').innerHTML = ''; modalLock = false; if (FIG_PREVIEW) previewDone(); }
-function openSheet(html){ hideSel(); const s = $('#sheet'); s.innerHTML = '<div class="sheet-in">' + html + '</div>'; s.classList.remove('qe-on'); s.classList.add('open'); $('#sheetScrim').style.display = 'block'; const b = s.querySelector('button'); if (b) b.focus({ preventScroll:true }); }
-function closeSheet(){ const was = $('#sheet').classList.contains('open'); $('#sheet').classList.remove('open', 'qe-on'); $('#sheetScrim').style.display = 'none'; if (was && RT && RT.paged){ if (RT.glInline) rtReflowSoon(); else rtChrome(); } }
+let focusBack = null; /* element to return focus to when a dialog closes */
+function takeFocus(){ focusBack = document.activeElement instanceof HTMLElement ? document.activeElement : null; }
+function refocus(){ if (focusBack && focusBack.isConnected && focusBack.offsetParent !== null && focusBack !== document.activeElement){ try{ focusBack.focus({ preventScroll:true }); }catch(e){} } focusBack = null; }
+function openModal(html, lock){ closeSheet(); $('#modalBox').innerHTML = html; $('#modal').hidden = false; modalLock = !!lock; takeFocus(); const f = $('#modalBox').querySelector('input:not([type=file]),textarea,button'); if (f) setTimeout(() => f.focus(), 30); }
+function closeModal(force){ if (modalLock && !force) return; $('#modal').hidden = true; $('#modalBox').innerHTML = ''; modalLock = false; if (FIG_PREVIEW) previewDone(); refocus(); }
+function openSheet(html){ hideSel(); const s = $('#sheet'); s.innerHTML = '<div class="sheet-in">' + html + '</div>'; s.classList.remove('qe-on'); s.classList.add('open'); $('#sheetScrim').style.display = 'block'; takeFocus(); const b = s.querySelector('button'); if (b) b.focus({ preventScroll:true }); }
+function closeSheet(){ const was = $('#sheet').classList.contains('open'); $('#sheet').classList.remove('open', 'qe-on'); $('#sheetScrim').style.display = 'none'; if (was && RT && RT.paged){ if (RT.glInline) rtReflowSoon(); else rtChrome(); } refocus(); }
 let quietUntil = 0;
 function go(target, o){
   o = o || {}; quietUntil = Date.now() + 900;
@@ -462,7 +466,7 @@ function route(){
   const r = parseHash(); const prev = cur; cur = r;
   if (!(r.view === 'read' && prev.view === 'read' && prev.id === r.id)) figRelease();
   if (r.view !== 'read') rtOff(); else if (prev.view !== 'read') rtFull();
-  closeSheet(); closeModal(true); menu(false, true); hideSel(); hideFn(); hideTip(); showBar(); $('#selHint').hidden = true; if (CH) closeChat(); if (isMobile()) side(false);
+  focusBack = null; closeSheet(); closeModal(true); menu(false, true); hideSel(); hideFn(); hideTip(); showBar(); $('#selHint').hidden = true; if (CH) closeChat(); if (isMobile()) side(false);
   const isRead = r.view === 'read';
   $$('.view').forEach(v => v.hidden = true);
   document.body.classList.toggle('reading', isRead); document.documentElement.classList.toggle('in-read', isRead); $('#toolbar').hidden = !isRead; $('#prog').hidden = !isRead;
@@ -591,17 +595,20 @@ function renderLib(){
     : active ? 'ما فيه كتب في هذي المجموعة بعد.'
     : 'ما فيه عناصر من هالنوع.';
   const colHead = active ? '<div class="col-head"><span class="col-head-t"><bdi dir="auto">' + esc(active.name) + '</bdi> <span class="count">(' + countCollectionBooks(active, byId) + ')</span></span><button class="linkbtn" data-col-edit="' + esc(active.id) + '">' + tx('تعديل') + '</button></div>' : '';
+  const demoHint = kv.get('seeded', false) && !kv.get('demoHintSeen', false) ? '<div class="hint demo-hint" role="note" style="display:flex; align-items:center; gap:8px; justify-content:space-between; margin:.9rem 0 0"><span>' + tx('هذي كتب تجريبية عشان تجرب التطبيق. أضف كتبك من «أضف».') + '</span><button class="btn" id="demoHintX" aria-label="' + tx('إخفاء التلميح') + '">' + svg('close') + '</button></div>' : '';
   $('#v-lib').innerHTML = '<div class="wide" style="padding-top:1.25rem; padding-bottom:3rem"><div style="display:flex; align-items:center; gap:.5rem; margin-bottom:1rem"><h1 class="vh" style="flex:1">المكتبة</h1><button class="gbtn" data-add>+ أضف</button></div>' +
     '<label class="search"><span class="sr">بحث</span><input type="search" id="q" placeholder="ابحث في النصوص والتظليلات والملاحظات" autocomplete="off"></label>' +
+    demoHint +
     collectionBarHTML(cols, byId) +
     '<p class="quiet">' + weekText() + '</p>' +
     '<div id="results" hidden></div>' +
     '<div id="shelves">' + colHead + (items.length ? ctl +
       (cont.length ? '<h2 class="shelf-h">أكمل القراءة</h2><div class="cont">' + cont.map(contCard).join('') + '</div>' : '') +
       (rest.length ? '<h2 class="shelf-h">' + (cont.length ? 'باقي المكتبة' : 'المكتبة') + '</h2>' + restH : (cont.length ? '' : '<p class="empty">' + empty + '</p>'))
-      : '<p class="empty">' + empty + '</p>') + '</div>' +
+      : '<p class="empty">' + empty + '</p>' + '<div class="empty-act"><button class="pbtn" data-add>' + tx('أضف كتاب') + '</button></div>') + '</div>' +
     (storageDown ? '<div class="msg" role="alert" style="margin-top:2.5rem"><b>التخزين غير متاح.</b> التغييرات ما راح تنحفظ بعد إغلاق الصفحة. افتح التطبيق في متصفح يسمح بـIndexedDB، أو صدّر مكتبتك قبل ما تطلع.</div>' : '') + '</div>';
   let t; $('#q').addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => doSearch(e.target.value), 180); });
+  const dhx = $('#demoHintX'); if (dhx) dhx.onclick = () => { kv.set('demoHintSeen', true); const el = $('.demo-hint'); if (el) el.remove(); };
   $('#colBar').onclick = e => {
     const nw = e.target.closest('[data-col-new]');
     if (nw){ newCollectionModal(() => { renderLib(); fitSoon($('#v-lib')); }); return; }
@@ -1319,10 +1326,23 @@ function hlSheet(id){
     if (act === 'note'){
       openModal('<div class="mhead"><h3>ملاحظة على التظليل</h3>' + closeBtn + '</div><p class="hint" style="margin:0 0 .6rem">«' + esc(short(a.text, 90)) + '»</p><textarea class="inp" id="nTxt" rows="4">' + esc(a.note || '') + '</textarea><div class="sh-actions"><button class="pbtn" id="nSave">احفظ</button></div>');
       $('#nSave').addEventListener('click', async () => { a.note = $('#nTxt').value.trim(); await put('annos', a); closeModal(true); $$('mark.hl[data-anno="' + a.id + '"]').forEach(m => m.classList.toggle('has-note', !!a.note)); hlSheet(a.id); });
+      $('#nTxt').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); $('#nSave').click(); } });
     }
     if (act === 'link') linkPicker(a);
     if (act === 'quote') quoteModal(a, it);
-    if (act === 'del'){ await del('annos', a.id); await dropCard(hlKey(a)); updateDue(); if (RD) drawerNav(RD.it); for (const x of annosOf('hl')) if (arr(x.links).includes(a.id)){ x.links = x.links.filter(l => l !== a.id); await put('annos', x); } $$('mark.hl[data-anno="' + a.id + '"]').forEach(m => m.replaceWith(...m.childNodes)); closeSheet(); toast('شلت التظليل'); }
+    if (act === 'del'){
+      const back = [];
+      for (const x of annosOf('hl')) if (arr(x.links).includes(a.id)){ back.push({ x, saved:[...x.links] }); }
+      await del('annos', a.id); await dropCard(hlKey(a)); updateDue(); if (RD) drawerNav(RD.it);
+      for (const { x } of back){ x.links = x.links.filter(l => l !== a.id); await put('annos', x); }
+      $$('mark.hl[data-anno="' + a.id + '"]').forEach(m => m.replaceWith(...m.childNodes)); closeSheet();
+      toast(tx('شلت التظليل'), { label:tx('تراجع'), run:async () => {
+        await put('annos', a); if (hkOf(a) === 'imp') await schedule([hlKey(a)]);
+        for (const { x, saved } of back){ x.links = saved; await put('annos', x); }
+        updateDue(); if (RD && RD.it && RD.it.id === a.itemId && isSourceHighlight(a)) markHl(a); if (RD) drawerNav(RD.it);
+        refreshView(); toast(tx('رجع التظليل'));
+      } });
+    }
   };
 }
 function linkPicker(a){
@@ -3708,7 +3728,7 @@ let CH = null, msgRaf = 0, lastHomeConv = null;
 /* one conversation record, two views (panel in the reader, page in the main chat) */
 const RUN = new Map(); /* conv.id -> { conv, am, full, ctrl } */
 const isBusy = C => RUN.has(C.conv.id);
-const abortRun = id => { const r = RUN.get(id); if (r && r.ctrl) r.ctrl.abort(); };
+const abortRun = (id, stop) => { const r = RUN.get(id); if (r){ if (stop) r.stop = true; r.ctrl.abort(); } };
 const scopeOfConv = conv => conv.bookId && itemById(conv.bookId) && conv.scope !== 'lib' ? 'book' : 'lib';
 const scopeOf = C => scopeOfConv(C.conv);
 const convKey = conv => conv.bookId ? 'chat:b:' + conv.bookId : 'chat:lib';
@@ -3753,6 +3773,7 @@ function mountHome(convId, bookId, fresh){
 function openChat(scope, itemId, o){
   o = o || {};
   if (CH) closeChat();
+  takeFocus();
   const list = listOf('chat:b:' + itemId), conv = (o.conv && list.find(x => x.id === o.conv)) || list[list.length - 1] || newConv(itemId);
   const C = { view:'panel', host:$('#chatIn'), conv, mode:o.mode || prof().ai.mode || null, attach:o.attach || null };
   initFull(C); markRead(conv); CH = C; hideSel(); closeSheet();
@@ -3762,11 +3783,12 @@ function openChat(scope, itemId, o){
 function closeChat(){
   if (!CH) return; const C = CH; CH = null;
   C.host.innerHTML = ''; C.host.onclick = null;
-  if (C.view === 'panel'){ $('#chat').hidden = true; $('#chatScrim').hidden = true; document.body.classList.remove('chat-open'); }
+  if (C.view === 'panel'){ $('#chat').hidden = true; $('#chatScrim').hidden = true; document.body.classList.remove('chat-open'); refocus(); }
+  else focusBack = null;
 }
 function expandChat(){
   const C = CH; if (!C || C.view !== 'panel') return;
-  const conv = C.conv; closeChat();
+  const conv = C.conv; focusBack = null; closeChat();
   location.hash = conv.msgs.length ? '#/c/' + conv.id : '#/bchat/' + enc(conv.bookId) + '/new';
 }
 function anchorNow(it, bk){
@@ -3791,10 +3813,10 @@ function openPara(bid, bk){
   location.hash = '#/read/' + enc(bid) + '/' + enc(bk);
 }
 function deleteConv(conv){
-  conv.deleted = true; abortRun(conv.id); const key = convKey(conv); kv.set(key, listOf(key).filter(x => x.id !== conv.id));
+  conv.deleted = true; abortRun(conv.id, true); const key = convKey(conv); kv.set(key, listOf(key).filter(x => x.id !== conv.id));
   const was = CH && CH.conv.id === conv.id;
   if (was){ if (CH.view === 'panel') closeChat(); else { CH = null; location.hash = '#/'; } }
-  drawSide(); toast('انحذفت المحادثة');
+  drawSide(); toast(tx('انحذفت المحادثة'), { label:tx('تراجع'), run:() => { delete conv.deleted; if (conv.msgs.length) saveRec(conv); toast(tx('رجعت المحادثة')); } });
 }
 function renameConv(conv){
   openModal('<div class="mhead"><h3>أعد التسمية</h3>' + closeBtn + '</div><label class="flabel" for="rnT">اسم المحادثة</label><input class="inp" id="rnT" dir="auto" maxlength="80" value="' + esc(conv.title || firstMsg(conv)) + '"><div class="sh-actions"><button class="pbtn" id="rnS">احفظ</button></div>');
@@ -3908,7 +3930,7 @@ function drawChat(){
   const upd = () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 200) + 'px'; if (!isBusy(C)) send.disabled = !ta.value.trim() && !C.attach; };
   upd(); ta.addEventListener('input', upd);
   ta.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); if (!isBusy(C)) chatSend(ta.value); } });
-  send.onclick = () => { if (isBusy(C)){ abortRun(C.conv.id); return; } chatSend(ta.value); };
+  send.onclick = () => { if (isBusy(C)){ abortRun(C.conv.id, true); return; } chatSend(ta.value); };
   const ff = hq(C, '#chFile'); if (ff) ff.onchange = e => { const f = e.target.files[0]; e.target.value = ''; importFile(f); };
   const fu = hq(C, '#chFull'); if (fu) fu.onchange = () => { C.full = fu.checked; kv.set('chatfull:' + C.conv.bookId, C.full); };
   C.host.onclick = e => {
@@ -4033,9 +4055,9 @@ async function runStream(run){
     const wasOpen = open();
     if (wasOpen) drawChat();
     if (!conv.deleted){
-      if (!wasOpen) conv.unread = true;
+      if (!wasOpen && !run.stop) conv.unread = true;
       try{ await saveRec(conv); }catch(e){}
-      if (!wasOpen) toast(tx('وصل الرد'), { label:tx('افتح'), run:() => { location.hash = '#/c/' + enc(conv.id); } });
+      if (!wasOpen && !run.stop) toast(tx('وصل الرد') + ' · ' + short(firstMsg(conv), 34), { label:tx('افتح'), run:() => { location.hash = '#/c/' + enc(conv.id); } });
     }
   }
 }
@@ -5700,7 +5722,7 @@ const EN_UI = {
   'ارجع':'Back','ارجع للشات':'Back to chat','ارجع للمكتبة':'Back to library','ناقش':'Discuss','السابقة':'History','المحادثات السابقة':'Previous chats','ما فيه محادثات محفوظة.':'No saved chats.','رسالة':'messages',
   'اشرح':'Explain','اسألني':'Quiz me','ناقشني':'Debate me','اربط':'Connect','اشرح لي':'Explain this to me','اسألني في اللي قريته':'Quiz me on what I read','ناقشني في فكرة هالفصل':"Debate me on this chapter's idea",'اربط هالفصل بكتبي الثانية':'Connect this chapter to my other books','اشرح لي هالفقرة':'Explain this passage',
   'اسمح بالكتاب كامل':'Allow the whole book','إغلاق':'Close','وش اللي ما وضح؟ أو أرسل مباشرة':"What wasn't clear? Or just send",'اكتب سؤالك أو رأيك…':'Write your question or view…','اختر وضع أو اكتب سؤالك.':'Pick a mode or write your question.','نص الفصول اللي بعد مكانك ما ينرسل إلا إذا سمحت بالكتاب كامل.':"Chapters after your place aren't sent unless you allow the whole book.",
-  'اضبط الذكاء من':'Set up AI in','أول: رابط الـAPI واسم النموذج والمفتاح.':'first: API URL, model name and key.','(ما وصل رد)':'(no reply)','(انوقف)':'(stopped)','وصل الرد':'Reply arrived','افتح':'Open','انقطع الرد، أرسل رسالة جديدة للمتابعة.':'Reply was cut off — send a new message to continue.',
+  'اضبط الذكاء من':'Set up AI in','أول: رابط الـAPI واسم النموذج والمفتاح.':'first: API URL, model name and key.','(ما وصل رد)':'(no reply)','(انوقف)':'(stopped)','وصل الرد':'Reply arrived','افتح':'Open','انقطع الرد، أرسل رسالة جديدة للمتابعة.':'Reply was cut off — send a new message to continue.','تراجع':'Undo','رجع التظليل':'Highlight restored','رجعت المحادثة':'Chat restored','هذي كتب تجريبية عشان تجرب التطبيق. أضف كتبك من «أضف».':'These are sample books so you can try the app. Add your own with “Add”.',
   'ابحث في النصوص والتظليلات والملاحظات':'Search texts, highlights and notes','باقي المكتبة':'Rest of the library','مكتبتك فاضية. اضغط «أضف» والصق نص أو ارفع ملف.':'Your library is empty. Tap “Add” and paste text or upload a file.','تصدير المكتبة':'Export library','استيراد مكتبة':'Import library','جهّز للذكاء':'Prepare for AI','+ أضف':'+ Add','بحث':'Search',
   'خلّصته':'Finished','ما فتحته بعد':'Not opened yet','اليوم':'today','أمس':'yesterday','قبل شوي':'just now','ما قريت شي هالأسبوع بعد.':"You haven't read anything this week yet.",'في العناوين':'In titles','في النصوص':'In texts','في تظليلاتي':'In my highlights','في ملاحظاتي':'In my notes','أهم فكرة في جلسة':'Key idea from a session',
   'حاول تتذكّر الجواب قبل ما تفتحه. البطاقة ترجع لك بعد يوم، ثم أسبوع، ثم شهر.':'Try to recall the answer before revealing it. The card returns after a day, a week, then a month.','اضغط لترى الجواب':'Tap to see the answer','تذكّرتها':'I remembered','ما تذكّرت':'I forgot','خلّصت مراجعة اليوم.':"You're done for today.",'الباقي يرجع لك في وقته.':'The rest comes back on schedule.','ما عندك بطاقات اليوم.':'No cards today.','ما فيه بطاقات بعد.':'No cards yet.','وش الفكرة اللي ظللتها هنا؟':"What's the idea you highlighted here?",'تطبيق':'Applied',
@@ -5924,6 +5946,17 @@ async function init(){
   $('#sheetScrim').addEventListener('click', closeSheet);
   $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
   document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (!$('#modal').hidden) closeModal(); else if ($('#ctxm')) closeCtx(); else if (sndOpenP) sndClose(); else if (document.body.classList.contains('side-open')) side(false); else if (CH && CH.view === 'panel') closeChat(); else if ($('#sheet').classList.contains('open')) closeSheet(); else if (document.body.classList.contains('menu-open')) menu(false); else if (RT && cur.view === 'read' && rtEsc()){} else { hideSel(); hideFn(); } });
+  /* keep Tab inside the open dialog: modal, sheet, or chat panel */
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Tab') return;
+    const top = !$('#modal').hidden ? $('#modal') : $('#sheet').classList.contains('open') ? $('#sheet') : (CH && CH.view === 'panel' && !$('#chat').hidden) ? $('#chat') : null;
+    if (!top) return;
+    const els = [...top.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])')].filter(el => el.offsetParent !== null);
+    if (!els.length) return;
+    const first = els[0], last = els[els.length - 1];
+    if (e.shiftKey && document.activeElement === first){ e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last){ e.preventDefault(); first.focus(); }
+  });
   $('#bmBtn').addEventListener('click', toggleBookmark);
   $('#sessBtn').addEventListener('click', sessionSheet);
 

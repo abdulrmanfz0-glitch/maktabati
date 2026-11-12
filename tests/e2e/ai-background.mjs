@@ -71,7 +71,8 @@ try {
   const id3 = (await ev('location.hash')).replace(/^#\/c\//, '');
   assert(id3 && id3 !== '#/', 'no conversation id');
   await go('#/lib');
-  await b.waitFor(`(() => { const e = document.querySelector('#toast'); return e.classList.contains('show') && e.textContent.includes('وصل الرد'); })()`, 12000);
+  /* wait for THIS conversation's toast — a previous background reply may still be toasted */
+  await b.waitFor(`(() => { const e = document.querySelector('#toast'); return e.classList.contains('show') && e.textContent.includes('وصل الرد') && e.textContent.includes('رد بالتوست'); })()`, 15000);
   await b.waitFor(`!!document.querySelector('.side [data-conv-id="${id3}"][data-unread]')`, 5000);
   await ev(`document.querySelector('#toast .toast-act').click()`);
   await b.waitFor(`location.hash === '#/c/${id3}'`, 5000);
