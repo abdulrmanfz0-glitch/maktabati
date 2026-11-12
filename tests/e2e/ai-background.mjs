@@ -72,6 +72,7 @@ try {
   assert(id3 && id3 !== '#/', 'no conversation id');
   await go('#/lib');
   await b.waitFor(`(() => { const e = document.querySelector('#toast'); return e.classList.contains('show') && e.textContent.includes('وصل الرد'); })()`, 12000);
+  assert(await ev(`document.querySelector('#toast').textContent.includes('رد بالتوست')`), 'toast does not name the conversation');
   await b.waitFor(`!!document.querySelector('.side [data-conv-id="${id3}"][data-unread]')`, 5000);
   await ev(`document.querySelector('#toast .toast-act').click()`);
   await b.waitFor(`location.hash === '#/c/${id3}'`, 5000);
