@@ -31,9 +31,12 @@ function cspPlugin(single) {
         if (/\btype\s*=\s*["']?(application\/(ld\+)?json|text\/template|importmap)/i.test(attrs)) continue;
         hashes.push("'sha256-" + createHash('sha256').update(body).digest('base64') + "'");
       }
+      /* Cloudflare Web Analytics (enabled on the hosted Pages project) injects its
+         cookieless beacon from this origin; it collects no book data or keys. */
+      const CF_BEACON = 'https://static.cloudflareinsights.com';
       const script = single
         ? "script-src 'self' 'unsafe-inline'"
-        : "script-src 'self'" + (hashes.length ? ' ' + [...new Set(hashes)].join(' ') : '');
+        : "script-src 'self' " + CF_BEACON + (hashes.length ? ' ' + [...new Set(hashes)].join(' ') : '');
       const csp = [
         "default-src 'self'",
         script,
