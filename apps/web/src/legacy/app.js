@@ -401,7 +401,19 @@ function weekText(){
 
 /* ---------- ui helpers ---------- */
 let toastT;
-function toast(t){ const el = $('#toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove('show'), 2200); }
+function toast(t, action){
+  const el = $('#toast');
+  clearTimeout(toastT);
+  if (action){
+    el.innerHTML = '<span>' + esc(t) + '</span><button type="button" class="toast-act">' + esc(action.label) + '</button>';
+    el.querySelector('.toast-act').onclick = () => { clearTimeout(toastT); el.classList.remove('show'); action.run(); };
+    toastT = setTimeout(() => el.classList.remove('show'), 6000);
+  } else {
+    el.textContent = t;
+    toastT = setTimeout(() => el.classList.remove('show'), 2200);
+  }
+  el.classList.add('show');
+}
 let modalLock = false;
 function openModal(html, lock){ closeSheet(); $('#modalBox').innerHTML = html; $('#modal').hidden = false; modalLock = !!lock; const f = $('#modalBox').querySelector('input:not([type=file]),textarea,button'); if (f) setTimeout(() => f.focus(), 30); }
 function closeModal(force){ if (modalLock && !force) return; $('#modal').hidden = true; $('#modalBox').innerHTML = ''; modalLock = false; if (FIG_PREVIEW) previewDone(); }
@@ -3694,10 +3706,11 @@ function styleTxt(){
 }
 let CH = null, msgRaf = 0, lastHomeConv = null;
 /* one conversation record, two views (panel in the reader, page in the main chat) */
-const RUN = new Map();
+const RUN = new Map(); /* conv.id -> { conv, am, full, ctrl } */
 const isBusy = C => RUN.has(C.conv.id);
-const abortRun = id => { const c = RUN.get(id); if (c) c.abort(); };
-const scopeOf = C => C.conv.bookId && itemById(C.conv.bookId) && C.conv.scope !== 'lib' ? 'book' : 'lib';
+const abortRun = id => { const r = RUN.get(id); if (r && r.ctrl) r.ctrl.abort(); };
+const scopeOfConv = conv => conv.bookId && itemById(conv.bookId) && conv.scope !== 'lib' ? 'book' : 'lib';
+const scopeOf = C => scopeOfConv(C.conv);
 const convKey = conv => conv.bookId ? 'chat:b:' + conv.bookId : 'chat:lib';
 const listOf = key => arr(kv.get(key, []));
 function allConvs(){
@@ -3711,6 +3724,21 @@ const newConv = bookId => { const c = { id:uid(), t:Date.now(), msgs:[] }; if (b
 const hq = (C, sel) => C.host.querySelector(sel);
 function saveRec(conv){ if (conv.deleted) return Promise.resolve(false); const key = convKey(conv), list = listOf(key).filter(x => x.id !== conv.id); if (conv.msgs.length) list.push(conv); const p = kv.set(key, list.slice(-30)); drawSide(); return p; }
 const saveConv = C => saveRec(C.conv);
+const saveT = new WeakMap();
+function scheduleSave(conv){ if (saveT.has(conv)) return; saveT.set(conv, setTimeout(() => { saveT.delete(conv); if (!conv.deleted) saveRec(conv); }, 700)); }
+function flushSave(conv){ const t = saveT.get(conv); if (t){ clearTimeout(t); saveT.delete(conv); } }
+function markRead(conv){ if (conv && conv.unread){ delete conv.unread; if (!conv.deleted && conv.msgs.length) saveRec(conv); } }
+/* On boot, any assistant message still flagged as streaming was interrupted by a
+   tab close/reload (the in-memory run is gone). Keep its partial text and mark it cut off. */
+async function markInterrupted(){
+  let changed = false;
+  for (const conv of allConvs()){
+    let c = false;
+    for (const m of arr(conv.msgs)) if (m && m.role === 'assistant' && m.streaming){ delete m.streaming; m.cut = true; c = true; }
+    if (c){ changed = true; await saveRec(conv); }
+  }
+  if (changed) drawSide();
+}
 function touchHash(C){ if (C.view !== 'page' || CH !== C) return; lastHomeConv = C.conv.id; const h = '#/c/' + C.conv.id; if (location.hash !== h) history.replaceState(null, '', h); lastNonRead = h; markSide(); }
 const initFull = C => { C.full = C.conv.bookId ? !!kv.get('chatfull:' + C.conv.bookId, prof().ai.full) : false; };
 function mountHome(convId, bookId, fresh){
@@ -3719,7 +3747,7 @@ function mountHome(convId, bookId, fresh){
   if (!conv) conv = newConv(bid && itemById(bid) ? bid : null);
   const C = { view:'page', host:$('#v-home'), conv, mode:conv.bookId ? (prof().ai.mode || null) : null, attach:null };
   initFull(C); lastHomeConv = conv.msgs.length ? conv.id : null;
-  CH = C; drawChat();
+  markRead(conv); CH = C; drawChat();
   if (matchMedia('(pointer:fine)').matches) setTimeout(() => { const ta = hq(C, '#chIn'); if (ta && CH === C) ta.focus(); }, 60);
 }
 function openChat(scope, itemId, o){
@@ -3727,12 +3755,12 @@ function openChat(scope, itemId, o){
   if (CH) closeChat();
   const list = listOf('chat:b:' + itemId), conv = (o.conv && list.find(x => x.id === o.conv)) || list[list.length - 1] || newConv(itemId);
   const C = { view:'panel', host:$('#chatIn'), conv, mode:o.mode || prof().ai.mode || null, attach:o.attach || null };
-  initFull(C); CH = C; hideSel(); closeSheet();
+  initFull(C); markRead(conv); CH = C; hideSel(); closeSheet();
   $('#chat').hidden = false; $('#chatScrim').hidden = false; document.body.classList.add('chat-open');
   drawChat(); setTimeout(() => { const ta = hq(C, '#chIn'); if (ta && CH === C) ta.focus({ preventScroll:true }); }, 60);
 }
 function closeChat(){
-  if (!CH) return; const C = CH; C.aborted = true; abortRun(C.conv.id); CH = null;
+  if (!CH) return; const C = CH; CH = null;
   C.host.innerHTML = ''; C.host.onclick = null;
   if (C.view === 'panel'){ $('#chat').hidden = true; $('#chatScrim').hidden = true; document.body.classList.remove('chat-open'); }
 }
@@ -3811,7 +3839,8 @@ function msgHTML(m, i){
   if (m.err) return '<div class="cm-a"><div class="msg warn" style="margin:0">' + svg('warn') + '<div>' + safeHtml(m.err) + '</div></div></div>';
   const cards = arr(m.cards).map(id => bookCard(id)).join('');
   const note = m.note ? '<div class="hint" style="margin:0 0 .35rem">' + esc(m.note) + '</div>' : '';
-  return '<div class="cm-a md">' + note + (m.content ? aiHTML(m.content) : m.streaming ? '<span class="typing" role="status" aria-label="' + tx('يكتب…') + '"><i></i><i></i><i></i></span>' : '') +
+  const cut = m.cut ? '<div class="hint" style="margin:0 0 .35rem">' + esc(tx('انقطع الرد، أرسل رسالة جديدة للمتابعة.')) + '</div>' : '';
+  return '<div class="cm-a md">' + note + cut + (m.content ? aiHTML(m.content) : m.streaming ? '<span class="typing" role="status" aria-label="' + tx('يكتب…') + '"><i></i><i></i><i></i></span>' : '') +
     (cards ? '<div class="bcards">' + cards + '</div>' : '') +
     (m.content && !m.streaming ? '<div class="cm-tools"><button class="cm-copy" data-copy="' + i + '" aria-label="' + tx('انسخ') + '" title="' + tx('انسخ') + '">' + svg('copy') + '</button></div>' : '') + '</div>';
 }
@@ -3899,7 +3928,7 @@ function drawChat(){
       else if (a === 'unattach'){ C.attach = null; drawChat(); }
       return;
     }
-    const cv = e.target.closest('[data-conv]'); if (cv){ const x = convs(C).find(y => y.id === cv.dataset.conv); if (x){ C.conv = x; drawChat(); } return; }
+    const cv = e.target.closest('[data-conv]'); if (cv){ const x = convs(C).find(y => y.id === cv.dataset.conv); if (x){ C.conv = x; markRead(x); drawChat(); } return; }
     const m = e.target.closest('[data-mode]'); if (m && !isBusy(C)){ C.mode = m.dataset.mode; chatSend(ta.value, C.mode); }
   };
 }
@@ -3925,19 +3954,19 @@ function localCommand(text){
   const hits = matchBooks(m[1]); if (!hits.length) return null;
   return hits.length === 1 ? { text:tx('هذا مكانك في') + ' «' + hits[0].title + '».', cards:[hits[0].id] } : { text:tx('لقيت أكثر من كتاب، اختر:'), cards:hits.slice(0, 4).map(x => x.id) };
 }
-function buildMessages(C){
-  const ms = C.conv.msgs.filter(m => !m.err && (m.role === 'user' || m.content));
+function buildMessages(conv, full){
+  const ms = conv.msgs.filter(m => !m.err && (m.role === 'user' || m.content));
   const last = ms.filter(m => m.role === 'user').slice(-1)[0] || { content:'' };
   const q = last.content + ' ' + (last.attach || '');
   const parts = [];
   let focus = last.attach || '';
-  if (scopeOf(C) === 'lib') {
+  if (scopeOfConv(conv) === 'lib') {
     const hits = searchHits(q, 12);
     parts.push({ id:'library_map', label:'', text:'خريطة المكتبة:\n' + libraryMap(q, hits) });
     const passages = passagesTxt(hits.slice(0, 8)); if (passages) parts.push({ id:'passages', label:'', text:passages });
     const gloss = glossaryTxt(); if (gloss) parts.push({ id:'glossary', label:'', text:gloss });
   } else {
-    const it = itemById(C.conv.bookId), bc = bookContext(it, C.full);
+    const it = itemById(conv.bookId), bc = bookContext(it, full);
     if (!focus && it && RD && RD.it === it){ const el = topBlock(); if (el) focus = plain(el.textContent).slice(0, 80); }
     if (bc.memory) parts.push({ id:'book_memory', label:'', text:bc.memory });
     if (bc.chapter) parts.push({ id:'book_text', label:bc.label, text:bc.chapter });
@@ -3973,25 +4002,41 @@ async function chatSend(text, mode){
   conv.msgs.push(um, am); conv.t = Date.now(); touchHash(C);
   if (!aiReady()){ delete am.streaming; am.err = tx('اضبط الذكاء من') + ' <a href="#/settings">' + tx('الإعدادات') + '</a> ' + tx('أول: رابط الـAPI واسم النموذج والمفتاح.'); await saveConv(C); drawChat(); return; }
   await saveConv(C);
-  if (C.aborted || conv.deleted){ const k = conv.msgs.indexOf(am); if (k >= 0 && !am.content) conv.msgs.splice(k, 1); if (!conv.deleted) await saveRec(conv); return; }
-  const ctrl = new AbortController(); RUN.set(conv.id, ctrl); drawChat();
+  if (conv.deleted){ const k = conv.msgs.indexOf(am); if (k >= 0 && !am.content) conv.msgs.splice(k, 1); return; }
+  /* Start a run that lives independently of the view. Leaving the chat (closeChat,
+     expandChat, a route change) tears down the view only; the run keeps streaming
+     and writing into conv.msgs, saving throttled along the way and once at the end. */
+  const run = { conv, am, full:C.full, ctrl:new AbortController() };
+  RUN.set(conv.id, run); drawChat();
+  runStream(run);
+}
+
+async function runStream(run){
+  const { conv, am, full, ctrl } = run;
+  const open = () => CH && CH.conv === conv;
   try{
-    await aiCall({ stream:true, signal:ctrl.signal, messages:buildMessages(C), onDelta:t => { am.content = t; if (CH && CH.conv === conv) schedMsgs(); }, onNote:t => { am.note = t; if (CH && CH.conv === conv) schedMsgs(); } });
+    await aiCall({ stream:true, signal:ctrl.signal, messages:buildMessages(conv, full),
+      onDelta:t => { am.content = t; if (open()) schedMsgs(); scheduleSave(conv); },
+      onNote:t => { am.note = t; if (open()) schedMsgs(); } });
   }
   catch(e){
     if (e && e.name === 'AbortError'){
-      if (C.aborted){ const k = conv.msgs.indexOf(am); if (k >= 0) conv.msgs.splice(k, 1); }
-      else am.content = am.content || tx('(انوقف)');
+      if (!conv.deleted) am.content = am.content || tx('(انوقف)');
     } else am.err = errHTML(e);
   }
   finally {
-    /* Always leave the loading state, even when aiCall throws or returns an empty answer. */
+    flushSave(conv);
     delete am.streaming;
     RUN.delete(conv.id);
     conv.t = Date.now();
     if (!am.content && !am.err) am.err = errHTML({ empty:true });
-    if (CH && CH.conv === conv) drawChat();
-    if (!conv.deleted){ try{ await saveRec(conv); }catch(e){} }
+    const wasOpen = open();
+    if (wasOpen) drawChat();
+    if (!conv.deleted){
+      if (!wasOpen) conv.unread = true;
+      try{ await saveRec(conv); }catch(e){}
+      if (!wasOpen) toast(tx('وصل الرد'), { label:tx('افتح'), run:() => { location.hash = '#/c/' + enc(conv.id); } });
+    }
   }
 }
 
@@ -4007,7 +4052,7 @@ function drawSide(){
   const td = new Date(); td.setHours(0, 0, 0, 0); const t0 = td.getTime();
   const G = [['اليوم', x => x >= t0], ['أمس', x => x >= t0 - DAY], ['هالأسبوع', x => x >= t0 - 6 * DAY], ['أقدم', () => true]], groups = G.map(g => [g[0], []]);
   cs.forEach(c => { const k = G.findIndex(g => g[1](c.t || 0)); groups[k][1].push(c); });
-  const row = c => { const it = c.bookId && itemById(c.bookId); return '<div class="sd-row"><a class="sd-item" href="#/c/' + enc(c.id) + '" data-conv-id="' + esc(c.id) + '">' + (it ? '<span class="sd-cv">' + bkCover(it, { mini:true }) + '</span>' : '') + '<span class="sd-t"><bdi dir="auto">' + esc(c.title || firstMsg(c)) + '</bdi>' + (it ? '<small><bdi dir="auto">' + esc(short(it.title, 34)) + '</bdi></small>' : '') + '</span></a><button class="sd-more" data-cmenu="' + esc(c.id) + '" aria-label="خيارات المحادثة" aria-haspopup="menu">' + svg('dots') + '</button></div>'; };
+  const row = c => { const it = c.bookId && itemById(c.bookId); return '<div class="sd-row"><a class="sd-item" href="#/c/' + enc(c.id) + '" data-conv-id="' + esc(c.id) + '"' + (c.unread ? ' data-unread="1"' : '') + '>' + (it ? '<span class="sd-cv">' + bkCover(it, { mini:true }) + '</span>' : '') + '<span class="sd-t">' + (c.unread ? '<i class="sd-unr" aria-hidden="true"></i>' : '') + '<bdi dir="auto">' + esc(c.title || firstMsg(c)) + '</bdi>' + (it ? '<small><bdi dir="auto">' + esc(short(it.title, 34)) + '</bdi></small>' : '') + '</span></a><button class="sd-more" data-cmenu="' + esc(c.id) + '" aria-label="خيارات المحادثة" aria-haspopup="menu">' + svg('dots') + '</button></div>'; };
   el.innerHTML = (reading.length ? '<p class="sd-label">' + tx('أقرأ حالياً') + '</p>' + reading.map(it => '<a class="sd-item" href="#/read/' + encodeURIComponent(it.id) + '"><i class="dot" style="background:' + colorOf(it.id).map + '"></i><span class="sd-t"><bdi dir="auto">' + esc(it.title) + '</bdi></span><span class="sd-n">' + Math.round(it.progress * 100) + '%</span></a>').join('') : '') +
     (cs.length ? '<p class="sd-label">' + tx('المحادثات') + '</p>' + groups.filter(g => g[1].length).map(g => '<p class="sd-sub">' + g[0] + '</p>' + g[1].map(row).join('')).join('') : '');
   markSide();
@@ -5556,7 +5601,7 @@ function renderTpl(){
 if (import.meta.env.DEV) window.__bench = {
   context(q = 'لخّص أهم فكرة في كتبي') {
     const t = performance.now();
-    const msgs = buildMessages({ conv:{ msgs:[{ role:'user', content:q }], bookId:null }, full:false });
+    const msgs = buildMessages({ msgs:[{ role:'user', content:q }], bookId:null }, false);
     return { ms:performance.now() - t, chars:msgs.reduce((n, m) => n + m.content.length, 0), messages:msgs.length };
   }
 };
@@ -5655,7 +5700,7 @@ const EN_UI = {
   'ارجع':'Back','ارجع للشات':'Back to chat','ارجع للمكتبة':'Back to library','ناقش':'Discuss','السابقة':'History','المحادثات السابقة':'Previous chats','ما فيه محادثات محفوظة.':'No saved chats.','رسالة':'messages',
   'اشرح':'Explain','اسألني':'Quiz me','ناقشني':'Debate me','اربط':'Connect','اشرح لي':'Explain this to me','اسألني في اللي قريته':'Quiz me on what I read','ناقشني في فكرة هالفصل':"Debate me on this chapter's idea",'اربط هالفصل بكتبي الثانية':'Connect this chapter to my other books','اشرح لي هالفقرة':'Explain this passage',
   'اسمح بالكتاب كامل':'Allow the whole book','إغلاق':'Close','وش اللي ما وضح؟ أو أرسل مباشرة':"What wasn't clear? Or just send",'اكتب سؤالك أو رأيك…':'Write your question or view…','اختر وضع أو اكتب سؤالك.':'Pick a mode or write your question.','نص الفصول اللي بعد مكانك ما ينرسل إلا إذا سمحت بالكتاب كامل.':"Chapters after your place aren't sent unless you allow the whole book.",
-  'اضبط الذكاء من':'Set up AI in','أول: رابط الـAPI واسم النموذج والمفتاح.':'first: API URL, model name and key.','(ما وصل رد)':'(no reply)','(انوقف)':'(stopped)',
+  'اضبط الذكاء من':'Set up AI in','أول: رابط الـAPI واسم النموذج والمفتاح.':'first: API URL, model name and key.','(ما وصل رد)':'(no reply)','(انوقف)':'(stopped)','وصل الرد':'Reply arrived','افتح':'Open','انقطع الرد، أرسل رسالة جديدة للمتابعة.':'Reply was cut off — send a new message to continue.',
   'ابحث في النصوص والتظليلات والملاحظات':'Search texts, highlights and notes','باقي المكتبة':'Rest of the library','مكتبتك فاضية. اضغط «أضف» والصق نص أو ارفع ملف.':'Your library is empty. Tap “Add” and paste text or upload a file.','تصدير المكتبة':'Export library','استيراد مكتبة':'Import library','جهّز للذكاء':'Prepare for AI','+ أضف':'+ Add','بحث':'Search',
   'خلّصته':'Finished','ما فتحته بعد':'Not opened yet','اليوم':'today','أمس':'yesterday','قبل شوي':'just now','ما قريت شي هالأسبوع بعد.':"You haven't read anything this week yet.",'في العناوين':'In titles','في النصوص':'In texts','في تظليلاتي':'In my highlights','في ملاحظاتي':'In my notes','أهم فكرة في جلسة':'Key idea from a session',
   'حاول تتذكّر الجواب قبل ما تفتحه. البطاقة ترجع لك بعد يوم، ثم أسبوع، ثم شهر.':'Try to recall the answer before revealing it. The card returns after a day, a week, then a month.','اضغط لترى الجواب':'Tap to see the answer','تذكّرتها':'I remembered','ما تذكّرت':'I forgot','خلّصت مراجعة اليوم.':"You're done for today.",'الباقي يرجع لك في وقته.':'The rest comes back on schedule.','ما عندك بطاقات اليوم.':'No cards today.','ما فيه بطاقات بعد.':'No cards yet.','وش الفكرة اللي ظللتها هنا؟':"What's the idea you highlighted here?",'تطبيق':'Applied',
@@ -5835,6 +5880,7 @@ async function init(){
   if (loaded && !mem.items.size && !kv.get('seeded', false)) await seed();
   if (!kv.get('hlCardsV1', false)){ await schedule(annosOf('hl').filter(a => hkOf(a) === 'imp').map(hlKey)); await kv.set('hlCardsV1', true); }
   if (idb && mem.items.size && !kv.get('orphansV1', false)){ const on = await cleanOrphans(); await kv.set('orphansV1', { t:Date.now(), n:on }); console.info('[maktabati] orphan sweep', JSON.stringify(on)); }
+  await markInterrupted();
 
   applyLang(); initSide(); initCover(); drawChip(); initSnd(); rtInit();
   applyTheme(document.documentElement.dataset.theme || 'light');

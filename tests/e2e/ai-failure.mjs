@@ -40,22 +40,18 @@ try {
   assert(fake.stats.requests >= 2, '429 was not retried');
   ok('429 then success', fake.stats.requests + ' requests');
 
-  // 2) closeChat during a stream
-  await setModel('fake-close');
-  await go('#/read/demo-experience');
-  await b.waitFor(`!!document.querySelector('#v-read')`, 15000);
-  await ev(`document.querySelectorAll('#rtPick [data-rtpick="modern"]').forEach(x => x.click())`);
-  await settle(500);
-  await ev(`window.__rt.tool('chat')`);
-  await b.waitFor(`!document.querySelector('#chat').hidden && !!document.querySelector('#chatIn #chIn')`, 5000);
-  await ev(`(() => { const t = document.querySelector('#chatIn #chIn'); t.value = 'ابدأ ثم أغلق'; t.dispatchEvent(new Event('input', { bubbles:true })); document.querySelector('#chatIn #chSend').click(); })()`);
-  await waitText('#chatIn', 'بدأ', 8000);
-  const beforeClose = fake.stats.closed;
-  await ev(`document.querySelector('#chatScrim').click()`);
-  await settle(1200);
-  assert(await ev(`document.querySelector('#chat').hidden`), 'chat did not close');
-  assert(fake.stats.closed > beforeClose, 'server did not see the stream close');
-  ok('closeChat aborts stream', 'closed=' + fake.stats.closed);
+  // 2) leaving the chat no longer aborts the request
+  await setModel('fake-slow');
+  await go('#/'); await waitReady();
+  await sendHome('أكمل بعد ما أطلع');
+  await waitText('#v-home', 'بدأ', 8000);
+  const leftId = (await ev('location.hash')).replace(/^#\/c\//, '');
+  assert(leftId && leftId !== '#/', 'no conversation id');
+  await go('#/lib');
+  await settle(3200);
+  await go('#/c/' + leftId);
+  await waitText('#v-home', 'بدأ ثم وصل الرد كامل', 10000);
+  ok('leaving the chat keeps the reply streaming', 'full reply saved');
 
   // 3) deleteConv during a stream
   await setModel('fake-close');
