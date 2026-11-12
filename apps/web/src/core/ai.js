@@ -22,7 +22,8 @@ export function createTimeoutGuard({ firstMs = AI_DEFAULTS.firstByteTimeoutMs, i
     timer = setTimer(() => { timer = null; timedOut = true; if (onTimeout) onTimeout(); }, ms);
   };
   return {
-    first: () => arm(firstMs),
+    /* Optional ms shortens this particular first-byte wait (Gemini fallbacks). */
+    first: ms => arm(ms == null ? firstMs : Math.max(1, Math.min(firstMs, Number(ms) || firstMs))),
     idle: () => arm(idleMs),
     clear,
     get timedOut(){ return timedOut; },
@@ -50,6 +51,278 @@ export function isLocalBase(base) {
 /** True only for the DeepSeek API host, never for a look-alike domain. */
 export function isDeepSeekBase(base) {
   return /^https?:\/\/api\.deepseek\.com(?::\d+)?(\/|$)/i.test(String(base || '').trim());
+}
+
+/** True only for the Gemini API host, never for a look-alike domain. */
+export function isGeminiBase(base) {
+  return /^https?:\/\/generativelanguage\.googleapis\.com(?::\d+)?(\/|$)/i.test(String(base || '').trim());
+}
+
+/**
+ * Gemini 3 models always think, and thinking tokens count against max_tokens.
+ * Ask for the shortest reasoning round so an ordinary chat answer still fits.
+ * Change this one constant if a future Gemini version needs a different level.
+ */
+export const GEMINI_REASONING_EFFORT = 'low';
+
+/** Gemini is capped at 45 s for the first byte; 503 fallbacks share a 58 s budget. */
+export const GEMINI_FIRST_BYTE_TIMEOUT_MS = 45000;
+export const GEMINI_FALLBACK_DEADLINE_MS = 58000;
+export const GEMINI_FALLBACK_MODELS = Object.freeze(['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite']);
+export const GEMINI_BUSY_MESSAGE = 'خوادم Gemini مزدحمة الحين، جرّب بعد شوي أو استخدم مزوّد ثاني.';
+export const GEMINI_MODEL_GONE_MESSAGE = 'هذا الموديل ما عاد متاح، اختر غيره';
+
+/** The configured first-byte wait, capped at 45 s for Gemini only. */
+export function firstByteTimeoutFor(base, configured) {
+  const ms = Math.max(5000, Math.min(300000, Number(configured) || AI_DEFAULTS.firstByteTimeoutMs));
+  const provider = providerForBase(base);
+  return provider && provider.id === 'gemini' ? Math.min(ms, GEMINI_FIRST_BYTE_TIMEOUT_MS) : ms;
+}
+
+/**
+ * The provider table is the single source of truth. Adding a provider is one entry:
+ * prefixes drive detection, model/prefs drive selection, limits are copied when the
+ * reader switches provider, and requestOptions are added to every Chat Completions body.
+ */
+export const PROVIDERS = Object.freeze({
+  deepseek: {
+    id:'deepseek', label:'DeepSeek', base:'https://api.deepseek.com',
+    prefixes:['sk-'], model:'deepseek-flash', prefs:['deepseek-flash'],
+    requestOptions:{ thinking:{ type:'disabled' } },
+    limits:{ max:AI_DEFAULTS.maxTokens, ctx:AI_DEFAULTS.contextWindow, first:AI_DEFAULTS.firstByteTimeoutMs }
+  },
+  gemini: {
+    id:'gemini', label:'Gemini', base:'https://generativelanguage.googleapis.com/v1beta/openai',
+    prefixes:['AIza', 'AQ.'], model:'gemini-3.1-flash-lite', prefs:[],
+    requestOptions:{ reasoning_effort:GEMINI_REASONING_EFFORT },
+    limits:{ max:4096, ctx:1000000, first:GEMINI_FIRST_BYTE_TIMEOUT_MS }
+  },
+  anthropic: {
+    id:'anthropic', label:'Claude', base:'https://api.anthropic.com/v1',
+    prefixes:['sk-ant-'], model:'claude-haiku-5-5',
+    prefs:['claude-haiku-5-5', 'claude-sonnet-5-5'],
+    requestOptions:{},
+    /* Chat uses Bearer on the OpenAI-compatible path; /models uses Anthropic's
+       native x-api-key + anthropic-version headers instead. */
+    chatHeaders:{ 'anthropic-dangerous-direct-browser-access':'true' },
+    modelsAuth:'x-api-key',
+    modelsHeaders:{ 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
+    limits:{ max:AI_DEFAULTS.maxTokens, ctx:1000000, first:AI_DEFAULTS.firstByteTimeoutMs }
+  },
+  openrouter: {
+    id:'openrouter', label:'OpenRouter', base:'https://openrouter.ai/api/v1',
+    prefixes:['sk-or-'], model:'openai/gpt-4o-mini',
+    prefs:['openai/gpt-4o-mini', 'google/gemini-2.5-flash', 'anthropic/claude-3.5-haiku', 'openrouter/auto'],
+    requestOptions:{},
+    limits:{ max:AI_DEFAULTS.maxTokens, ctx:AI_DEFAULTS.contextWindow, first:AI_DEFAULTS.firstByteTimeoutMs }
+  },
+  groq: {
+    id:'groq', label:'Groq', base:'https://api.groq.com/openai/v1',
+    prefixes:['gsk_'], model:'llama-3.3-70b-versatile',
+    prefs:['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it'],
+    requestOptions:{},
+    limits:{ max:AI_DEFAULTS.maxTokens, ctx:AI_DEFAULTS.contextWindow, first:AI_DEFAULTS.firstByteTimeoutMs }
+  },
+  openai: {
+    id:'openai', label:'OpenAI', base:'https://api.openai.com/v1',
+    prefixes:['sk-'], model:'gpt-4o-mini',
+    prefs:['gpt-4o-mini', 'gpt-4.1-mini', 'gpt-4o'],
+    requestOptions:{},
+    limits:{ max:AI_DEFAULTS.maxTokens, ctx:128000, first:AI_DEFAULTS.firstByteTimeoutMs }
+  }
+});
+
+/** Infer the provider from a saved base URL. A non-provider base is a custom endpoint. */
+export function providerForBase(base) {
+  const raw = String(base || '').trim();
+  if (!raw) return null;
+  let url;
+  try { url = new URL(raw); } catch (e) { return null; }
+  const path = url.pathname.replace(/\/+$/, '');
+  for (const provider of Object.values(PROVIDERS)) {
+    const providerUrl = new URL(provider.base);
+    if (url.hostname.toLowerCase() !== providerUrl.hostname.toLowerCase()) continue;
+    const providerPath = providerUrl.pathname.replace(/\/+$/, '');
+    if (path === providerPath || path.startsWith(providerPath ? providerPath + '/' : '/')) return provider;
+  }
+  return null;
+}
+
+/**
+ * Provider-specific request fields. DeepSeek gets its explicit "no thinking" switch;
+ * Gemini gets a low reasoning budget. Every other OpenAI-compatible provider gets neither.
+ */
+export function providerRequestOptions(base) {
+  const provider = providerForBase(base);
+  return provider ? Object.assign({}, provider.requestOptions) : {};
+}
+
+/** Chat headers: Bearer for every provider, plus any provider-specific extras. */
+export function providerChatHeaders(base, key) {
+  const provider = providerForBase(base);
+  const headers = {};
+  if (key) headers.Authorization = 'Bearer ' + key;
+  if (provider && provider.chatHeaders) Object.assign(headers, provider.chatHeaders);
+  return headers;
+}
+
+/** GET /models headers. Anthropic uses x-api-key + anthropic-version, not Bearer. */
+export function providerModelHeaders(base, key) {
+  const provider = providerForBase(base);
+  if (!key) return {};
+  if (provider && provider.modelsAuth === 'x-api-key'){
+    return Object.assign({ 'x-api-key':key }, provider.modelsHeaders || {});
+  }
+  return { Authorization:'Bearer ' + key };
+}
+
+/**
+ * Detect a provider from the key prefix only. No network and no key is logged.
+ * The longest matching prefix wins. A generic sk- key matches both DeepSeek and
+ * OpenAI, so it is the only ambiguous case and keeps the table order.
+ */
+export function detectProvider(key) {
+  const k = String(key == null ? '' : key).trim();
+  if (!k) return { kind:'empty' };
+  const hits = [];
+  for (const provider of Object.values(PROVIDERS)) {
+    for (const prefix of provider.prefixes) if (k.startsWith(prefix)) hits.push({ id:provider.id, length:prefix.length });
+  }
+  if (!hits.length) return {
+    kind:'unknown',
+    message:'ما عرفت المزوّد من صيغة المفتاح. اختر المزوّد من القائمة.'
+  };
+  const longest = Math.max(...hits.map(hit => hit.length));
+  const providers = [...new Set(hits.filter(hit => hit.length === longest).map(hit => hit.id))];
+  return providers.length === 1
+    ? { kind:'known', provider:providers[0] }
+    : { kind:'ambiguous', providers };
+}
+
+/** GET {base}/models, without duplicating a trailing /models. */
+export function modelsEndpoint(base) {
+  const b = String(base || '').trim().replace(/\/+$/, '');
+  return /\/models$/.test(b) ? b : b + '/models';
+}
+
+/** OpenAI-style {data:[{id}]} or a bare array of ids. Keeps first-seen order, drops duplicates. */
+export function parseModels(json) {
+  const rows = Array.isArray(json) ? json : (json && Array.isArray(json.data) ? json.data : []);
+  const out = [];
+  for (const row of rows) {
+    const raw = typeof row === 'string' ? row : (row && typeof row.id === 'string' ? row.id : '');
+    const id = raw.replace(/^models\//i, '');
+    if (id && !out.includes(id)) out.push(id);
+  }
+  return out;
+}
+
+const GEMINI_HIDDEN_MODEL = /(tts|image|transcribe|omni|lyria|nano-banana|customtools)/i;
+
+/** Drop non-chat Gemini ids from the model picker; leave other providers untouched. */
+export function filterModelChoices(provider, ids) {
+  const list = (Array.isArray(ids) ? ids : []).map(String).filter(Boolean);
+  return provider === 'gemini' ? list.filter(id => !GEMINI_HIDDEN_MODEL.test(id)) : list;
+}
+
+/** The model the Gemini fallback chain tries when the chosen model is busy. */
+export function geminiFallbackCandidates(available) {
+  const list = Array.isArray(available) ? available : [];
+  return GEMINI_FALLBACK_MODELS.filter(id => list.includes(id));
+}
+
+function versionParts(id) {
+  const m = String(id).match(/(\d+(?:\.\d+)*)/);
+  return m ? m[1].split('.').map(Number) : [0];
+}
+function compareVersions(a, b) {
+  const x = versionParts(a), y = versionParts(b), n = Math.max(x.length, y.length);
+  for (let i = 0; i < n; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d; }
+  return 0;
+}
+
+/**
+ * Pick a default only from ids the provider returned. Gemini prefers the newest
+ * "flash" id (excluding image/audio variants); Claude prefers a Haiku id, then a
+ * Sonnet id; the others use their preference list. Returns null when nothing matches,
+ * so the UI can show the returned list.
+ */
+export function pickDefaultModel(provider, ids) {
+  const list = (Array.isArray(ids) ? ids : []).map(String).filter(Boolean);
+  if (!list.length) return null;
+  if (provider === 'gemini') {
+    const choices = filterModelChoices('gemini', list);
+    if (choices.includes('gemini-3.1-flash-lite')) return 'gemini-3.1-flash-lite';
+    const flashes = choices.filter(id => /flash/i.test(id));
+    if (!flashes.length) return null;
+    return flashes.slice().sort((a, b) => compareVersions(b, a) || a.localeCompare(b))[0];
+  }
+  if (provider === 'anthropic') return list.find(id => /haiku/i.test(id)) || list.find(id => /sonnet/i.test(id)) || null;
+  const p = PROVIDERS[provider];
+  if (!p) return null;
+  for (const wanted of p.prefs) if (list.includes(wanted)) return wanted;
+  return null;
+}
+
+/** The real message from a provider error body: object, array of objects, or plain text. */
+function providerMessage(value) {
+  if (value == null) return '';
+  if (typeof value === 'string') return value.trim();
+  if (Array.isArray(value)) {
+    for (const item of value) { const m = providerMessage(item); if (m) return m; }
+    return '';
+  }
+  if (typeof value !== 'object') return '';
+  if (value.error != null) { const m = providerMessage(value.error); if (m) return m; }
+  if (value.message != null) return providerMessage(value.message);
+  return '';
+}
+
+/** Collect `details[].reason` values, such as ACCESS_TOKEN_TYPE_UNSUPPORTED. */
+function providerReasons(value) {
+  const out = [];
+  const walk = v => {
+    if (v == null) return;
+    if (Array.isArray(v)) { for (const item of v) walk(item); return; }
+    if (typeof v !== 'object') return;
+    if (typeof v.reason === 'string' && v.reason.trim() && !out.includes(v.reason.trim())) out.push(v.reason.trim());
+    if (v.details != null) walk(v.details);
+    if (v.error != null) walk(v.error);
+  };
+  walk(value);
+  return out;
+}
+
+/**
+ * Gemini returns some errors as a JSON array: [{"error":{"message":"..."}}].
+ * Return the provider's own message and any structured reason, else the raw body.
+ */
+export function parseProviderErrorBody(text) {
+  const raw = String(text == null ? '' : text);
+  try {
+    const parsed = JSON.parse(raw);
+    const message = providerMessage(parsed);
+    const reasons = providerReasons(parsed).filter(r => !message.includes(r));
+    if (message) return reasons.length ? message + ' (' + reasons.join(', ') + ')' : message;
+    if (reasons.length) return reasons.join(', ');
+  } catch (e) { /* not JSON; use the raw body */ }
+  return raw.trim();
+}
+
+const EMPTY_LENGTH_MESSAGE = 'الموديل استهلك حدّ التوكنز كامل — غالبًا في التفكير — وما بقي له نص للرد. ارفع «أقصى توكنز للرد» من الإعدادات، أو استخدم موديل Flash.';
+const EMPTY_MESSAGE = 'المزوّد رجّع ردًّا فارغًا بدون نص. جرّب مرة ثانية، أو غيّر الموديل.';
+
+/** Error object for an answer that ended without any text. */
+export function emptyAnswerError(finishReason) {
+  const finish = finishReason == null || finishReason === '' ? null : String(finishReason);
+  return { empty:true, finish, message:finish === 'length' ? EMPTY_LENGTH_MESSAGE : EMPTY_MESSAGE };
+}
+
+/** Return the answer, or throw a clear empty-answer error instead of returning ''. */
+export function finishAnswer(content, finishReason) {
+  const text = content == null ? '' : String(content);
+  if (text.trim()) return text;
+  throw emptyAnswerError(finishReason);
 }
 
 /** The two legacy names were retired on 2026-07-24; route them to the current Flash model. */
@@ -155,8 +428,10 @@ export function parseSSE(buffer) {
       const j = JSON.parse(data);
       if (j && j.error) events.push({ error: String((j.error.message || j.error) || 'AI error') });
       else {
-        const t = j && j.choices && j.choices[0] && j.choices[0].delta && j.choices[0].delta.content;
+        const choice = j && j.choices && j.choices[0];
+        const t = choice && choice.delta && choice.delta.content;
         if (t) events.push({ delta: t });
+        if (choice && choice.finish_reason) events.push({ finish: String(choice.finish_reason) });
       }
     } catch (e) { /* ignore malformed SSE lines */ }
   }

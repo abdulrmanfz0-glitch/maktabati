@@ -26,8 +26,9 @@
   },
   "scripts": {
     "dev": "vite apps/web",
-    "build": "npm run build:web && npm run build:single",
+    "build": "npm run build:web && npm run check:fonts && npm run build:single",
     "build:web": "vite build apps/web",
+    "check:fonts": "node tools/check-fonts.mjs",
     "build:single": "vite build apps/web --mode worker && vite build apps/web --mode single",
     "preview": "vite preview apps/web --outDir ../../dist/web",
     "test": "vitest run",

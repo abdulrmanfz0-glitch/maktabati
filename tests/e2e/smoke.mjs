@@ -222,6 +222,13 @@ export async function runSmoke(b, url, vp, extra = []) {
       assert((await ev(`document.querySelector('#sBase').value || document.querySelector('#sBase').placeholder`)).includes('deepseek'), 'default URL');
     });
     await item('EXP-01', async () => {
+      /* Keep this export check off real provider networks: test Save through a custom
+         local endpoint, then verify the key never reaches the export. */
+      await ev(`(() => {
+        document.querySelector('#sBase').value = 'http://127.0.0.1:5173/v1';
+        document.querySelector('#sModel').value = 'smoke-model';
+        document.querySelector('#sCustomLink').click();
+      })()`);
       await type('#sKey', KEY); await click('#sSave');
       const dl = path.join(TMP, vp); await b.downloadsTo(dl);
       await go('#/profile/privacy'); await click('#pvExp'); await settle(1500);

@@ -49,13 +49,18 @@ backend. The first load creates two demo items so the library is not empty.
 
 The old single-file `My Library.html` is no longer part of the repository.
 
-## Add a DeepSeek key
+## Add an AI key
 
-1. Create a key in the DeepSeek console. Use a key with a spending limit.
+1. Create a key with a spending limit.
 2. Open **Profile → AI** (`#/profile/ai`).
-3. Keep the default base URL `https://api.deepseek.com` and model
-   `deepseek-flash`, or enter another OpenAI-compatible base URL and model.
-4. Paste the key and press **Save**, then **Test connection**.
+3. Paste the key and press **Save**. The app detects the provider, fills the
+   base URL, model and token limits, verifies `GET /models`, and saves.
+4. Press **Test connection**.
+
+Use the **custom / local endpoint** link only for Ollama, LM Studio, or another
+endpoint that is not one of the known providers. A generic `sk-` key is checked
+against DeepSeek, then OpenAI; every other key is sent only to the detected or
+chosen provider.
 
 The key is stored only in this browser's `localStorage` under
 `maktabati:ai`. It is never included in library exports. See
@@ -70,8 +75,8 @@ the provider must allow **CORS** from the app's origin.
 |---|---|
 | DeepSeek | Works (default base URL `https://api.deepseek.com`, model `deepseek-flash`) |
 | OpenRouter | Works with its OpenAI-compatible base URL |
-| Google Gemini API | Reachable through its OpenAI-compatible endpoint `https://generativelanguage.googleapis.com/v1beta/openai` with model `gemini-3.8-flash`; send the key as `Authorization: Bearer`. Test one request before relying on it. |
-| Anthropic API | CORS works when the request carries `anthropic-dangerous-direct-browser-access: true`, but this app speaks only OpenAI Chat Completions; the native Messages API needs an adapter. ZDR/Compliance organizations may reject browser requests. |
+| Google Gemini API | Reachable through its OpenAI-compatible endpoint `https://generativelanguage.googleapis.com/v1beta/openai`. The app prefers `gemini-3.1-flash-lite`, then the newest flash id in `/models`, and retries a busy model with `gemini-3.1-flash-lite`/`gemini-3.5-flash-lite` when available. Gemini keys may start with `AIza` or `AQ.`; send the key only as `Authorization: Bearer`. Gemini 3 models think by default and count thinking tokens against the output limit, so the app sends `reasoning_effort: "low"` for this host. Test one request before relying on it. |
+| Anthropic API (Claude) | Works through `https://api.anthropic.com/v1/chat/completions` with `Authorization: Bearer` plus `anthropic-dangerous-direct-browser-access: true`. Model discovery uses `x-api-key` and `anthropic-version: 2023-06-01`. ZDR/Compliance organizations may reject browser requests. |
 | OpenAI official API | CORS is observed to work, but OpenAI does not document it and advises against exposing keys in browsers. Use a proxy or OpenRouter for production. |
 | Any OpenAI-compatible endpoint with CORS (Groq, Together, Fireworks, LM Studio, vLLM, Ollama with `OLLAMA_ORIGINS` configured) | Works when it accepts `Authorization: Bearer` and the OpenAI Chat Completions request/response shape |
 
@@ -228,8 +233,8 @@ Third-party components and assets are listed in
   <http://localhost:5173>.
 - **المفتاح:** من **الملف ← الرفيق الذكي** (`#/profile/ai`). الافتراضي
   DeepSeek (`deepseek-flash`)، ويمكن استخدام أي مزوّد متوافق مع OpenAI Chat
-  Completions يدعم CORS. Gemini يعمل عبر واجهته المتوافقة مع OpenAI، وAnthropic
-  يحتاج ترويسة CORS خاصة وواجهة مختلفة، وOpenAI الرسمي غير موثق للمتصفح.
+  Completions يدعم CORS. Gemini يعمل عبر واجهته المتوافقة مع OpenAI، وClaude
+  كذلك مع ترويسة CORS خاصة، وOpenAI الرسمي غير موثق للمتصفح.
 - **الخصوصية:** الكتب والتظليلات في IndexedDB على جهازك، والمفتاح في
   `localStorage`. عند السؤال تُرسل المقاطع ذات الصلة إلى مزوّد الذكاء الذي
   اخترته. النسخة المستضافة تستخدم Cloudflare Web Analytics لعدّ الزيارات فقط، بلا كوكيز، ولا ترى كتبك أو مفتاحك. الصور الخارجية محجوبة وتظهر كروابط أو نص بديل.
