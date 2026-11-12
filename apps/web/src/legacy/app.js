@@ -1333,11 +1333,14 @@ function hlSheet(id){
     if (act === 'del'){
       const back = [];
       for (const x of annosOf('hl')) if (arr(x.links).includes(a.id)){ back.push({ x, saved:[...x.links] }); }
+      /* snapshot the review card so undo restores the exact schedule (stage + due) */
+      const cards0 = kv.get('cards', {}), card = cards0[hlKey(a)] ? Object.assign({}, cards0[hlKey(a)]) : null;
       await del('annos', a.id); await dropCard(hlKey(a)); updateDue(); if (RD) drawerNav(RD.it);
       for (const { x } of back){ x.links = x.links.filter(l => l !== a.id); await put('annos', x); }
       $$('mark.hl[data-anno="' + a.id + '"]').forEach(m => m.replaceWith(...m.childNodes)); closeSheet();
       toast(tx('شلت التظليل'), { label:tx('تراجع'), run:async () => {
-        await put('annos', a); if (hkOf(a) === 'imp') await schedule([hlKey(a)]);
+        await put('annos', a);
+        if (card){ const cs = kv.get('cards', {}); cs[hlKey(a)] = card; await kv.set('cards', cs); }
         for (const { x, saved } of back){ x.links = saved; await put('annos', x); }
         updateDue(); if (RD && RD.it && RD.it.id === a.itemId && isSourceHighlight(a)) markHl(a); if (RD) drawerNav(RD.it);
         refreshView(); toast(tx('رجع التظليل'));
