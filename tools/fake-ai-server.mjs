@@ -69,14 +69,39 @@ export async function startFakeAI() {
   const server = http.createServer((req, res) => {
     const u = new URL(req.url, 'http://127.0.0.1');
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key, anthropic-version, anthropic-dangerous-direct-browser-access');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
     if (u.pathname === '/stats') { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(stats)); return; }
     if (req.method === 'GET') {
       /* GET /models is free and is how the app detects/verifies a pasted key.
          Only record whether auth was present; never store the key itself. */
-      stats.modelFetches.push({ path:u.pathname, hasAuth:!!req.headers.authorization });
+      stats.modelFetches.push({
+        path:u.pathname,
+        hasAuth:!!req.headers.authorization,
+        xApiKey:!!req.headers['x-api-key'],
+        anthropicVersion:req.headers['anthropic-version'] || null,
+        anthropicBrowser:req.headers['anthropic-dangerous-direct-browser-access'] || null
+      });
+      if (u.pathname === '/anthropic/v1/models') {
+        if (!req.headers['x-api-key']) {
+          res.writeHead(401, { 'Content-Type':'application/json' });
+          res.end(JSON.stringify({ type:'error', error:{ type:'authentication_error', message:'Invalid Anthropic API Key' } }));
+          return;
+        }
+        if (req.headers['anthropic-version'] !== '2023-06-01') {
+          res.writeHead(400, { 'Content-Type':'application/json' });
+          res.end(JSON.stringify({ type:'error', error:{ type:'invalid_request_error', message:'anthropic-version required' } }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type':'application/json', 'Cache-Control':'no-cache' });
+        res.end(JSON.stringify({ data:[
+          { id:'claude-haiku-5-5', display_name:'Claude Haiku 5.5' },
+          { id:'claude-sonnet-5-5', display_name:'Claude Sonnet 5.5' },
+          { id:'claude-opus-5-5', display_name:'Claude Opus 5.5' }
+        ] }));
+        return;
+      }
       if (/\/models$/.test(u.pathname)) {
         if (u.pathname.includes('/broken/') || u.pathname.includes('/missing/') || u.pathname.includes('/offline/')) {
           res.writeHead(404, { 'Content-Type':'application/json' });
@@ -111,6 +136,9 @@ export async function startFakeAI() {
         reasoning_effort:body.reasoning_effort || null,
         hasAuth:!!req.headers.authorization,
         apiKeyHeader:!!req.headers['x-goog-api-key'],
+        xApiKey:!!req.headers['x-api-key'],
+        anthropicVersion:req.headers['anthropic-version'] || null,
+        anthropicBrowser:req.headers['anthropic-dangerous-direct-browser-access'] || null,
         queryKey:u.searchParams.has('key'),
         hasUnits:/<units>/.test(raw),
         hasCorrective:isCorrective(body)

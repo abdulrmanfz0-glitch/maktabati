@@ -82,6 +82,18 @@ export const PROVIDERS = Object.freeze({
     requestOptions:{ reasoning_effort:GEMINI_REASONING_EFFORT },
     limits:{ max:4096, ctx:1000000, first:AI_DEFAULTS.firstByteTimeoutMs }
   },
+  anthropic: {
+    id:'anthropic', label:'Claude', base:'https://api.anthropic.com/v1',
+    prefixes:['sk-ant-'], model:'claude-haiku-5-5',
+    prefs:['claude-haiku-5-5', 'claude-sonnet-5-5'],
+    requestOptions:{},
+    /* Chat uses Bearer on the OpenAI-compatible path; /models uses Anthropic's
+       native x-api-key + anthropic-version headers instead. */
+    chatHeaders:{ 'anthropic-dangerous-direct-browser-access':'true' },
+    modelsAuth:'x-api-key',
+    modelsHeaders:{ 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
+    limits:{ max:AI_DEFAULTS.maxTokens, ctx:1000000, first:AI_DEFAULTS.firstByteTimeoutMs }
+  },
   openrouter: {
     id:'openrouter', label:'OpenRouter', base:'https://openrouter.ai/api/v1',
     prefixes:['sk-or-'], model:'openai/gpt-4o-mini',
@@ -130,6 +142,25 @@ export function providerRequestOptions(base) {
   return provider ? Object.assign({}, provider.requestOptions) : {};
 }
 
+/** Chat headers: Bearer for every provider, plus any provider-specific extras. */
+export function providerChatHeaders(base, key) {
+  const provider = providerForBase(base);
+  const headers = {};
+  if (key) headers.Authorization = 'Bearer ' + key;
+  if (provider && provider.chatHeaders) Object.assign(headers, provider.chatHeaders);
+  return headers;
+}
+
+/** GET /models headers. Anthropic uses x-api-key + anthropic-version, not Bearer. */
+export function providerModelHeaders(base, key) {
+  const provider = providerForBase(base);
+  if (!key) return {};
+  if (provider && provider.modelsAuth === 'x-api-key'){
+    return Object.assign({ 'x-api-key':key }, provider.modelsHeaders || {});
+  }
+  return { Authorization:'Bearer ' + key };
+}
+
 /**
  * Detect a provider from the key prefix only. No network and no key is logged.
  * The longest matching prefix wins. A generic sk- key matches both DeepSeek and
@@ -138,11 +169,6 @@ export function providerRequestOptions(base) {
 export function detectProvider(key) {
   const k = String(key == null ? '' : key).trim();
   if (!k) return { kind:'empty' };
-  if (k.startsWith('sk-ant-')) return {
-    kind:'unsupported',
-    provider:'anthropic',
-    message:'مفاتيح Anthropic تحتاج واجهة Messages API مختلفة، والتطبيق يتكلم OpenAI Chat Completions. استخدم OpenRouter بمفتاح يبدأ بـsk-or- بدلًا منها.'
-  };
   const hits = [];
   for (const provider of Object.values(PROVIDERS)) {
     for (const prefix of provider.prefixes) if (k.startsWith(prefix)) hits.push({ id:provider.id, length:prefix.length });
@@ -187,8 +213,9 @@ function compareVersions(a, b) {
 
 /**
  * Pick a default only from ids the provider returned. Gemini prefers the newest
- * "flash" id (excluding image/audio variants); the others use their preference
- * list. Returns null when the preferred model is absent, so the UI can show the list.
+ * "flash" id (excluding image/audio variants); Claude prefers a Haiku id, then a
+ * Sonnet id; the others use their preference list. Returns null when nothing matches,
+ * so the UI can show the returned list.
  */
 export function pickDefaultModel(provider, ids) {
   const list = (Array.isArray(ids) ? ids : []).map(String).filter(Boolean);
@@ -198,6 +225,7 @@ export function pickDefaultModel(provider, ids) {
     if (!flashes.length) return null;
     return flashes.slice().sort((a, b) => compareVersions(b, a) || a.localeCompare(b))[0];
   }
+  if (provider === 'anthropic') return list.find(id => /haiku/i.test(id)) || list.find(id => /sonnet/i.test(id)) || null;
   const p = PROVIDERS[provider];
   if (!p) return null;
   for (const wanted of p.prefs) if (list.includes(wanted)) return wanted;

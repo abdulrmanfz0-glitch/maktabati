@@ -3,7 +3,7 @@ import { runIngest } from '../ingest/client.js';
 import { EXPORT_VERSION, planLibraryImport, validateItem } from '../core/library.js';
 import { FILTER_ALL, FILTER_UNFILED, collectionKey, cleanName, makeCollection, collectionsFromKv, sortCollections, hasBook, addBookToCollection, removeBookFromCollection, renameCollection, countCollectionBooks, filterByCollection, removeBookFromAll } from '../core/collections.js';
 import { isPasteTooLarge, needsLowMemoryWarning } from '../core/limits.js';
-import { AI_DEFAULTS, basePolicy, keylessAllowed, estimateMessagesTokens, fitRequest, parseSSE, shouldRetry, retryDelayMs, validateCard, createTimeoutGuard, linkAbort, migrateDeepSeekModel, providerRequestOptions, parseProviderErrorBody, finishAnswer,
+import { AI_DEFAULTS, basePolicy, keylessAllowed, estimateMessagesTokens, fitRequest, parseSSE, shouldRetry, retryDelayMs, validateCard, createTimeoutGuard, linkAbort, migrateDeepSeekModel, providerRequestOptions, providerChatHeaders, providerModelHeaders, parseProviderErrorBody, finishAnswer,
   PROVIDERS, providerForBase, detectProvider, pickDefaultModel, parseModels, modelsEndpoint } from '../core/ai.js';
 import { findNormalizedRange } from '../core/text.js';
 import { PROMPT_VERSION, CORRECTIVE_MESSAGE, parseGlossary, glossaryHash, glossaryForText, extractChapterUnits, chunkUnits, buildMessages as buildTranslationMessages, parseTranslation, qaSegment, estimateChapter, fingerprint, chapterSourceHash, lastTwoSentences, bookPlan, runConcurrent, hashString, isPeak, isArabicHighlight, isSourceHighlight } from '../core/translate.js';
@@ -2517,11 +2517,11 @@ async function aiCall(o){
   const firstMs = Math.max(5000, Math.min(300000, Number(c.first) || AI_DEFAULTS.firstByteTimeoutMs));
   const guard = createTimeoutGuard({ firstMs, idleMs:AI_DEFAULTS.idleStreamTimeoutMs, onTimeout:() => { try{ ctrl.abort(new DOMException('Timeout', 'TimeoutError')); }catch(e){ ctrl.abort(); } } });
   const unlink = linkAbort(o.signal, ctrl);
-  const headers = { 'Content-Type':'application/json' };
   /* Gemini's OpenAI-compatible path takes the key as Bearer only. Never add
      x-goog-api-key or ?key= here: Google rejects a second credential with a 400
-     "Multiple authentication credentials received". */
-  if (c.key) headers.Authorization = 'Bearer ' + c.key;
+     "Multiple authentication credentials received". Claude uses Bearer here too,
+     plus its direct-browser-access header. */
+  const headers = Object.assign({ 'Content-Type':'application/json' }, providerChatHeaders(c.base, c.key));
   try{
     for (let attempt = 0; ; attempt++){
       guard.first();
@@ -4212,9 +4212,8 @@ function renderProfile(tab){
       const timer = setTimeout(() => { try{ ctrl.abort(); }catch(e){} }, 15000);
       try{
         let res;
-        /* Bearer only, including for Gemini: a second credential (x-goog-api-key or
-           ?key=) makes Google return 400 "Multiple authentication credentials received". */
-        try{ res = await fetch(modelsEndpoint(base), { headers:key ? { Authorization:'Bearer ' + key } : {}, signal:ctrl.signal }); }
+        /* Bearer by default; Claude's /models path uses x-api-key + anthropic-version. */
+        try{ res = await fetch(modelsEndpoint(base), { headers:providerModelHeaders(base, key), signal:ctrl.signal }); }
         catch(e){ if (ctrl.signal.aborted) throw { timeout:true }; throw { network:true }; }
         if (!res.ok){ let detail = ''; try{ detail = await readProviderError(res); }catch(e){} throw { status:res.status, detail }; }
         let j; try{ j = await res.json(); }catch(e){ throw { network:true }; }

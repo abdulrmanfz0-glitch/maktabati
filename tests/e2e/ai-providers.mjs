@@ -29,6 +29,7 @@ const mapFor = sandbox => ev(`window.__aiTestMap = ${JSON.stringify(sandbox)}`);
 const sandbox = {
   'https://api.deepseek.com': fake.url + '/deepseek/v1',
   'https://generativelanguage.googleapis.com/v1beta/openai': fake.url + '/gemini/v1',
+  'https://api.anthropic.com/v1': fake.url + '/anthropic/v1',
   'https://openrouter.ai/api/v1': fake.url + '/openrouter/v1',
   'https://api.groq.com/openai/v1': fake.url + '/groq/v1',
   'https://api.openai.com/v1': fake.url + '/openai/v1'
@@ -105,6 +106,49 @@ try {
   assert((await ev(`document.querySelector('#sModel').value`)) === 'deepseek-flash', 'Test did not apply the DeepSeek model');
   ok('Test connection re-detects first', 'Gemini -> DeepSeek');
 
+  // 4c) Claude detection uses /models with x-api-key, picks Haiku and saves
+  await setKey('sk-ant-e2e');
+  await click('#sSave');
+  await waitText('#sDetect', 'Claude');
+  assert((await ev(`document.querySelector('#sBase').value`)) === 'https://api.anthropic.com/v1', 'Claude base not saved');
+  assert((await ev(`document.querySelector('#sModel').value`)) === 'claude-haiku-5-5', 'Claude Haiku not chosen');
+  assert((await ev(`document.querySelector('#sMax').value`)) === '1200', 'Claude max limit not applied');
+  const claudeFetch = fake.stats.modelFetches.filter(x => x.path === '/anthropic/v1/models').at(-1);
+  assert(claudeFetch, 'Claude /models was not called');
+  assert(claudeFetch.xApiKey && !claudeFetch.hasAuth, 'Claude /models auth headers wrong');
+  assert(claudeFetch.anthropicVersion === '2023-06-01', 'Claude anthropic-version missing');
+  assert(claudeFetch.anthropicBrowser === 'true', 'Claude browser-access header missing on /models');
+  const c4c = await cfg();
+  assert(c4c.base === 'https://api.anthropic.com/v1' && c4c.model === 'claude-haiku-5-5', 'Claude config not saved');
+  ok('sk-ant- key detects Claude', c4c.model);
+
+  // 4d) Claude chat uses Bearer plus the browser-access header and no native auth
+  await go('#/');
+  await b.waitFor(`!!document.querySelector('#v-home #chIn')`, 10000);
+  await ev(`(() => { const t = document.querySelector('#v-home #chIn'); t.value = 'مرحبا'; t.dispatchEvent(new Event('input', { bubbles:true })); document.querySelector('#v-home #chSend').click(); })()`);
+  await b.waitFor(`(() => { const e = document.querySelector('#v-home .cm-a'); return !!e && e.textContent.trim() === 'تم'; })()`, 15000);
+  const claudeChat = fake.stats.last;
+  assert(claudeChat.model === 'claude-haiku-5-5', 'Claude chat used the wrong model');
+  assert(claudeChat.hasAuth && !claudeChat.xApiKey, 'Claude chat must use Bearer, not x-api-key');
+  assert(claudeChat.anthropicBrowser === 'true', 'Claude chat browser header missing');
+  assert(claudeChat.anthropicVersion === null, 'Claude chat must not send anthropic-version');
+  assert(claudeChat.reasoning_effort === null && claudeChat.thinking === null, 'Claude chat got thinking options');
+  ok('Claude chat auth headers', 'Bearer + browser access');
+
+  // 4e) Claude -> DeepSeek -> Claude overwrites base and model each time
+  await go('#/profile/ai');
+  await setKey('sk-deepseek-e2e');
+  await click('#sSave');
+  await b.waitFor(`document.querySelector('#sBase').value === 'https://api.deepseek.com'`, 15000);
+  assert((await ev(`document.querySelector('#sModel').value`)) === 'deepseek-flash', 'Claude -> DeepSeek model wrong');
+  await setKey('sk-ant-e2e');
+  await click('#sSave');
+  await b.waitFor(`document.querySelector('#sBase').value === 'https://api.anthropic.com/v1'`, 15000);
+  assert((await ev(`document.querySelector('#sModel').value`)) === 'claude-haiku-5-5', 'DeepSeek -> Claude model wrong');
+  const c4e = await cfg();
+  assert(c4e.base === 'https://api.anthropic.com/v1' && c4e.model === 'claude-haiku-5-5', 'Claude round-trip not saved');
+  ok('Claude <-> DeepSeek switch', c4e.base + ' · ' + c4e.model);
+
   // 5) An unknown prefix shows the provider picker, no URL fields and no guessing
   const beforeUnknown = fake.stats.modelFetches.length;
   await setKey('totally-unknown-key');
@@ -113,7 +157,7 @@ try {
   const baseBox = await ev(`(() => { const e = document.querySelector('#sBase'); const r = e.getBoundingClientRect(); return { h:r.height, w:r.width }; })()`);
   assert(baseBox.h === 0, 'base URL field visible: ' + JSON.stringify(baseBox));
   const choices = await ev(`[...document.querySelectorAll('#sProviderPick option')].map(o => o.textContent).join('|')`);
-  for (const name of ['DeepSeek', 'Gemini', 'OpenRouter', 'Groq', 'OpenAI', 'آخر / مخصّص']) assert(choices.includes(name), 'picker missing ' + name);
+  for (const name of ['DeepSeek', 'Gemini', 'Claude', 'OpenRouter', 'Groq', 'OpenAI', 'آخر / مخصّص']) assert(choices.includes(name), 'picker missing ' + name);
   assert(fake.stats.modelFetches.length === beforeUnknown, 'unknown key was sent to a provider');
   ok('unknown key shows the provider picker', 'no network, no URL fields');
 
@@ -161,13 +205,7 @@ try {
   assert(attempts[0] === '/missing/v1/models' && attempts[1] === '/openai/v1/models', 'probe order: ' + attempts.join(' -> '));
   ok('generic sk- probes DeepSeek then OpenAI', attempts.join(' -> '));
 
-  // 9) Anthropic keys are rejected with guidance
-  await setKey('sk-ant-e2e');
-  await waitText('#sDetect', 'Anthropic');
-  assert((await text('#sDetect')).includes('OpenRouter'), 'no OpenRouter suggestion');
-  ok('Anthropic key is rejected with guidance', 'OpenRouter suggested');
-
-  // 10) An explicit custom endpoint survives reload
+  // 9) An explicit custom endpoint survives reload
   await setKey('another-unknown-key');
   await b.waitFor(`!!document.querySelector('#sProviderPick')`, 12000);
   await ev(`(() => { const s = document.querySelector('#sProviderPick'); s.value = 'custom'; s.dispatchEvent(new Event('change', { bubbles:true })); })()`);

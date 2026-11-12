@@ -3,7 +3,7 @@ import {
   AI_DEFAULTS, basePolicy, keylessAllowed, estimateMessagesTokens,
   fitRequest, parseSSE, shouldRetry, retryDelayMs, validateCard, clipAround,
   createTimeoutGuard, linkAbort, isDeepSeekBase, isGeminiBase, migrateDeepSeekModel,
-  GEMINI_REASONING_EFFORT, providerRequestOptions, parseProviderErrorBody, emptyAnswerError, finishAnswer,
+  GEMINI_REASONING_EFFORT, providerRequestOptions, providerChatHeaders, providerModelHeaders, parseProviderErrorBody, emptyAnswerError, finishAnswer,
   PROVIDERS, providerForBase, detectProvider, pickDefaultModel, parseModels, modelsEndpoint
 } from '../../apps/web/src/core/ai.js';
 
@@ -63,7 +63,31 @@ describe('Gemini request controls', () => {
     expect(deepseek.reasoning_effort).toBeUndefined();
     expect(providerRequestOptions('https://api.deepseek.com/v1')).toEqual({ thinking:{ type:'disabled' } });
     expect(providerRequestOptions('https://openrouter.ai/api/v1')).toEqual({});
+    expect(providerRequestOptions('https://api.anthropic.com/v1')).toEqual({});
     expect(providerRequestOptions('http://localhost:11434/v1')).toEqual({});
+  });
+});
+
+describe('provider headers', () => {
+  it('uses Bearer for chat on every provider and adds Claude browser access', () => {
+    expect(providerChatHeaders('https://api.deepseek.com', 'sk-test')).toEqual({ Authorization:'Bearer sk-test' });
+    expect(providerChatHeaders('https://generativelanguage.googleapis.com/v1beta/openai', 'AQ.test')).toEqual({ Authorization:'Bearer AQ.test' });
+    expect(providerChatHeaders('https://api.anthropic.com/v1', 'sk-ant-test')).toEqual({
+      Authorization:'Bearer sk-ant-test',
+      'anthropic-dangerous-direct-browser-access':'true'
+    });
+    expect(providerChatHeaders('https://api.anthropic.com/v1', 'sk-ant-test')['x-api-key']).toBeUndefined();
+  });
+
+  it('uses x-api-key and anthropic-version for Claude models, Bearer elsewhere', () => {
+    expect(providerModelHeaders('https://api.anthropic.com/v1', 'sk-ant-test')).toEqual({
+      'x-api-key':'sk-ant-test',
+      'anthropic-version':'2023-06-01',
+      'anthropic-dangerous-direct-browser-access':'true'
+    });
+    expect(providerModelHeaders('https://api.anthropic.com/v1', 'sk-ant-test').Authorization).toBeUndefined();
+    expect(providerModelHeaders('https://api.deepseek.com', 'sk-test')).toEqual({ Authorization:'Bearer sk-test' });
+    expect(providerModelHeaders('http://localhost:11434/v1', '')).toEqual({});
   });
 });
 
@@ -82,6 +106,8 @@ describe('provider errors and empty answers', () => {
       .toBe('Unauthorized (ACCESS_TOKEN_TYPE_UNSUPPORTED)');
     expect(parseProviderErrorBody('[{"error":{"code":401,"message":"ACCESS_TOKEN_TYPE_UNSUPPORTED","details":[{"reason":"ACCESS_TOKEN_TYPE_UNSUPPORTED"}]}}]'))
       .toBe('ACCESS_TOKEN_TYPE_UNSUPPORTED');
+    expect(parseProviderErrorBody('{"type":"error","error":{"type":"authentication_error","message":"Invalid Anthropic API Key"}}'))
+      .toBe('Invalid Anthropic API Key');
   });
 
   it('captures finish_reason from the last streamed chunk', () => {
@@ -115,9 +141,8 @@ describe('provider detection from an API key', () => {
     expect(detectProvider('AQ.AbExampleAuthKey')).toEqual({ kind:'known', provider:'gemini' });
     expect(detectProvider('sk-or-v1-example')).toEqual({ kind:'known', provider:'openrouter' });
     expect(detectProvider('gsk_example')).toEqual({ kind:'known', provider:'groq' });
-    expect(detectProvider('sk-ant-api03-example').kind).toBe('unsupported');
-    expect(detectProvider('sk-ant-api03-example').provider).toBe('anthropic');
-    expect(detectProvider('sk-ant-api03-example').message).toContain('OpenRouter');
+    expect(detectProvider('sk-ant-api03-example')).toEqual({ kind:'known', provider:'anthropic' });
+    expect(detectProvider('sk-ant-').provider).toBe('anthropic');
     expect(detectProvider('pk-example').kind).toBe('unknown');
     expect(detectProvider('AIza').provider).toBe('gemini');
     expect(detectProvider('gsk_').provider).toBe('groq');
@@ -133,7 +158,7 @@ describe('provider detection from an API key', () => {
   });
 
   it('has one complete table entry per known provider', () => {
-    for (const id of ['deepseek', 'gemini', 'openrouter', 'groq', 'openai']) {
+    for (const id of ['deepseek', 'gemini', 'anthropic', 'openrouter', 'groq', 'openai']) {
       const p = PROVIDERS[id];
       expect(p.id).toBe(id);
       expect(p.label.length).toBeGreaterThan(0);
@@ -153,6 +178,7 @@ describe('provider detection from an API key', () => {
     expect(providerForBase('https://api.deepseek.com').id).toBe('deepseek');
     expect(providerForBase('https://api.deepseek.com/v1').id).toBe('deepseek');
     expect(providerForBase('https://generativelanguage.googleapis.com/v1beta/openai').id).toBe('gemini');
+    expect(providerForBase('https://api.anthropic.com/v1').id).toBe('anthropic');
     expect(providerForBase('https://api.openai.com/v1').id).toBe('openai');
     expect(providerForBase('https://api.deepseek.com.evil.example')).toBe(null);
     expect(providerForBase('http://localhost:11434/v1')).toBe(null);
@@ -169,6 +195,17 @@ describe('default model preference', () => {
     expect(pickDefaultModel('gemini', ['gemini-3.9-flash', 'gemini-3.10-flash'])).toBe('gemini-3.10-flash');
     expect(pickDefaultModel('gemini', ['gemini-3.8-flash-lite'])).toBe('gemini-3.8-flash-lite');
     expect(pickDefaultModel('gemini', ['gemini-3.8-pro'])).toBe(null);
+  });
+
+  it('prefers a Claude Haiku model, then Sonnet', () => {
+    expect(pickDefaultModel('anthropic', [
+      'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'
+    ])).toBe('claude-haiku-5-5');
+    expect(pickDefaultModel('anthropic', [
+      'claude-opus-5-5', 'claude-sonnet-5-5'
+    ])).toBe('claude-sonnet-5-5');
+    expect(pickDefaultModel('anthropic', ['claude-opus-5-5'])).toBe(null);
+    expect(PROVIDERS.anthropic.model).toBe('claude-haiku-5-5');
   });
 
   it('uses the preference list only when the id is present', () => {
