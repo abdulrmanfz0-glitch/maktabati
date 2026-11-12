@@ -1331,15 +1331,15 @@ function hlSheet(id){
     if (act === 'link') linkPicker(a);
     if (act === 'quote') quoteModal(a, it);
     if (act === 'del'){
-      const links = [];
-      for (const x of annosOf('hl')) if (arr(x.links).includes(a.id)){ links.push({ x, links:[...x.links] }); }
+      const back = [];
+      for (const x of annosOf('hl')) if (arr(x.links).includes(a.id)){ back.push({ x, saved:[...x.links] }); }
       await del('annos', a.id); await dropCard(hlKey(a)); updateDue(); if (RD) drawerNav(RD.it);
-      for (const { x } of links){ x.links = x.links.filter(l => l !== a.id); await put('annos', x); }
+      for (const { x } of back){ x.links = x.links.filter(l => l !== a.id); await put('annos', x); }
       $$('mark.hl[data-anno="' + a.id + '"]').forEach(m => m.replaceWith(...m.childNodes)); closeSheet();
       toast(tx('شلت التظليل'), { label:tx('تراجع'), run:async () => {
         await put('annos', a); if (hkOf(a) === 'imp') await schedule([hlKey(a)]);
-        for (const { x, links } of links){ x.links = links; await put('annos', x); }
-        updateDue(); if (RD && RD.it && RD.it.id === a.itemId) applyAnnos(RD.it); if (RD) drawerNav(RD.it);
+        for (const { x, saved } of back){ x.links = saved; await put('annos', x); }
+        updateDue(); if (RD && RD.it && RD.it.id === a.itemId && isSourceHighlight(a)) markHl(a); if (RD) drawerNav(RD.it);
         refreshView(); toast(tx('رجع التظليل'));
       } });
     }
@@ -4057,7 +4057,7 @@ async function runStream(run){
     if (!conv.deleted){
       if (!wasOpen && !run.stop) conv.unread = true;
       try{ await saveRec(conv); }catch(e){}
-      if (!wasOpen && !run.stop) toast(tx('وصل الرد'), { label:tx('افتح'), run:() => { location.hash = '#/c/' + enc(conv.id); } });
+      if (!wasOpen && !run.stop) toast(tx('وصل الرد') + ' · ' + short(firstMsg(conv), 34), { label:tx('افتح'), run:() => { location.hash = '#/c/' + enc(conv.id); } });
     }
   }
 }
