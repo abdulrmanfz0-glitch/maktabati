@@ -410,7 +410,8 @@ function toast(t, action){
     toastT = setTimeout(() => el.classList.remove('show'), 6000);
   } else {
     el.textContent = t;
-    toastT = setTimeout(() => el.classList.remove('show'), 2200);
+    /* longer messages need longer to read; keep it snappy */
+    toastT = setTimeout(() => el.classList.remove('show'), Math.min(5000, 2200 + String(t).length * 25));
   }
   el.classList.add('show');
 }

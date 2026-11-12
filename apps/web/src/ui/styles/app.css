@@ -481,7 +481,7 @@ textarea.inp{ resize:vertical; line-height:1.75; }
 .msg{ background:var(--surface); border:1px solid var(--rule); border-radius:8px; padding:.8rem 1rem; font-size:.9rem; margin-top:1rem; line-height:1.75; }
 .msg b{ color:var(--ink); display:block; }
 .msg.warn{ display:flex; align-items:flex-start; gap:.65rem; } .msg.warn > svg{ width:18px; height:18px; flex:none; margin-top:.3em; color:var(--soft); }
-.toast{ position:fixed; bottom:24px; left:50%; transform:translateX(-50%); z-index:90; background:var(--ink); color:var(--bg); padding:.6rem 1.1rem; border-radius:8px; font-size:.88rem; display:none; max-width:90vw; }
+.toast{ position:fixed; bottom:max(24px, calc(12px + env(safe-area-inset-bottom))); left:50%; transform:translateX(-50%); z-index:90; background:var(--ink); color:var(--bg); padding:.6rem 1.1rem; border-radius:8px; font-size:.88rem; display:none; max-width:90vw; }
 .toast.show{ display:block; }
 .toast-act{ display:inline-block; margin-inline-start:.75rem; padding:.3rem .75rem; border:0; border-radius:6px; background:var(--bg); color:var(--ink); font:inherit; font-size:.82rem; font-weight:600; cursor:pointer; }
 .qimg{ width:100%; height:auto; border-radius:8px; display:block; }
