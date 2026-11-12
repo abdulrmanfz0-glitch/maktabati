@@ -235,6 +235,19 @@ export async function startFakeAI() {
         res.on('close', () => { stats.closed++; });
         return;
       }
+      if (model === 'fake-slow') {
+        /* Streams a first chunk immediately, then more every 600ms, then finishes.
+           Used to prove a reply keeps streaming after the chat view is closed. */
+        delta('بدأ');
+        const steps = [' ثم', ' وصل', ' الرد', ' كامل'];
+        let i = 0;
+        const timer = setInterval(() => {
+          if (res.writableEnded || res.destroyed){ clearInterval(timer); return; }
+          if (i < steps.length){ delta(steps[i]); i++; }
+          else { clearInterval(timer); send({ choices:[{ delta:{ content:'' }, finish_reason:'stop' }] }); res.write('data: [DONE]\n\n'); res.end(); }
+        }, 600);
+        return;
+      }
       if (model === 'fake-429') { delta('نجح بعد 429'); send({ choices:[{ delta:{ content:'' }, finish_reason:'stop' }] }); res.write('data: [DONE]\n\n'); res.end(); return; }
       if (model === 'fake-empty-length' || model === 'fake-empty-stop') {
         /* Gemini 3 can spend the whole max_tokens budget on thinking and emit only a
