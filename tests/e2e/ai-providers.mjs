@@ -58,11 +58,11 @@ try {
   await setKey('AQ.AbE2EKey');
   await waitText('#sDetect', 'Gemini');
   assert((await ev(`document.querySelector('#sBase').value`)) === 'https://generativelanguage.googleapis.com/v1beta/openai', 'Gemini base not saved');
-  assert((await ev(`document.querySelector('#sModel').value`)) === 'gemini-2.5-flash', 'newest flash not chosen');
+  assert((await ev(`document.querySelector('#sModel').value`)) === 'gemini-3.1-flash-lite', 'newest flash not chosen');
   assert((await ev(`document.querySelector('#sMax').value`)) === '4096', 'Gemini max limit not applied');
   assert(fake.stats.modelFetches.some(x => x.path === '/gemini/v1/models'), 'Gemini /models not called');
   const c1 = await cfg();
-  assert(c1.key === 'AQ.AbE2EKey' && c1.model === 'gemini-2.5-flash' && c1.max === 4096, 'detected config was not saved');
+  assert(c1.key === 'AQ.AbE2EKey' && c1.model === 'gemini-3.1-flash-lite' && c1.max === 4096, 'detected config was not saved');
   ok('AQ. Gemini key detected and saved', c1.model);
 
   // 2) Chat uses the saved config
@@ -70,7 +70,7 @@ try {
   await b.waitFor(`!!document.querySelector('#v-home #chIn')`, 10000);
   await ev(`(() => { const t = document.querySelector('#v-home #chIn'); t.value = 'مرحبا'; t.dispatchEvent(new Event('input', { bubbles:true })); document.querySelector('#v-home #chSend').click(); })()`);
   await b.waitFor(`(() => { const e = document.querySelector('#v-home .cm-a'); return !!e && e.textContent.trim() === 'تم'; })()`, 15000);
-  assert(fake.stats.last.model === 'gemini-2.5-flash', 'chat used the wrong model');
+  assert(fake.stats.last.model === 'gemini-3.1-flash-lite', 'chat used the wrong model');
   assert(fake.stats.last.reasoning_effort === 'low', 'Gemini reasoning_effort missing');
   ok('chat uses the detected Gemini config', 'reasoning_effort=low');
 
@@ -92,10 +92,10 @@ try {
   await setKey('AQ.AbReverseKey');
   await click('#sSave');
   await b.waitFor(`document.querySelector('#sBase').value === 'https://generativelanguage.googleapis.com/v1beta/openai'`, 15000);
-  assert((await ev(`document.querySelector('#sModel').value`)) === 'gemini-2.5-flash', 'Gemini model not restored');
+  assert((await ev(`document.querySelector('#sModel').value`)) === 'gemini-3.1-flash-lite', 'Gemini model not restored');
   assert((await ev(`document.querySelector('#sMax').value`)) === '4096', 'Gemini limits not restored');
   const c4 = await cfg();
-  assert(c4.base === 'https://generativelanguage.googleapis.com/v1beta/openai' && c4.model === 'gemini-2.5-flash', 'reverse config not saved');
+  assert(c4.base === 'https://generativelanguage.googleapis.com/v1beta/openai' && c4.model === 'gemini-3.1-flash-lite', 'reverse config not saved');
   ok('DeepSeek -> Gemini on Save', c4.model);
 
   // 4b) Test connection re-detects the provider before calling the model

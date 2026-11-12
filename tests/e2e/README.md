@@ -24,6 +24,7 @@ script against `dist/web` or `dist/single` will fail those assertions by design.
 | `smoke.mjs` | yes | Navigation, reader, selection, export/import, delete, mobile widths |
 | `ai-failure.mjs` | yes | Starts its own fake provider; 429, abort, delete, idle, empty answers, two tabs, IndexedDB failure |
 | `ai-providers.mjs` | yes | Starts its own fake provider; key detection, provider switching, picker, /models fallback, custom reload |
+| `ai-gemini-fallback.mjs` | yes | Starts its own fake provider; Gemini 503 fallback note, all-busy message, 404 and model filtering |
 | `upload.mjs` | yes | PDF/EPUB/text/paste; needs local fixtures |
 | `ingest-app.mjs` | yes | PDF/EPUB fixture comparisons |
 | `reader-imported.mjs` | yes | Imported-book reader checks; needs fixtures |

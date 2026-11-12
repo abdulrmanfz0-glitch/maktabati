@@ -4,6 +4,8 @@ import {
   fitRequest, parseSSE, shouldRetry, retryDelayMs, validateCard, clipAround,
   createTimeoutGuard, linkAbort, isDeepSeekBase, isGeminiBase, migrateDeepSeekModel,
   GEMINI_REASONING_EFFORT, providerRequestOptions, providerChatHeaders, providerModelHeaders, parseProviderErrorBody, emptyAnswerError, finishAnswer,
+  GEMINI_FIRST_BYTE_TIMEOUT_MS, GEMINI_BUSY_MESSAGE, GEMINI_MODEL_GONE_MESSAGE,
+  geminiFallbackCandidates, filterModelChoices, firstByteTimeoutFor,
   PROVIDERS, providerForBase, detectProvider, pickDefaultModel, parseModels, modelsEndpoint
 } from '../../apps/web/src/core/ai.js';
 
@@ -224,6 +226,46 @@ describe('default model preference', () => {
     expect(parseModels(['x', { id:'y' }, { nope:1 }])).toEqual(['x', 'y']);
     expect(parseModels(null)).toEqual([]);
   });
+
+  it('strips Gemini models/ prefixes and hides non-chat ids', () => {
+    const ids = parseModels({ data:[
+      { id:'models/gemini-3.1-flash-lite' },
+      { id:'models/gemini-2.5-flash-image' },
+      { id:'models/gemini-2.5-flash-tts' },
+      { id:'models/gemini-2.5-flash-transcribe' },
+      { id:'models/gemini-2.5-flash-omni' },
+      { id:'models/gemini-2.5-flash-lyria' },
+      { id:'models/gemini-2.5-flash-nano-banana' },
+      { id:'models/gemini-2.5-flash-customtools' },
+      { id:'models/gemini-3.8-flash' }
+    ] });
+    expect(ids[0]).toBe('gemini-3.1-flash-lite');
+    expect(ids).not.toContain('models/gemini-3.1-flash-lite');
+    expect(filterModelChoices('gemini', ids)).toEqual(['gemini-3.1-flash-lite', 'gemini-3.8-flash']);
+    expect(filterModelChoices('openai', ['gpt-4o-image'])).toEqual(['gpt-4o-image']);
+  });
+
+  it('prefers gemini-3.1-flash-lite, then the newest flash', () => {
+    expect(pickDefaultModel('gemini', [
+      'gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite'
+    ])).toBe('gemini-3.1-flash-lite');
+    expect(pickDefaultModel('gemini', ['gemini-3.5-flash-lite', 'gemini-3.8-flash'])).toBe('gemini-3.8-flash');
+    expect(pickDefaultModel('gemini', ['gemini-3.1-flash-lite-image'])).toBe(null);
+  });
+
+  it('builds the Gemini fallback queue from ids that exist', () => {
+    expect(geminiFallbackCandidates(['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite']))
+      .toEqual(['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite']);
+    expect(geminiFallbackCandidates(['gemini-3.5-flash-lite'])).toEqual(['gemini-3.5-flash-lite']);
+    expect(geminiFallbackCandidates(['gemini-3.8-flash'])).toEqual([]);
+    expect(GEMINI_FIRST_BYTE_TIMEOUT_MS).toBe(45000);
+    expect(firstByteTimeoutFor('https://generativelanguage.googleapis.com/v1beta/openai', 90000)).toBe(45000);
+    expect(firstByteTimeoutFor('https://generativelanguage.googleapis.com/v1beta/openai', 30000)).toBe(30000);
+    expect(firstByteTimeoutFor('https://api.deepseek.com', 90000)).toBe(90000);
+    expect(firstByteTimeoutFor('http://localhost:11434/v1', 120000)).toBe(120000);
+    expect(GEMINI_BUSY_MESSAGE).toContain('خوادم Gemini مزدحمة');
+    expect(GEMINI_MODEL_GONE_MESSAGE).toContain('ما عاد متاح');
+  });
 });
 
 describe('token estimator and trimmer', () => {
@@ -300,6 +342,17 @@ describe('first-byte and stream-idle timeouts', () => {
     expect(fired).toBe(1);
     expect(g.timedOut).toBe(true);
     expect(g.pending).toBe(false);
+  });
+
+  it('can shorten the first-byte wait for a Gemini fallback', () => {
+    vi.useFakeTimers();
+    let fired = 0;
+    const g = createTimeoutGuard({ onTimeout:() => fired++ });
+    g.first(1000);
+    vi.advanceTimersByTime(999);
+    expect(fired).toBe(0);
+    vi.advanceTimersByTime(1);
+    expect(fired).toBe(1);
   });
 
   it('uses a 20s idle timeout and resets when a chunk arrives', () => {

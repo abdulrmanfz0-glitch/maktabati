@@ -22,7 +22,8 @@ export function createTimeoutGuard({ firstMs = AI_DEFAULTS.firstByteTimeoutMs, i
     timer = setTimer(() => { timer = null; timedOut = true; if (onTimeout) onTimeout(); }, ms);
   };
   return {
-    first: () => arm(firstMs),
+    /* Optional ms shortens this particular first-byte wait (Gemini fallbacks). */
+    first: ms => arm(ms == null ? firstMs : Math.max(1, Math.min(firstMs, Number(ms) || firstMs))),
     idle: () => arm(idleMs),
     clear,
     get timedOut(){ return timedOut; },
@@ -64,6 +65,20 @@ export function isGeminiBase(base) {
  */
 export const GEMINI_REASONING_EFFORT = 'low';
 
+/** Gemini is capped at 45 s for the first byte; 503 fallbacks share a 58 s budget. */
+export const GEMINI_FIRST_BYTE_TIMEOUT_MS = 45000;
+export const GEMINI_FALLBACK_DEADLINE_MS = 58000;
+export const GEMINI_FALLBACK_MODELS = Object.freeze(['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite']);
+export const GEMINI_BUSY_MESSAGE = 'خوادم Gemini مزدحمة الحين، جرّب بعد شوي أو استخدم مزوّد ثاني.';
+export const GEMINI_MODEL_GONE_MESSAGE = 'هذا الموديل ما عاد متاح، اختر غيره';
+
+/** The configured first-byte wait, capped at 45 s for Gemini only. */
+export function firstByteTimeoutFor(base, configured) {
+  const ms = Math.max(5000, Math.min(300000, Number(configured) || AI_DEFAULTS.firstByteTimeoutMs));
+  const provider = providerForBase(base);
+  return provider && provider.id === 'gemini' ? Math.min(ms, GEMINI_FIRST_BYTE_TIMEOUT_MS) : ms;
+}
+
 /**
  * The provider table is the single source of truth. Adding a provider is one entry:
  * prefixes drive detection, model/prefs drive selection, limits are copied when the
@@ -78,9 +93,9 @@ export const PROVIDERS = Object.freeze({
   },
   gemini: {
     id:'gemini', label:'Gemini', base:'https://generativelanguage.googleapis.com/v1beta/openai',
-    prefixes:['AIza', 'AQ.'], model:'gemini-3.8-flash', prefs:[],
+    prefixes:['AIza', 'AQ.'], model:'gemini-3.1-flash-lite', prefs:[],
     requestOptions:{ reasoning_effort:GEMINI_REASONING_EFFORT },
-    limits:{ max:4096, ctx:1000000, first:AI_DEFAULTS.firstByteTimeoutMs }
+    limits:{ max:4096, ctx:1000000, first:GEMINI_FIRST_BYTE_TIMEOUT_MS }
   },
   anthropic: {
     id:'anthropic', label:'Claude', base:'https://api.anthropic.com/v1',
@@ -195,10 +210,25 @@ export function parseModels(json) {
   const rows = Array.isArray(json) ? json : (json && Array.isArray(json.data) ? json.data : []);
   const out = [];
   for (const row of rows) {
-    const id = typeof row === 'string' ? row : (row && typeof row.id === 'string' ? row.id : '');
+    const raw = typeof row === 'string' ? row : (row && typeof row.id === 'string' ? row.id : '');
+    const id = raw.replace(/^models\//i, '');
     if (id && !out.includes(id)) out.push(id);
   }
   return out;
+}
+
+const GEMINI_HIDDEN_MODEL = /(tts|image|transcribe|omni|lyria|nano-banana|customtools)/i;
+
+/** Drop non-chat Gemini ids from the model picker; leave other providers untouched. */
+export function filterModelChoices(provider, ids) {
+  const list = (Array.isArray(ids) ? ids : []).map(String).filter(Boolean);
+  return provider === 'gemini' ? list.filter(id => !GEMINI_HIDDEN_MODEL.test(id)) : list;
+}
+
+/** The model the Gemini fallback chain tries when the chosen model is busy. */
+export function geminiFallbackCandidates(available) {
+  const list = Array.isArray(available) ? available : [];
+  return GEMINI_FALLBACK_MODELS.filter(id => list.includes(id));
 }
 
 function versionParts(id) {
@@ -221,7 +251,9 @@ export function pickDefaultModel(provider, ids) {
   const list = (Array.isArray(ids) ? ids : []).map(String).filter(Boolean);
   if (!list.length) return null;
   if (provider === 'gemini') {
-    const flashes = list.filter(id => /flash/i.test(id) && !/(image|tts|audio|live|embedding)/i.test(id));
+    const choices = filterModelChoices('gemini', list);
+    if (choices.includes('gemini-3.1-flash-lite')) return 'gemini-3.1-flash-lite';
+    const flashes = choices.filter(id => /flash/i.test(id));
     if (!flashes.length) return null;
     return flashes.slice().sort((a, b) => compareVersions(b, a) || a.localeCompare(b))[0];
   }

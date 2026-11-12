@@ -3,11 +3,24 @@ import http from 'node:http';
 
 export async function startFakeAI() {
   const stats = { requests:0, closed:0, models:[], last:null, modelFetches:[] };
+  const control = { gemini503:false, gemini503Once:false, gemini404:false };
   const modelLists = {
     '/v1/models': ['deepseek-flash', 'deepseek-chat'],
     '/deepseek/v1/models': ['deepseek-flash', 'deepseek-chat'],
     '/openai/v1/models': ['gpt-4o-mini', 'gpt-4o'],
-    '/gemini/v1/models': ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-2.5-pro'],
+    '/gemini/v1/models': [
+      'models/gemini-3.1-flash-lite',
+      'models/gemini-3.5-flash-lite',
+      'models/gemini-3.8-flash',
+      'models/gemini-2.5-flash',
+      'models/gemini-2.5-flash-image',
+      'models/gemini-2.5-flash-tts',
+      'models/gemini-2.5-flash-transcribe',
+      'models/gemini-2.5-flash-omni',
+      'models/gemini-2.5-flash-lyria',
+      'models/gemini-2.5-flash-nano-banana',
+      'models/gemini-2.5-flash-customtools'
+    ],
     '/groq/v1/models': ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
     '/openrouter/v1/models': ['openai/gpt-4o-mini', 'google/gemini-2.5-flash'],
     '/odd/v1/models': ['vendor/unknown']
@@ -145,6 +158,20 @@ export async function startFakeAI() {
       };
       stats.lastUserContent = (body.messages || []).filter(m => m && m.role === 'user').map(m => String(m.content || '')).join('\n');
 
+      if (u.pathname.startsWith('/gemini/')) {
+        if (control.gemini404) {
+          res.writeHead(404, { 'Content-Type':'application/json', 'Cache-Control':'no-cache' });
+          res.end(JSON.stringify([{ error:{ code:404, message:'models/' + model + ' is no longer available to new users', status:'NOT_FOUND' } }]));
+          return;
+        }
+        if (control.gemini503 || control.gemini503Once) {
+          if (control.gemini503Once) control.gemini503Once = false;
+          res.writeHead(503, { 'Content-Type':'application/json', 'Cache-Control':'no-cache' });
+          res.end(JSON.stringify([{ error:{ code:503, message:'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', status:'UNAVAILABLE' } }]));
+          return;
+        }
+      }
+
       if (model === 'fake-error-400') {
         res.writeHead(400, { 'Content-Type':'application/json', 'Cache-Control':'no-cache' });
         res.end(JSON.stringify({ error:{ code:400, message:'Invalid Auth key.' } }));
@@ -224,6 +251,7 @@ export async function startFakeAI() {
   return {
     url: 'http://127.0.0.1:' + server.address().port,
     stats,
+    control,
     async close(){ for (const s of sockets) try{ s.destroy(); }catch(e){} await new Promise(r => server.close(r)); }
   };
 }
