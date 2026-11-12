@@ -73,7 +73,15 @@ try {
   assert(c4.key === 'gsk_e2e' && c4.model === 'llama-3.3-70b-versatile', 'fallback config was not saved');
   ok('failed /models falls back to the hardcoded default', 'HTTP 404');
 
-  // 5) A generic sk- key probes DeepSeek first and uses OpenAI when DeepSeek fails
+  // 5) When the preferred model is absent, show the /models list and no guessed default
+  await ev(`window.__aiTestProviderBase.openrouter = ${JSON.stringify(fake.url + '/odd/v1')}`);
+  await paste('sk-or-e2e');
+  await waitText('#sDetect', 'اختر موديلًا');
+  assert(await ev(`!!document.querySelector('#sModelPick')`), 'model dropdown missing');
+  assert((await ev(`document.querySelector('#sModel').value`)) === '', 'an unlisted default model was chosen');
+  ok('missing preferred model shows the dropdown', 'no guessed default');
+
+  // 6) A generic sk- key probes DeepSeek first and uses OpenAI when DeepSeek fails
   await ev(`Object.assign(window.__aiTestProviderBase, ${JSON.stringify({
     deepseek:fake.url + '/missing/v1',
     openai:fake.url + '/openai/v1'
@@ -87,7 +95,7 @@ try {
   assert(attempts[0] === '/missing/v1/models' && attempts[1] === '/openai/v1/models', 'probe order: ' + attempts.join(' -> '));
   ok('generic sk- probes DeepSeek first then OpenAI', attempts.join(' -> '));
 
-  // 6) An Anthropic key is rejected with clear guidance to use OpenRouter
+  // 7) An Anthropic key is rejected with clear guidance to use OpenRouter
   await paste('sk-ant-e2e');
   await waitText('#sDetect', 'Anthropic');
   assert((await text('#sDetect')).includes('OpenRouter'), 'no OpenRouter suggestion');

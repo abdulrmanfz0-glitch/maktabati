@@ -135,14 +135,14 @@ function compareVersions(a, b) {
 
 /**
  * Pick a default only from ids the provider returned. Gemini prefers the newest
- * "flash" id (excluding image/audio/lite variants); the others use their preference
+ * "flash" id (excluding image/audio variants); the others use their preference
  * list. Returns null when the preferred model is absent, so the UI can show the list.
  */
 export function pickDefaultModel(provider, ids) {
   const list = (Array.isArray(ids) ? ids : []).map(String).filter(Boolean);
   if (!list.length) return null;
   if (provider === 'gemini') {
-    const flashes = list.filter(id => /flash/i.test(id) && !/(lite|image|tts|audio|live|embedding)/i.test(id));
+    const flashes = list.filter(id => /flash/i.test(id) && !/(image|tts|audio|live|embedding)/i.test(id));
     if (!flashes.length) return null;
     return flashes.slice().sort((a, b) => compareVersions(b, a) || a.localeCompare(b))[0];
   }

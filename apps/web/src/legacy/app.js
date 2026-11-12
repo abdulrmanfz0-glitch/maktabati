@@ -4208,8 +4208,8 @@ function renderProfile(tab){
     let detected = null;
     const renderDetected = (id, model, models, note) => {
       const p = PROVIDERS[id] || { label:id };
-      let h = 'تم التعرّف: <b>' + esc(p.label) + '</b> · <bdi dir="ltr">' + esc(model) + '</bdi>';
-      if (models && models.length) h += '<label style="display:block; margin-top:.35rem">غيّر الموديل <select id="sModelPick" class="inp" dir="ltr" style="margin-top:.25rem; max-width:100%">' + models.map(m => '<option value="' + esc(m) + '"' + (m === model ? ' selected' : '') + '>' + esc(m) + '</option>').join('') + '</select></label>';
+      let h = 'تم التعرّف: <b>' + esc(p.label) + '</b>' + (model ? ' · <bdi dir="ltr">' + esc(model) + '</bdi>' : ' · اختر موديلًا');
+      if (models && models.length) h += '<label style="display:block; margin-top:.35rem">غيّر الموديل <select id="sModelPick" class="inp" dir="ltr" style="margin-top:.25rem; max-width:100%">' + (model ? '' : '<option value="" disabled selected>اختر موديلًا</option>') + models.map(m => '<option value="' + esc(m) + '"' + (m === model ? ' selected' : '') + '>' + esc(m) + '</option>').join('') + '</select></label>';
       if (note) h += '<div class="hint" style="margin-top:.35rem">' + note + '</div>';
       status(h);
       const pick = $('#sModelPick');
@@ -4243,8 +4243,11 @@ function renderProfile(tab){
         try{
           const list = await fetchModels(base, key);
           if (!list.length) throw { models:true };
-          const model = pickDefaultModel(id, list) || list[0];
-          applyProvider(id, base, model, list);
+          /* Use the preference-list default only when the provider actually has it.
+             Otherwise leave the model empty and let the reader choose from the list. */
+          const model = pickDefaultModel(id, list) || '';
+          const note = model ? '' : 'المزوّد ما رجّع الموديل الافتراضي المتوقع. اختر موديلًا من القائمة عشان يُحفظ.';
+          applyProvider(id, base, model, list, note);
           return true;
         }catch(e){
           if (e && (e.status === 401 || e.status === 403)) authFails++;

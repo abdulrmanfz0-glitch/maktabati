@@ -9,7 +9,8 @@ export async function startFakeAI() {
     '/openai/v1/models': ['gpt-4o-mini', 'gpt-4o'],
     '/gemini/v1/models': ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-2.5-pro'],
     '/groq/v1/models': ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
-    '/openrouter/v1/models': ['openai/gpt-4o-mini', 'google/gemini-2.5-flash']
+    '/openrouter/v1/models': ['openai/gpt-4o-mini', 'google/gemini-2.5-flash'],
+    '/odd/v1/models': ['vendor/unknown']
   };
   const sockets = new Set();
   let first429 = false;

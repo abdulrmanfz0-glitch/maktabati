@@ -132,12 +132,13 @@ describe('provider detection from an API key', () => {
 });
 
 describe('default model preference', () => {
-  it('picks the newest Gemini flash and excludes lite/image variants', () => {
+  it('picks the newest Gemini flash and excludes non-chat image/audio variants', () => {
     expect(pickDefaultModel('gemini', [
       'gemini-1.5-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite',
       'gemini-3.8-flash', 'gemini-2.5-pro', 'gemini-3.8-flash-image'
     ])).toBe('gemini-3.8-flash');
     expect(pickDefaultModel('gemini', ['gemini-3.9-flash', 'gemini-3.10-flash'])).toBe('gemini-3.10-flash');
+    expect(pickDefaultModel('gemini', ['gemini-3.8-flash-lite'])).toBe('gemini-3.8-flash-lite');
     expect(pickDefaultModel('gemini', ['gemini-3.8-pro'])).toBe(null);
   });
 
