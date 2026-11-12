@@ -95,8 +95,13 @@ export default defineConfig(({ mode }) => {
       outDir: here('../../dist/' + (single ? 'single' : 'web')),
       emptyOutDir: true,
       target: 'es2022',
-      // single file: inline every asset (fonts); web: keep fonts as files
-      assetsInlineLimit: single ? 100 * 1024 * 1024 : 4096
+      // Single file: inline every asset (fonts). Normal web build: always emit fonts as
+      // files, even tiny subsets, because the CSP is font-src 'self' and data: fonts
+      // would be blocked. Other assets keep the usual 4 KB inline threshold.
+      assetsInlineLimit: single ? 100 * 1024 * 1024 : (filePath, content) => {
+        if (/\.woff2?$/i.test(filePath)) return false;
+        return content.length < 4096;
+      }
     },
     server: { port: 5173 }
   };
