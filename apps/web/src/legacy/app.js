@@ -595,17 +595,20 @@ function renderLib(){
     : active ? 'ما فيه كتب في هذي المجموعة بعد.'
     : 'ما فيه عناصر من هالنوع.';
   const colHead = active ? '<div class="col-head"><span class="col-head-t"><bdi dir="auto">' + esc(active.name) + '</bdi> <span class="count">(' + countCollectionBooks(active, byId) + ')</span></span><button class="linkbtn" data-col-edit="' + esc(active.id) + '">' + tx('تعديل') + '</button></div>' : '';
+  const demoHint = kv.get('seeded', false) && !kv.get('demoHintSeen', false) ? '<div class="hint demo-hint" role="note" style="display:flex; align-items:center; gap:8px; justify-content:space-between; margin:.9rem 0 0"><span>' + tx('هذي كتب تجريبية عشان تجرب التطبيق. أضف كتبك من «أضف».') + '</span><button class="btn" id="demoHintX" aria-label="' + tx('إخفاء التلميح') + '">' + svg('close') + '</button></div>' : '';
   $('#v-lib').innerHTML = '<div class="wide" style="padding-top:1.25rem; padding-bottom:3rem"><div style="display:flex; align-items:center; gap:.5rem; margin-bottom:1rem"><h1 class="vh" style="flex:1">المكتبة</h1><button class="gbtn" data-add>+ أضف</button></div>' +
     '<label class="search"><span class="sr">بحث</span><input type="search" id="q" placeholder="ابحث في النصوص والتظليلات والملاحظات" autocomplete="off"></label>' +
+    demoHint +
     collectionBarHTML(cols, byId) +
     '<p class="quiet">' + weekText() + '</p>' +
     '<div id="results" hidden></div>' +
     '<div id="shelves">' + colHead + (items.length ? ctl +
       (cont.length ? '<h2 class="shelf-h">أكمل القراءة</h2><div class="cont">' + cont.map(contCard).join('') + '</div>' : '') +
       (rest.length ? '<h2 class="shelf-h">' + (cont.length ? 'باقي المكتبة' : 'المكتبة') + '</h2>' + restH : (cont.length ? '' : '<p class="empty">' + empty + '</p>'))
-      : '<p class="empty">' + empty + '</p>') + '</div>' +
+      : '<p class="empty">' + empty + '</p>' + '<div class="empty-act"><button class="pbtn" data-add>' + tx('أضف كتاب') + '</button></div>') + '</div>' +
     (storageDown ? '<div class="msg" role="alert" style="margin-top:2.5rem"><b>التخزين غير متاح.</b> التغييرات ما راح تنحفظ بعد إغلاق الصفحة. افتح التطبيق في متصفح يسمح بـIndexedDB، أو صدّر مكتبتك قبل ما تطلع.</div>' : '') + '</div>';
   let t; $('#q').addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => doSearch(e.target.value), 180); });
+  const dhx = $('#demoHintX'); if (dhx) dhx.onclick = () => { kv.set('demoHintSeen', true); const el = $('.demo-hint'); if (el) el.remove(); };
   $('#colBar').onclick = e => {
     const nw = e.target.closest('[data-col-new]');
     if (nw){ newCollectionModal(() => { renderLib(); fitSoon($('#v-lib')); }); return; }
@@ -5719,7 +5722,7 @@ const EN_UI = {
   'ارجع':'Back','ارجع للشات':'Back to chat','ارجع للمكتبة':'Back to library','ناقش':'Discuss','السابقة':'History','المحادثات السابقة':'Previous chats','ما فيه محادثات محفوظة.':'No saved chats.','رسالة':'messages',
   'اشرح':'Explain','اسألني':'Quiz me','ناقشني':'Debate me','اربط':'Connect','اشرح لي':'Explain this to me','اسألني في اللي قريته':'Quiz me on what I read','ناقشني في فكرة هالفصل':"Debate me on this chapter's idea",'اربط هالفصل بكتبي الثانية':'Connect this chapter to my other books','اشرح لي هالفقرة':'Explain this passage',
   'اسمح بالكتاب كامل':'Allow the whole book','إغلاق':'Close','وش اللي ما وضح؟ أو أرسل مباشرة':"What wasn't clear? Or just send",'اكتب سؤالك أو رأيك…':'Write your question or view…','اختر وضع أو اكتب سؤالك.':'Pick a mode or write your question.','نص الفصول اللي بعد مكانك ما ينرسل إلا إذا سمحت بالكتاب كامل.':"Chapters after your place aren't sent unless you allow the whole book.",
-  'اضبط الذكاء من':'Set up AI in','أول: رابط الـAPI واسم النموذج والمفتاح.':'first: API URL, model name and key.','(ما وصل رد)':'(no reply)','(انوقف)':'(stopped)','وصل الرد':'Reply arrived','افتح':'Open','انقطع الرد، أرسل رسالة جديدة للمتابعة.':'Reply was cut off — send a new message to continue.','تراجع':'Undo','رجع التظليل':'Highlight restored','رجعت المحادثة':'Chat restored',
+  'اضبط الذكاء من':'Set up AI in','أول: رابط الـAPI واسم النموذج والمفتاح.':'first: API URL, model name and key.','(ما وصل رد)':'(no reply)','(انوقف)':'(stopped)','وصل الرد':'Reply arrived','افتح':'Open','انقطع الرد، أرسل رسالة جديدة للمتابعة.':'Reply was cut off — send a new message to continue.','تراجع':'Undo','رجع التظليل':'Highlight restored','رجعت المحادثة':'Chat restored','هذي كتب تجريبية عشان تجرب التطبيق. أضف كتبك من «أضف».':'These are sample books so you can try the app. Add your own with “Add”.',
   'ابحث في النصوص والتظليلات والملاحظات':'Search texts, highlights and notes','باقي المكتبة':'Rest of the library','مكتبتك فاضية. اضغط «أضف» والصق نص أو ارفع ملف.':'Your library is empty. Tap “Add” and paste text or upload a file.','تصدير المكتبة':'Export library','استيراد مكتبة':'Import library','جهّز للذكاء':'Prepare for AI','+ أضف':'+ Add','بحث':'Search',
   'خلّصته':'Finished','ما فتحته بعد':'Not opened yet','اليوم':'today','أمس':'yesterday','قبل شوي':'just now','ما قريت شي هالأسبوع بعد.':"You haven't read anything this week yet.",'في العناوين':'In titles','في النصوص':'In texts','في تظليلاتي':'In my highlights','في ملاحظاتي':'In my notes','أهم فكرة في جلسة':'Key idea from a session',
   'حاول تتذكّر الجواب قبل ما تفتحه. البطاقة ترجع لك بعد يوم، ثم أسبوع، ثم شهر.':'Try to recall the answer before revealing it. The card returns after a day, a week, then a month.','اضغط لترى الجواب':'Tap to see the answer','تذكّرتها':'I remembered','ما تذكّرت':'I forgot','خلّصت مراجعة اليوم.':"You're done for today.",'الباقي يرجع لك في وقته.':'The rest comes back on schedule.','ما عندك بطاقات اليوم.':'No cards today.','ما فيه بطاقات بعد.':'No cards yet.','وش الفكرة اللي ظللتها هنا؟':"What's the idea you highlighted here?",'تطبيق':'Applied',

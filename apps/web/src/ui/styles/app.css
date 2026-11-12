@@ -293,6 +293,7 @@ body{ --tb-h:52px; }
 .read-btn{ display:inline-flex; align-items:center; gap:8px; min-height:44px; padding:0 20px; border:1px solid var(--rule); border-radius:999px; background:transparent; color:var(--ink); font-size:14px; font-weight:600; cursor:pointer; }
 .read-btn svg{ width:18px; height:18px; color:var(--soft); }
 .read-btn:hover{ background:var(--hover); }
+.empty-act{ display:flex; justify-content:center; margin-top:1rem; }
 .home-foot{ padding:0 16px calc(12px + env(safe-area-inset-bottom)); }
 .home-foot .cmp{ max-width:768px; margin-inline:auto; }
 /* messages */
