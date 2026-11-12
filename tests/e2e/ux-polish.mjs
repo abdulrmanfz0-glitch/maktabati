@@ -52,19 +52,31 @@ try {
   assert(await ev(`!!document.querySelector('.side [data-conv-id="${id}"]')`), 'conversation did not come back');
   ok('chat delete undo restores the conversation');
 
-  // 3) deleting a highlight offers undo that restores the mark
+  // 3) deleting a highlight offers undo that restores the mark and the exact review card
+  const readCards = () => ev(`new Promise(res => {
+    const r = indexedDB.open('maktabati');
+    r.onsuccess = () => { try { const t = r.result.transaction('kv').objectStore('kv').get('cards'); t.onsuccess = () => { r.result.close(); res(t.result && t.result.v ? t.result.v : {}); }; t.onerror = () => { r.result.close(); res({}); }; } catch(e){ try{ r.result.close(); }catch(_){} res({}); } };
+    r.onerror = () => res({});
+  })`);
   await go('#/read/demo-experience/0-1-1');
   await b.waitFor(`!!document.querySelector('#v-read mark.hl')`, 15000);
   const anno = await ev(`document.querySelector('#v-read mark.hl').dataset.anno`);
   assert(anno, 'no seeded highlight mark on this screen');
   await ev(`document.querySelector('#v-read mark.hl').click()`); await settle(400);
   await b.waitFor(`!!document.querySelector('#sheet [data-act="del"]')`, 5000);
+  const hlKey = 'demo-experience|h|' + anno;
+  const cardsBefore = await readCards();
+  const before = cardsBefore[hlKey] ? { stage: cardsBefore[hlKey].stage, due: cardsBefore[hlKey].due } : null;
   await ev(`document.querySelector('#sheet [data-act="del"]').click()`); await settle(400);
   assert(!(await ev(`!!document.querySelector('#v-read mark.hl[data-anno="${anno}"]')`)), 'mark still rendered after delete');
   await b.waitFor(`(() => { const t = document.querySelector('#toast .toast-act'); return !!t && t.textContent === 'تراجع'; })()`, 5000);
-  await ev(`document.querySelector('#toast .toast-act').click()`); await settle(600);
+  await ev(`document.querySelector('#toast .toast-act').click()`); await settle(700);
   assert(await ev(`!!document.querySelector('#v-read mark.hl[data-anno="${anno}"]')`), 'highlight did not come back');
-  ok('highlight delete undo restores the highlight');
+  const cardsAfter = await readCards();
+  const after = cardsAfter[hlKey] ? { stage: cardsAfter[hlKey].stage, due: cardsAfter[hlKey].due } : null;
+  const same = before ? !!(after && after.stage === before.stage && after.due === before.due) : after === null;
+  assert(same, 'review card schedule not restored exactly: before=' + JSON.stringify(before) + ' after=' + JSON.stringify(after));
+  ok('highlight delete undo restores the highlight and its review card', JSON.stringify(before));
 
   // 4) dialog focus: Tab stays inside the modal and Esc returns focus to the trigger
   await go('#/lib');
