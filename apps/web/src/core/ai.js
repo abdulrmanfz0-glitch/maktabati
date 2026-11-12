@@ -52,6 +52,149 @@ export function isDeepSeekBase(base) {
   return /^https?:\/\/api\.deepseek\.com(?::\d+)?(\/|$)/i.test(String(base || '').trim());
 }
 
+/** True only for the Gemini API host, never for a look-alike domain. */
+export function isGeminiBase(base) {
+  return /^https?:\/\/generativelanguage\.googleapis\.com(?::\d+)?(\/|$)/i.test(String(base || '').trim());
+}
+
+/**
+ * Gemini 3 models always think, and thinking tokens count against max_tokens.
+ * Ask for the shortest reasoning round so an ordinary chat answer still fits.
+ * Change this one constant if a future Gemini version needs a different level.
+ */
+export const GEMINI_REASONING_EFFORT = 'low';
+
+/**
+ * Provider-specific request fields. DeepSeek gets its explicit "no thinking" switch;
+ * Gemini gets a low reasoning budget. Every other OpenAI-compatible provider gets neither.
+ */
+export function providerRequestOptions(base) {
+  if (isDeepSeekBase(base)) return { thinking:{ type:'disabled' } };
+  if (isGeminiBase(base)) return { reasoning_effort:GEMINI_REASONING_EFFORT };
+  return {};
+}
+
+/**
+ * Known providers for key-prefix detection. "model" is the hardcoded fallback used
+ * only when GET /models cannot answer; "prefs" is the small preference list tried
+ * against the model ids the provider actually returns.
+ */
+export const PROVIDERS = Object.freeze({
+  deepseek: { id:'deepseek', label:'DeepSeek', base:'https://api.deepseek.com', model:'deepseek-flash', prefs:['deepseek-flash'] },
+  gemini: { id:'gemini', label:'Gemini', base:'https://generativelanguage.googleapis.com/v1beta/openai', model:'gemini-3.8-flash', prefs:[] },
+  openrouter: { id:'openrouter', label:'OpenRouter', base:'https://openrouter.ai/api/v1', model:'openai/gpt-4o-mini', prefs:['openai/gpt-4o-mini', 'google/gemini-2.5-flash', 'anthropic/claude-3.5-haiku', 'openrouter/auto'] },
+  groq: { id:'groq', label:'Groq', base:'https://api.groq.com/openai/v1', model:'llama-3.3-70b-versatile', prefs:['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it'] },
+  openai: { id:'openai', label:'OpenAI', base:'https://api.openai.com/v1', model:'gpt-4o-mini', prefs:['gpt-4o-mini', 'gpt-4.1-mini', 'gpt-4o'] }
+});
+
+/** Detect a provider from the key prefix only. No network and no key is logged. */
+export function detectProvider(key) {
+  const k = String(key == null ? '' : key).trim();
+  if (!k) return { kind:'empty' };
+  if (k.startsWith('AIza')) return { kind:'known', provider:'gemini' };
+  if (k.startsWith('sk-or-')) return { kind:'known', provider:'openrouter' };
+  if (k.startsWith('gsk_')) return { kind:'known', provider:'groq' };
+  if (k.startsWith('sk-ant-')) return {
+    kind:'unsupported',
+    provider:'anthropic',
+    message:'مفاتيح Anthropic تحتاج واجهة Messages API مختلفة، والتطبيق يتكلم OpenAI Chat Completions. استخدم OpenRouter بمفتاح يبدأ بـsk-or- بدلًا منها.'
+  };
+  if (k.startsWith('sk-')) return { kind:'ambiguous', providers:['deepseek', 'openai'] };
+  return {
+    kind:'unknown',
+    message:'ما عرفت المزوّد من صيغة المفتاح. افتح «خيارات متقدمة» وأدخل رابط الـAPI واسم النموذج.'
+  };
+}
+
+/** GET {base}/models, without duplicating a trailing /models. */
+export function modelsEndpoint(base) {
+  const b = String(base || '').trim().replace(/\/+$/, '');
+  return /\/models$/.test(b) ? b : b + '/models';
+}
+
+/** OpenAI-style {data:[{id}]} or a bare array of ids. Keeps first-seen order, drops duplicates. */
+export function parseModels(json) {
+  const rows = Array.isArray(json) ? json : (json && Array.isArray(json.data) ? json.data : []);
+  const out = [];
+  for (const row of rows) {
+    const id = typeof row === 'string' ? row : (row && typeof row.id === 'string' ? row.id : '');
+    if (id && !out.includes(id)) out.push(id);
+  }
+  return out;
+}
+
+function versionParts(id) {
+  const m = String(id).match(/(\d+(?:\.\d+)*)/);
+  return m ? m[1].split('.').map(Number) : [0];
+}
+function compareVersions(a, b) {
+  const x = versionParts(a), y = versionParts(b), n = Math.max(x.length, y.length);
+  for (let i = 0; i < n; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d; }
+  return 0;
+}
+
+/**
+ * Pick a default only from ids the provider returned. Gemini prefers the newest
+ * "flash" id (excluding image/audio/lite variants); the others use their preference
+ * list. Returns null when the preferred model is absent, so the UI can show the list.
+ */
+export function pickDefaultModel(provider, ids) {
+  const list = (Array.isArray(ids) ? ids : []).map(String).filter(Boolean);
+  if (!list.length) return null;
+  if (provider === 'gemini') {
+    const flashes = list.filter(id => /flash/i.test(id) && !/(lite|image|tts|audio|live|embedding)/i.test(id));
+    if (!flashes.length) return null;
+    return flashes.slice().sort((a, b) => compareVersions(b, a) || a.localeCompare(b))[0];
+  }
+  const p = PROVIDERS[provider];
+  if (!p) return null;
+  for (const wanted of p.prefs) if (list.includes(wanted)) return wanted;
+  return null;
+}
+
+/** The real message from a provider error body: object, array of objects, or plain text. */
+function providerMessage(value) {
+  if (value == null) return '';
+  if (typeof value === 'string') return value.trim();
+  if (Array.isArray(value)) {
+    for (const item of value) { const m = providerMessage(item); if (m) return m; }
+    return '';
+  }
+  if (typeof value !== 'object') return '';
+  if (value.error != null) { const m = providerMessage(value.error); if (m) return m; }
+  if (value.message != null) return providerMessage(value.message);
+  return '';
+}
+
+/**
+ * Gemini returns some errors as a JSON array: [{"error":{"message":"..."}}].
+ * Return the provider's own message when there is one, else the raw body.
+ */
+export function parseProviderErrorBody(text) {
+  const raw = String(text == null ? '' : text);
+  try {
+    const message = providerMessage(JSON.parse(raw));
+    if (message) return message;
+  } catch (e) { /* not JSON; use the raw body */ }
+  return raw.trim();
+}
+
+const EMPTY_LENGTH_MESSAGE = 'الموديل استهلك حدّ التوكنز كامل — غالبًا في التفكير — وما بقي له نص للرد. ارفع «أقصى توكنز للرد» من الإعدادات، أو استخدم موديل Flash.';
+const EMPTY_MESSAGE = 'المزوّد رجّع ردًّا فارغًا بدون نص. جرّب مرة ثانية، أو غيّر الموديل.';
+
+/** Error object for an answer that ended without any text. */
+export function emptyAnswerError(finishReason) {
+  const finish = finishReason == null || finishReason === '' ? null : String(finishReason);
+  return { empty:true, finish, message:finish === 'length' ? EMPTY_LENGTH_MESSAGE : EMPTY_MESSAGE };
+}
+
+/** Return the answer, or throw a clear empty-answer error instead of returning ''. */
+export function finishAnswer(content, finishReason) {
+  const text = content == null ? '' : String(content);
+  if (text.trim()) return text;
+  throw emptyAnswerError(finishReason);
+}
+
 /** The two legacy names were retired on 2026-07-24; route them to the current Flash model. */
 export function migrateDeepSeekModel(base, model) {
   const m = String(model || '').trim();
@@ -155,8 +298,10 @@ export function parseSSE(buffer) {
       const j = JSON.parse(data);
       if (j && j.error) events.push({ error: String((j.error.message || j.error) || 'AI error') });
       else {
-        const t = j && j.choices && j.choices[0] && j.choices[0].delta && j.choices[0].delta.content;
+        const choice = j && j.choices && j.choices[0];
+        const t = choice && choice.delta && choice.delta.content;
         if (t) events.push({ delta: t });
+        if (choice && choice.finish_reason) events.push({ finish: String(choice.finish_reason) });
       }
     } catch (e) { /* ignore malformed SSE lines */ }
   }

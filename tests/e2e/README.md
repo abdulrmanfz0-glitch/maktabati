@@ -22,7 +22,8 @@ script against `dist/web` or `dist/single` will fail those assertions by design.
 | Script | Needs dev server | Notes |
 |---|---|---|
 | `smoke.mjs` | yes | Navigation, reader, selection, export/import, delete, mobile widths |
-| `ai-failure.mjs` | yes | Starts its own fake provider; 429, abort, delete, idle, two tabs, IndexedDB failure |
+| `ai-failure.mjs` | yes | Starts its own fake provider; 429, abort, delete, idle, empty answers, two tabs, IndexedDB failure |
+| `ai-providers.mjs` | yes | Starts its own fake provider; pasted-key detection, /models verification, fallback, unknown and Anthropic keys |
 | `upload.mjs` | yes | PDF/EPUB/text/paste; needs local fixtures |
 | `ingest-app.mjs` | yes | PDF/EPUB fixture comparisons |
 | `reader-imported.mjs` | yes | Imported-book reader checks; needs fixtures |

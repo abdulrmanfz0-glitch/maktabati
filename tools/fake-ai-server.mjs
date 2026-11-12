@@ -2,7 +2,15 @@
 import http from 'node:http';
 
 export async function startFakeAI() {
-  const stats = { requests:0, closed:0, models:[], last:null };
+  const stats = { requests:0, closed:0, models:[], last:null, modelFetches:[] };
+  const modelLists = {
+    '/v1/models': ['deepseek-flash', 'deepseek-chat'],
+    '/deepseek/v1/models': ['deepseek-flash', 'deepseek-chat'],
+    '/openai/v1/models': ['gpt-4o-mini', 'gpt-4o'],
+    '/gemini/v1/models': ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-2.5-pro'],
+    '/groq/v1/models': ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
+    '/openrouter/v1/models': ['openai/gpt-4o-mini', 'google/gemini-2.5-flash']
+  };
   const sockets = new Set();
   let first429 = false;
   let translation429 = 0;
@@ -61,9 +69,31 @@ export async function startFakeAI() {
     const u = new URL(req.url, 'http://127.0.0.1');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
     if (u.pathname === '/stats') { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(stats)); return; }
+    if (req.method === 'GET') {
+      /* GET /models is free and is how the app detects/verifies a pasted key.
+         Only record whether auth was present; never store the key itself. */
+      stats.modelFetches.push({ path:u.pathname, hasAuth:!!req.headers.authorization });
+      if (/\/models$/.test(u.pathname)) {
+        if (u.pathname.includes('/broken/') || u.pathname.includes('/missing/') || u.pathname.includes('/offline/')) {
+          res.writeHead(404, { 'Content-Type':'application/json' });
+          res.end(JSON.stringify([{ error:{ message:'models endpoint missing' } }]));
+          return;
+        }
+        if (u.pathname.includes('/unauthorized/')) {
+          res.writeHead(401, { 'Content-Type':'application/json' });
+          res.end(JSON.stringify([{ error:{ message:'invalid key' } }]));
+          return;
+        }
+        const ids = modelLists[u.pathname] || ['fake-model'];
+        res.writeHead(200, { 'Content-Type':'application/json', 'Cache-Control':'no-cache' });
+        res.end(JSON.stringify({ object:'list', data:ids.map(id => ({ id, object:'model' })) }));
+        return;
+      }
+      res.writeHead(404, { 'Content-Type':'application/json' }); res.end('{}'); return;
+    }
     let raw = '';
     req.on('data', c => { raw += c; });
     req.on('end', () => {
@@ -110,6 +140,11 @@ export async function startFakeAI() {
         res.end(JSON.stringify({ error:{ message:'rate limited once' } }));
         return;
       }
+      if (model === 'fake-empty-json') {
+        res.writeHead(200, { 'Content-Type':'application/json', 'Cache-Control':'no-cache' });
+        res.end(JSON.stringify({ choices:[{ message:{ role:'assistant', content:'' }, finish_reason:'length' }] }));
+        return;
+      }
       res.writeHead(200, { 'Content-Type':'text/event-stream', 'Cache-Control':'no-cache', 'Connection':'keep-alive' });
       const send = obj => { try{ res.write('data: ' + JSON.stringify(obj) + '\n\n'); }catch (e) {} };
       const delta = text => send({ choices:[{ delta:{ content:text } }] });
@@ -119,6 +154,12 @@ export async function startFakeAI() {
         return;
       }
       if (model === 'fake-429') { delta('نجح بعد 429'); send({ choices:[{ delta:{ content:'' }, finish_reason:'stop' }] }); res.write('data: [DONE]\n\n'); res.end(); return; }
+      if (model === 'fake-empty-length' || model === 'fake-empty-stop') {
+        /* Gemini 3 can spend the whole max_tokens budget on thinking and emit only a
+           final chunk with finish_reason. No delta at all, exactly like the report. */
+        send({ choices:[{ delta:{}, finish_reason:model === 'fake-empty-length' ? 'length' : 'stop' }] });
+        res.write('data: [DONE]\n\n'); res.end(); return;
+      }
       delta('تم');
       res.write('data: [DONE]\n\n'); res.end();
     });

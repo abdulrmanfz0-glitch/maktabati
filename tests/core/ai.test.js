@@ -2,7 +2,9 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   AI_DEFAULTS, basePolicy, keylessAllowed, estimateMessagesTokens,
   fitRequest, parseSSE, shouldRetry, retryDelayMs, validateCard, clipAround,
-  createTimeoutGuard, linkAbort, isDeepSeekBase, migrateDeepSeekModel
+  createTimeoutGuard, linkAbort, isDeepSeekBase, isGeminiBase, migrateDeepSeekModel,
+  GEMINI_REASONING_EFFORT, providerRequestOptions, parseProviderErrorBody, emptyAnswerError, finishAnswer,
+  PROVIDERS, detectProvider, pickDefaultModel, parseModels, modelsEndpoint
 } from '../../apps/web/src/core/ai.js';
 
 afterEach(() => { vi.useRealTimers(); });
@@ -38,6 +40,122 @@ describe('DeepSeek defaults', () => {
     expect(migrateDeepSeekModel('https://api.deepseek.com', 'deepseek-flash')).toBe('deepseek-flash');
     expect(migrateDeepSeekModel('https://api.deepseek.com', 'deepseek-v4-pro')).toBe('deepseek-v4-pro');
     expect(migrateDeepSeekModel('https://openrouter.ai/api/v1', 'deepseek-chat')).toBe('deepseek-chat');
+  });
+});
+
+describe('Gemini request controls', () => {
+  it('recognizes only the Gemini host, not look-alike domains', () => {
+    expect(isGeminiBase('https://generativelanguage.googleapis.com/v1beta/openai')).toBe(true);
+    expect(isGeminiBase('https://generativelanguage.googleapis.com')).toBe(true);
+    expect(isGeminiBase('http://generativelanguage.googleapis.com:443/v1beta/openai')).toBe(true);
+    expect(isGeminiBase('https://generativelanguage.googleapis.com.evil.example')).toBe(false);
+    expect(isGeminiBase('https://api.deepseek.com')).toBe(false);
+    expect(isGeminiBase('')).toBe(false);
+  });
+
+  it('sends low reasoning_effort to Gemini and thinking disabled to DeepSeek only', () => {
+    expect(GEMINI_REASONING_EFFORT).toBe('low');
+    const gemini = providerRequestOptions('https://generativelanguage.googleapis.com/v1beta/openai');
+    expect(gemini).toEqual({ reasoning_effort:'low' });
+    expect(gemini.thinking).toBeUndefined();
+    const deepseek = providerRequestOptions('https://api.deepseek.com');
+    expect(deepseek).toEqual({ thinking:{ type:'disabled' } });
+    expect(deepseek.reasoning_effort).toBeUndefined();
+    expect(providerRequestOptions('https://openrouter.ai/api/v1')).toEqual({});
+  });
+});
+
+describe('provider errors and empty answers', () => {
+  it('reads a Gemini array error body', () => {
+    expect(parseProviderErrorBody('[{"error":{"message":"API key not valid"}}]')).toBe('API key not valid');
+    expect(parseProviderErrorBody('{"error":{"message":"quota"}}')).toBe('quota');
+    expect(parseProviderErrorBody('{"message":"bad model"}')).toBe('bad model');
+    expect(parseProviderErrorBody('[{"error":"boom"}]')).toBe('boom');
+    expect(parseProviderErrorBody('plain failure')).toBe('plain failure');
+  });
+
+  it('captures finish_reason from the last streamed chunk', () => {
+    const r = parseSSE('data: {"choices":[{"delta":{"content":"A"},"finish_reason":"stop"}]}\n');
+    expect(r.events).toEqual([{ delta:'A' }, { finish:'stop' }]);
+    const empty = parseSSE('data: {"choices":[{"delta":{},"finish_reason":"length"}]}\n');
+    expect(empty.events).toEqual([{ finish:'length' }]);
+  });
+
+  it('throws the Arabic length error for an empty answer that hit the token cap', () => {
+    let err;
+    try { finishAnswer('', 'length'); } catch (e) { err = e; }
+    expect(err).toMatchObject({ empty:true, finish:'length' });
+    expect(err.message).toContain('استهلك حدّ التوكنز');
+    expect(err.message).toContain('Flash');
+    expect(() => finishAnswer('   ', 'length')).toThrow('استهلك');
+  });
+
+  it('throws the generic empty-answer error otherwise and keeps real content', () => {
+    const err = emptyAnswerError('stop');
+    expect(err).toMatchObject({ empty:true, finish:'stop' });
+    expect(err.message).toContain('ردًّا فارغًا');
+    expect(() => finishAnswer(null, 'stop')).toThrow('ردًّا فارغًا');
+    expect(finishAnswer('تمام', 'stop')).toBe('تمام');
+  });
+});
+
+describe('provider detection from an API key', () => {
+  it('detects every supported prefix', () => {
+    expect(detectProvider('AIzaSyExampleKey')).toEqual({ kind:'known', provider:'gemini' });
+    expect(detectProvider('sk-or-v1-example')).toEqual({ kind:'known', provider:'openrouter' });
+    expect(detectProvider('gsk_example')).toEqual({ kind:'known', provider:'groq' });
+    expect(detectProvider('sk-ant-api03-example').kind).toBe('unsupported');
+    expect(detectProvider('sk-ant-api03-example').provider).toBe('anthropic');
+    expect(detectProvider('sk-ant-api03-example').message).toContain('OpenRouter');
+    expect(detectProvider('pk-example').kind).toBe('unknown');
+    expect(detectProvider('AIza').provider).toBe('gemini');
+    expect(detectProvider('gsk_').provider).toBe('groq');
+    expect(detectProvider('sk-or-').provider).toBe('openrouter');
+    expect(detectProvider('').kind).toBe('empty');
+    expect(detectProvider(null).kind).toBe('empty');
+  });
+
+  it('probes DeepSeek first, then OpenAI, for a generic sk- key', () => {
+    const d = detectProvider('sk-proj-abc123');
+    expect(d.kind).toBe('ambiguous');
+    expect(d.providers).toEqual(['deepseek', 'openai']);
+  });
+
+  it('has a hardcoded fallback base and model for each known provider', () => {
+    for (const id of ['deepseek', 'gemini', 'openrouter', 'groq', 'openai']) {
+      expect(PROVIDERS[id].base).toMatch(/^https:\/\//);
+      expect(PROVIDERS[id].model.length).toBeGreaterThan(0);
+    }
+    expect(modelsEndpoint('https://api.deepseek.com/')).toBe('https://api.deepseek.com/models');
+    expect(modelsEndpoint('https://api.deepseek.com/v1/models')).toBe('https://api.deepseek.com/v1/models');
+  });
+});
+
+describe('default model preference', () => {
+  it('picks the newest Gemini flash and excludes lite/image variants', () => {
+    expect(pickDefaultModel('gemini', [
+      'gemini-1.5-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite',
+      'gemini-3.8-flash', 'gemini-2.5-pro', 'gemini-3.8-flash-image'
+    ])).toBe('gemini-3.8-flash');
+    expect(pickDefaultModel('gemini', ['gemini-3.9-flash', 'gemini-3.10-flash'])).toBe('gemini-3.10-flash');
+    expect(pickDefaultModel('gemini', ['gemini-3.8-pro'])).toBe(null);
+  });
+
+  it('uses the preference list only when the id is present', () => {
+    expect(pickDefaultModel('deepseek', ['deepseek-chat', 'deepseek-flash'])).toBe('deepseek-flash');
+    expect(pickDefaultModel('deepseek', ['deepseek-chat'])).toBe(null);
+    expect(pickDefaultModel('openrouter', ['google/gemini-2.5-flash', 'openai/gpt-4.1-mini'])).toBe('google/gemini-2.5-flash');
+    expect(pickDefaultModel('openrouter', ['vendor/unknown'])).toBe(null);
+    expect(pickDefaultModel('groq', ['llama-3.3-70b-versatile'])).toBe('llama-3.3-70b-versatile');
+    expect(pickDefaultModel('openai', ['gpt-4o', 'gpt-4o-mini'])).toBe('gpt-4o-mini');
+    expect(pickDefaultModel('nope', ['anything'])).toBe(null);
+    expect(pickDefaultModel('gemini', [])).toBe(null);
+  });
+
+  it('parses both {data:[{id}]} and bare arrays', () => {
+    expect(parseModels({ data:[{ id:'a' }, { id:'b' }, { id:'a' }] })).toEqual(['a', 'b']);
+    expect(parseModels(['x', { id:'y' }, { nope:1 }])).toEqual(['x', 'y']);
+    expect(parseModels(null)).toEqual([]);
   });
 });
 

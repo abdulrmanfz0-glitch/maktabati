@@ -76,7 +76,25 @@ try {
   await waitText('#v-home', 'تأخر مزوّد الذكاء', 26000);
   ok('idle stream timeout', '20s + slack');
 
-  // 5) two tabs: a write in tab A shows the reload notice in tab B
+  // 5) Gemini-like empty answer: only a final chunk with finish_reason length, no content
+  await setModel('fake-empty-length');
+  await go('#/'); await waitReady();
+  await sendHome('رد فاضي');
+  await waitText('#v-home', 'استهلك حدّ التوكنز', 12000);
+  assert(!(await ev(`!!document.querySelector('#v-home .typing')`)), 'typing spinner still visible');
+  assert((await ev(`document.querySelector('#v-home #chSend').getAttribute('aria-label')`)) !== 'أوقف', 'composer still busy');
+  ok('empty answer with finish_reason length', 'Arabic error, spinner cleared');
+
+  // 6) test connection (non-stream) shows the same empty-answer error
+  await setModel('fake-empty-json');
+  await go('#/profile/ai');
+  await b.waitFor(`!!document.querySelector('#sTest')`, 10000);
+  await ev(`document.querySelector('#sTest').click()`);
+  await waitText('#sMsg', 'استهلك حدّ التوكنز', 12000);
+  ok('test connection empty JSON', 'Arabic error shown');
+  await go('#/'); await waitReady();
+
+  // 7) two tabs: a write in tab A shows the reload notice in tab B
   await ev(`(() => { const b = document.createElement('button'); b.id = '__openOther'; b.textContent = 'open'; b.style = 'position:fixed;top:0;left:0;z-index:99999'; b.onclick = () => { window.__other = window.open(location.href, '_blank'); }; document.body.appendChild(b); })()`);
   const r = await ev(`(() => { const x = document.querySelector('#__openOther').getBoundingClientRect(); return { x:x.left + 5, y:x.top + 5 }; })()`);
   await b.tap(r.x, r.y);

@@ -3,7 +3,8 @@ import { runIngest } from '../ingest/client.js';
 import { EXPORT_VERSION, planLibraryImport, validateItem } from '../core/library.js';
 import { FILTER_ALL, FILTER_UNFILED, collectionKey, cleanName, makeCollection, collectionsFromKv, sortCollections, hasBook, addBookToCollection, removeBookFromCollection, renameCollection, countCollectionBooks, filterByCollection, removeBookFromAll } from '../core/collections.js';
 import { isPasteTooLarge, needsLowMemoryWarning } from '../core/limits.js';
-import { AI_DEFAULTS, basePolicy, keylessAllowed, estimateMessagesTokens, fitRequest, parseSSE, shouldRetry, retryDelayMs, validateCard, createTimeoutGuard, linkAbort, isDeepSeekBase, migrateDeepSeekModel } from '../core/ai.js';
+import { AI_DEFAULTS, basePolicy, keylessAllowed, estimateMessagesTokens, fitRequest, parseSSE, shouldRetry, retryDelayMs, validateCard, createTimeoutGuard, linkAbort, migrateDeepSeekModel, providerRequestOptions, parseProviderErrorBody, finishAnswer,
+  PROVIDERS, detectProvider, pickDefaultModel, parseModels, modelsEndpoint } from '../core/ai.js';
 import { findNormalizedRange } from '../core/text.js';
 import { PROMPT_VERSION, CORRECTIVE_MESSAGE, parseGlossary, glossaryHash, glossaryForText, extractChapterUnits, chunkUnits, buildMessages as buildTranslationMessages, parseTranslation, qaSegment, estimateChapter, fingerprint, chapterSourceHash, lastTwoSentences, bookPlan, runConcurrent, hashString, isPeak, isArabicHighlight, isSourceHighlight } from '../core/translate.js';
 import { trGetJob, trPutJob, trListJobs, trGetSegments, trPutSegment, trDeleteJob, trGetGlossary, trPutGlossary, trDeleteBook, trClearAll } from '../core/translate-store.js';
@@ -2462,6 +2463,7 @@ const aiReady = () => {
 const SERVE_CMD = 'python3 -m http.server 8000';
 function aiErr(e){
   if (e && e.name === 'AbortError') return 'انوقف.';
+  if (e && e.empty) return e.message || 'المزوّد رجّع ردًّا فارغًا بدون نص.';
   if (e && e.card) return 'المزوّد ما رجّع بطاقة فصل بصيغة JSON صالحة بعد محاولتين. جرّب فصلًا آخر أو أعد المحاولة لاحقًا.';
   if (e && e.timeout) return 'تأخر مزوّد الذكاء وما وصل رد في الوقت المتوقع. جرّب مرة ثانية.';
   if (e && e.context) return 'المحتوى أطول من نافذة النموذج حتى بعد الاختصار. قلّل الفصل أو النص المرسل أو ارفع نافذة السياق من الإعدادات.';
@@ -2486,9 +2488,7 @@ const sleepAbortable = (ms, signal) => new Promise((res, rej) => {
 });
 async function readProviderError(res){
   let text = ''; try{ text = await res.text(); }catch(e){}
-  let detail = text;
-  try{ const j = JSON.parse(text); detail = (j.error && (j.error.message || j.error)) || j.message || text; }catch(e){}
-  return short(String(detail || '').trim(), 300);
+  return short(parseProviderErrorBody(text), 300);
 }
 async function aiCall(o){
   const c = aiCfg(), policy = basePolicy(c.base, c.key);
@@ -2499,9 +2499,10 @@ async function aiCall(o){
   const ctx = Math.max(1024, Number(c.ctx) || AI_DEFAULTS.contextWindow);
   if (estimated + max > ctx) throw { context:true, estimated:estimated, budget:ctx };
   const body = { model:c.model, messages, stream:!!o.stream, temperature:Number.isFinite(Number(o.temperature)) ? Number(o.temperature) : (o.json ? 0.2 : 0.7), max_tokens:max };
-  /* deepseek-flash thinks by default; this reader wants a direct answer, and the
-     field is sent only to DeepSeek so other OpenAI-compatible providers never see it. */
-  if (isDeepSeekBase(c.base)) body.thinking = { type:'disabled' };
+  /* Provider-specific thinking controls. DeepSeek gets thinking disabled; Gemini gets a
+     low reasoning effort because Gemini 3 always thinks and its thinking tokens count
+     against max_tokens. Other OpenAI-compatible providers never see either field. */
+  Object.assign(body, providerRequestOptions(c.base));
   if (o.jsonObject) body.response_format = { type:'json_object' };
   const ctrl = new AbortController();
   let out = '';
@@ -2531,12 +2532,13 @@ async function aiCall(o){
         try{ j = await res.json(); }catch(e){ if (guard.timedOut) throw { timeout:true }; throw { status:res.status, detail:'رد غير صالح من المزوّد.' }; }
         guard.clear();
         if (j && j.error) throw { status:res.status, detail:String((j.error.message || j.error) || 'AI error') };
-        return (j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
+        const choice = j && j.choices && j.choices[0];
+        return finishAnswer(choice && choice.message && choice.message.content, choice && choice.finish_reason);
       }
       if (!res.body) throw { status:res.status, detail:'المزوّد ما أرسل جسم الرد.' };
       guard.idle();
       const rd = res.body.getReader(), dec = new TextDecoder();
-      let buf = '';
+      let buf = '', finish = null;
       for (;;){
         const r = await rd.read();
         guard.idle();
@@ -2546,21 +2548,23 @@ async function aiCall(o){
         for (const ev of s.events){
           if (ev.error) throw { status:res.status, detail:ev.error };
           if (ev.delta){ out += ev.delta; if (o.onDelta) o.onDelta(out); }
+          if (ev.finish) finish = ev.finish;
         }
-        if (s.done) return out;
+        if (s.done) return finishAnswer(out, finish);
       }
       if (buf.trim()){
         const s = parseSSE(buf + '\n');
         for (const ev of s.events){
           if (ev.error) throw { status:res.status, detail:ev.error };
           if (ev.delta){ out += ev.delta; if (o.onDelta) o.onDelta(out); }
+          if (ev.finish) finish = ev.finish;
         }
       }
-      return out;
+      return finishAnswer(out, finish);
     }
   } catch(e){
     if (guard.timedOut) throw { timeout:true };
-    if (e && (e.status !== undefined || e.cfg || e.context || e.insecure || e.network || e.name === 'AbortError')) throw e;
+    if (e && (e.status !== undefined || e.cfg || e.context || e.empty || e.insecure || e.network || e.name === 'AbortError')) throw e;
     throw { network:true, cause:e };
   } finally {
     guard.clear();
@@ -3760,7 +3764,7 @@ function msgHTML(m, i){
   }
   if (m.err) return '<div class="cm-a"><div class="msg warn" style="margin:0">' + svg('warn') + '<div>' + safeHtml(m.err) + '</div></div></div>';
   const cards = arr(m.cards).map(id => bookCard(id)).join('');
-  return '<div class="cm-a md">' + (m.content ? aiHTML(m.content) : '<span class="typing" role="status" aria-label="' + tx('يكتب…') + '"><i></i><i></i><i></i></span>') +
+  return '<div class="cm-a md">' + (m.content ? aiHTML(m.content) : m.streaming ? '<span class="typing" role="status" aria-label="' + tx('يكتب…') + '"><i></i><i></i><i></i></span>' : '') +
     (cards ? '<div class="bcards">' + cards + '</div>' : '') +
     (m.content && !m.streaming ? '<div class="cm-tools"><button class="cm-copy" data-copy="' + i + '" aria-label="' + tx('انسخ') + '" title="' + tx('انسخ') + '">' + svg('copy') + '</button></div>' : '') + '</div>';
 }
@@ -3924,17 +3928,24 @@ async function chatSend(text, mode){
   await saveConv(C);
   if (C.aborted || conv.deleted){ const k = conv.msgs.indexOf(am); if (k >= 0 && !am.content) conv.msgs.splice(k, 1); if (!conv.deleted) await saveRec(conv); return; }
   const ctrl = new AbortController(); RUN.set(conv.id, ctrl); drawChat();
-  try{ await aiCall({ stream:true, signal:ctrl.signal, messages:buildMessages(C), onDelta:t => { am.content = t; if (CH && CH.conv === conv) schedMsgs(); } }); if (!am.content) am.content = tx('(ما وصل رد)'); }
+  try{
+    await aiCall({ stream:true, signal:ctrl.signal, messages:buildMessages(C), onDelta:t => { am.content = t; if (CH && CH.conv === conv) schedMsgs(); } });
+  }
   catch(e){
     if (e && e.name === 'AbortError'){
       if (C.aborted){ const k = conv.msgs.indexOf(am); if (k >= 0) conv.msgs.splice(k, 1); }
       else am.content = am.content || tx('(انوقف)');
     } else am.err = errHTML(e);
   }
-  delete am.streaming; RUN.delete(conv.id); conv.t = Date.now();
-  if (conv.deleted) return;
-  await saveRec(conv);
-  if (CH && CH.conv === conv) drawChat();
+  finally {
+    /* Always leave the loading state, even when aiCall throws or returns an empty answer. */
+    delete am.streaming;
+    RUN.delete(conv.id);
+    conv.t = Date.now();
+    if (!am.content && !am.err) am.err = errHTML({ empty:true });
+    if (CH && CH.conv === conv) drawChat();
+    if (!conv.deleted){ try{ await saveRec(conv); }catch(e){} }
+  }
 }
 
 /* ---------- sidebar ---------- */
@@ -4055,14 +4066,16 @@ function tabAi(){
   const jobs = []; allItems().forEach(it => needCards(it).forEach(ci => jobs.push([it, ci])));
   const tot = allItems().reduce((a, it) => { const r = readyOf(it); a.t += r.total; a.r += r.done; return a; }, { t:0, r:0 });
   const chars = jobs.reduce((n, j) => n + Math.min(14000, chapterText(j[0], j[1]).length), 0), books = new Set(jobs.map(j => j[0].id)).size;
-  return '<h2 class="pf-h">الاتصال</h2><p class="quiet" style="margin:0">أي خدمة متوافقة مع <bdi dir="ltr">OpenAI (Chat Completions)</bdi>، مثل DeepSeek. المفتاح ينحفظ في هالمتصفح بهالجهاز بس، وما يدخل في «تصدير المكتبة».</p>' +
-    inp('sBase', tx('رابط الـAPI') + ' <bdi dir="ltr">(Base URL)</bdi>', c.base, 'https://api.deepseek.com') + inp('sModel', 'اسم النموذج', c.model, 'deepseek-chat') +
+  return '<h2 class="pf-h">الاتصال</h2><p class="quiet" style="margin:0">أي خدمة متوافقة مع <bdi dir="ltr">OpenAI (Chat Completions)</bdi>. الصق المفتاح بس، وبنكتشف المزوّد ونعبّي الرابط والنموذج ونتحقّق منه. المفتاح ينحفظ في هالمتصفح بهالجهاز بس، وما يدخل في «تصدير المكتبة».</p>' +
     '<label class="flabel" for="sKey">المفتاح</label><div style="display:flex; gap:.4rem"><input class="inp" id="sKey" type="password" value="' + esc(c.key) + '" dir="ltr" style="text-align:left" autocomplete="off" spellcheck="false"><button class="gbtn" id="sShow" type="button">أظهر</button></div>' +
-    '<details style="margin-top:.75rem"><summary style="cursor:pointer; font-weight:600; min-height:44px; display:flex; align-items:center">خيارات متقدمة</summary>' +
+    '<div id="sDetect" class="hint" role="status" aria-live="polite" style="margin:.5rem 0 0; min-height:1.4em">' + (c.base && c.model ? 'محفوظ حاليًا: <bdi dir="ltr">' + esc(c.base) + '</bdi> · <bdi dir="ltr">' + esc(c.model) + '</bdi>' : '') + '</div>' +
+    '<div class="pbtns"><button class="pbtn" id="sSave">احفظ</button><button class="gbtn" id="sTest">جرّب الاتصال</button><button class="linkbtn" id="sClear" style="color:var(--m-fg)">امسح المفتاح</button></div><div id="sMsg"></div>' +
+    '<details id="sAdv" style="margin-top:.75rem"><summary style="cursor:pointer; font-weight:600; min-height:44px; display:flex; align-items:center">خيارات متقدمة</summary>' +
+    inp('sBase', tx('رابط الـAPI') + ' <bdi dir="ltr">(Base URL)</bdi>', c.base, 'https://api.deepseek.com') + inp('sModel', 'اسم النموذج', c.model, 'deepseek-flash') +
+    '<p class="hint" style="margin:0 0 .5rem">للمزوّدات المخصّصة أو المحلية (Ollama، LM Studio)، أو إذا حبيت تغيّر الاكتشاف.</p>' +
     inp('sMax', 'أقصى توكنز للرد', c.max, '1200', 'number') + inp('sCtx', 'نافذة السياق (توكنز)', c.ctx, '64000', 'number') +
     inp('sFirst', 'مهلة أول رد (ثانية)', Math.round((Number(c.first) || AI_DEFAULTS.firstByteTimeoutMs) / 1000), '90', 'number') +
-    '<p class="hint" style="margin:0 0 .5rem">الافتراضي مناسب لـdeepseek-chat. النافذة تشمل التعليمات والسياق والرد.</p></details>' +
-    '<div class="pbtns"><button class="pbtn" id="sSave">احفظ</button><button class="gbtn" id="sTest">جرّب الاتصال</button><button class="linkbtn" id="sClear" style="color:var(--m-fg)">امسح المفتاح</button></div><div id="sMsg"></div>' +
+    '<p class="hint" style="margin:0 0 .5rem">النافذة تشمل التعليمات والسياق والرد. Gemini 3 يصرف جزءًا من الحد على التفكير.</p></details>' +
     '<h2 class="pf-h">أسلوب الرد</h2>' +
     pfield('اللغة', pseg('ai.lang', [['msa', 'بسيطة فصحى'], ['gulf', 'خليجي'], ['mirror', 'مثل ما أكتب']], A.lang)) +
     pfield('الطول', pseg('ai.len', [['short', 'مختصر'], ['normal', 'عادي'], ['long', 'مفصّل']], A.len)) +
@@ -4175,10 +4188,104 @@ function renderProfile(tab){
       first:Math.max(5, Math.min(300, +($('#sFirst') && $('#sFirst').value) || 90)) * 1000
     });
     const msg = (h, ok) => { $('#sMsg').innerHTML = '<div class="msg' + (ok ? ' ok' : '') + '">' + h + '</div>'; };
+    const status = html => { const el = $('#sDetect'); if (el) el.innerHTML = html; };
+    const openAdv = () => { const d = $('#sAdv'); if (d) d.open = true; const b = $('#sBase'); if (b) b.focus(); };
+    const why = e => e && e.status ? 'HTTP ' + e.status : e && e.timeout ? 'انتهت المهلة' : 'CORS أو اتصال';
+    /* DEV ONLY: the settings e2e points the real provider bases at its fake server. */
+    const providerBase = id => (import.meta.env.DEV && window.__aiTestProviderBase && window.__aiTestProviderBase[id]) || (PROVIDERS[id] ? PROVIDERS[id].base : '');
+    const fetchModels = async (base, key) => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => { try{ ctrl.abort(); }catch(e){} }, 15000);
+      try{
+        let res;
+        try{ res = await fetch(modelsEndpoint(base), { headers:key ? { Authorization:'Bearer ' + key } : {}, signal:ctrl.signal }); }
+        catch(e){ if (ctrl.signal.aborted) throw { timeout:true }; throw { network:true }; }
+        if (!res.ok){ let detail = ''; try{ detail = await readProviderError(res); }catch(e){} throw { status:res.status, detail }; }
+        let j; try{ j = await res.json(); }catch(e){ throw { network:true }; }
+        return parseModels(j);
+      } finally { clearTimeout(timer); }
+    };
+    let detected = null;
+    const renderDetected = (id, model, models, note) => {
+      const p = PROVIDERS[id] || { label:id };
+      let h = 'تم التعرّف: <b>' + esc(p.label) + '</b> · <bdi dir="ltr">' + esc(model) + '</bdi>';
+      if (models && models.length) h += '<label style="display:block; margin-top:.35rem">غيّر الموديل <select id="sModelPick" class="inp" dir="ltr" style="margin-top:.25rem; max-width:100%">' + models.map(m => '<option value="' + esc(m) + '"' + (m === model ? ' selected' : '') + '>' + esc(m) + '</option>').join('') + '</select></label>';
+      if (note) h += '<div class="hint" style="margin-top:.35rem">' + note + '</div>';
+      status(h);
+      const pick = $('#sModelPick');
+      if (pick) pick.onchange = () => {
+        const m = pick.value; if (!m) return;
+        $('#sModel').value = m;
+        const c2 = read(); aiSave(c2);
+        detected = detected ? Object.assign({}, detected, { model:m }) : null;
+        renderDetected(id, m, models, '');
+      };
+    };
+    const applyProvider = (id, base, model, models, note) => {
+      $('#sBase').value = base;
+      $('#sModel').value = model;
+      const c2 = read(); c2.key = $('#sKey').value.trim();
+      aiSave(c2);
+      detected = { id, base, model, models };
+      renderDetected(id, model, models, note);
+    };
+    const detectKey = async () => {
+      const key = $('#sKey').value.trim();
+      const d = detectProvider(key);
+      if (d.kind === 'empty'){ status('الصق المفتاح أول عشان أكتشف المزوّد.'); return false; }
+      if (d.kind === 'unsupported'){ status(esc(d.message)); return false; }
+      if (d.kind === 'unknown'){ status(esc(d.message)); openAdv(); return false; }
+      const ids = d.kind === 'ambiguous' ? d.providers : [d.provider];
+      status('أتحقّق من المفتاح…');
+      let firstFail = null, authFails = 0;
+      for (const id of ids){
+        const base = providerBase(id);
+        try{
+          const list = await fetchModels(base, key);
+          if (!list.length) throw { models:true };
+          const model = pickDefaultModel(id, list) || list[0];
+          applyProvider(id, base, model, list);
+          return true;
+        }catch(e){
+          if (e && (e.status === 401 || e.status === 403)) authFails++;
+          if (!firstFail) firstFail = e;
+        }
+      }
+      if (authFails === ids.length){ status('المفتاح غير صالح أو غير مصرّح له. تأكد من المفتاح وصلاحياته.'); return false; }
+      /* CORS, 404, timeouts and provider outages: keep the hardcoded default and say so. */
+      const id = ids[0], base = providerBase(id), model = PROVIDERS[id].model;
+      const note = 'تعذّر جلب <bdi dir="ltr">/models</bdi> (' + esc(why(firstFail)) + '). استخدمنا الموديل الافتراضي «' + esc(model) + '».';
+      applyProvider(id, base, model, [], note);
+      return true;
+    };
+    let detecting = null;
+    const runDetect = () => {
+      if (detecting) return detecting;
+      const p = detectKey();
+      detecting = p;
+      p.finally(() => { if (detecting === p) detecting = null; }).catch(() => {});
+      return p;
+    };
     $('#sShow').onclick = () => { const k = $('#sKey'); k.type = k.type === 'password' ? 'text' : 'password'; $('#sShow').textContent = k.type === 'password' ? 'أظهر' : 'أخفِ'; };
-    $('#sSave').onclick = () => { aiSave(read()); msg('<b>انحفظت.</b>في هالمتصفح بس.', true); };
-    $('#sTest').onclick = async () => { aiSave(read()); msg('<b>أجرّب…</b>', true); try{ const t = await aiCall({ messages:[{ role:'user', content:'رد بكلمة وحدة: تمام' }], max:10 }); msg('<b>الاتصال شغّال.</b>' + esc(short(t, 60)), true); }catch(e){ msg('<b>ما اشتغل.</b>' + errHTML(e)); } };
-    $('#sClear').onclick = () => { const c2 = aiCfg(); c2.key = ''; aiSave(c2); $('#sKey').value = ''; msg('<b>انمسح المفتاح.</b>', true); };
+    $('#sKey').addEventListener('paste', () => setTimeout(() => { runDetect().catch(() => {}); }, 0));
+    $('#sSave').onclick = async () => {
+      try{ if (detecting) await detecting; }catch(e){}
+      aiSave(read()); msg('<b>انحفظت.</b> في هالمتصفح بس.', true);
+    };
+    $('#sTest').onclick = async () => {
+      try{ if (detecting) await detecting; }catch(e){}
+      aiSave(read()); msg('<b>أجرّب…</b>', true);
+      try{
+        /* Room for a short answer plus a Gemini thinking round; an empty or failed
+           answer now throws, so the error path below shows the real reason. */
+        const t = await aiCall({ messages:[{ role:'user', content:'رد بكلمة وحدة: تمام' }], max:256 });
+        msg('<b>الاتصال شغّال.</b>' + esc(short(t, 60)), true);
+      }catch(e){ msg('<b>ما اشتغل.</b>' + errHTML(e)); }
+    };
+    $('#sClear').onclick = () => {
+      const c2 = aiCfg(); c2.key = ''; aiSave(c2); $('#sKey').value = '';
+      detected = null; status(''); msg('<b>انمسح المفتاح.</b>', true);
+    };
   }
 }
 
