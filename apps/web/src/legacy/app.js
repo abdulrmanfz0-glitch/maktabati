@@ -1327,7 +1327,19 @@ function hlSheet(id){
     }
     if (act === 'link') linkPicker(a);
     if (act === 'quote') quoteModal(a, it);
-    if (act === 'del'){ await del('annos', a.id); await dropCard(hlKey(a)); updateDue(); if (RD) drawerNav(RD.it); for (const x of annosOf('hl')) if (arr(x.links).includes(a.id)){ x.links = x.links.filter(l => l !== a.id); await put('annos', x); } $$('mark.hl[data-anno="' + a.id + '"]').forEach(m => m.replaceWith(...m.childNodes)); closeSheet(); toast('شلت التظليل'); }
+    if (act === 'del'){
+      const links = [];
+      for (const x of annosOf('hl')) if (arr(x.links).includes(a.id)){ links.push({ x, links:[...x.links] }); }
+      await del('annos', a.id); await dropCard(hlKey(a)); updateDue(); if (RD) drawerNav(RD.it);
+      for (const { x } of links){ x.links = x.links.filter(l => l !== a.id); await put('annos', x); }
+      $$('mark.hl[data-anno="' + a.id + '"]').forEach(m => m.replaceWith(...m.childNodes)); closeSheet();
+      toast(tx('شلت التظليل'), { label:tx('تراجع'), run:async () => {
+        await put('annos', a); if (hkOf(a) === 'imp') await schedule([hlKey(a)]);
+        for (const { x, links } of links){ x.links = links; await put('annos', x); }
+        updateDue(); if (RD && RD.it && RD.it.id === a.itemId) applyAnnos(RD.it); if (RD) drawerNav(RD.it);
+        refreshView(); toast(tx('رجع التظليل'));
+      } });
+    }
   };
 }
 function linkPicker(a){
@@ -5707,7 +5719,7 @@ const EN_UI = {
   'ارجع':'Back','ارجع للشات':'Back to chat','ارجع للمكتبة':'Back to library','ناقش':'Discuss','السابقة':'History','المحادثات السابقة':'Previous chats','ما فيه محادثات محفوظة.':'No saved chats.','رسالة':'messages',
   'اشرح':'Explain','اسألني':'Quiz me','ناقشني':'Debate me','اربط':'Connect','اشرح لي':'Explain this to me','اسألني في اللي قريته':'Quiz me on what I read','ناقشني في فكرة هالفصل':"Debate me on this chapter's idea",'اربط هالفصل بكتبي الثانية':'Connect this chapter to my other books','اشرح لي هالفقرة':'Explain this passage',
   'اسمح بالكتاب كامل':'Allow the whole book','إغلاق':'Close','وش اللي ما وضح؟ أو أرسل مباشرة':"What wasn't clear? Or just send",'اكتب سؤالك أو رأيك…':'Write your question or view…','اختر وضع أو اكتب سؤالك.':'Pick a mode or write your question.','نص الفصول اللي بعد مكانك ما ينرسل إلا إذا سمحت بالكتاب كامل.':"Chapters after your place aren't sent unless you allow the whole book.",
-  'اضبط الذكاء من':'Set up AI in','أول: رابط الـAPI واسم النموذج والمفتاح.':'first: API URL, model name and key.','(ما وصل رد)':'(no reply)','(انوقف)':'(stopped)','وصل الرد':'Reply arrived','افتح':'Open','انقطع الرد، أرسل رسالة جديدة للمتابعة.':'Reply was cut off — send a new message to continue.',
+  'اضبط الذكاء من':'Set up AI in','أول: رابط الـAPI واسم النموذج والمفتاح.':'first: API URL, model name and key.','(ما وصل رد)':'(no reply)','(انوقف)':'(stopped)','وصل الرد':'Reply arrived','افتح':'Open','انقطع الرد، أرسل رسالة جديدة للمتابعة.':'Reply was cut off — send a new message to continue.','تراجع':'Undo','رجع التظليل':'Highlight restored',
   'ابحث في النصوص والتظليلات والملاحظات':'Search texts, highlights and notes','باقي المكتبة':'Rest of the library','مكتبتك فاضية. اضغط «أضف» والصق نص أو ارفع ملف.':'Your library is empty. Tap “Add” and paste text or upload a file.','تصدير المكتبة':'Export library','استيراد مكتبة':'Import library','جهّز للذكاء':'Prepare for AI','+ أضف':'+ Add','بحث':'Search',
   'خلّصته':'Finished','ما فتحته بعد':'Not opened yet','اليوم':'today','أمس':'yesterday','قبل شوي':'just now','ما قريت شي هالأسبوع بعد.':"You haven't read anything this week yet.",'في العناوين':'In titles','في النصوص':'In texts','في تظليلاتي':'In my highlights','في ملاحظاتي':'In my notes','أهم فكرة في جلسة':'Key idea from a session',
   'حاول تتذكّر الجواب قبل ما تفتحه. البطاقة ترجع لك بعد يوم، ثم أسبوع، ثم شهر.':'Try to recall the answer before revealing it. The card returns after a day, a week, then a month.','اضغط لترى الجواب':'Tap to see the answer','تذكّرتها':'I remembered','ما تذكّرت':'I forgot','خلّصت مراجعة اليوم.':"You're done for today.",'الباقي يرجع لك في وقته.':'The rest comes back on schedule.','ما عندك بطاقات اليوم.':'No cards today.','ما فيه بطاقات بعد.':'No cards yet.','وش الفكرة اللي ظللتها هنا؟':"What's the idea you highlighted here?",'تطبيق':'Applied',
