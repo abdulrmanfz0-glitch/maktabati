@@ -416,10 +416,13 @@ function toast(t, action){
   el.classList.add('show');
 }
 let modalLock = false;
-function openModal(html, lock){ closeSheet(); $('#modalBox').innerHTML = html; $('#modal').hidden = false; modalLock = !!lock; const f = $('#modalBox').querySelector('input:not([type=file]),textarea,button'); if (f) setTimeout(() => f.focus(), 30); }
-function closeModal(force){ if (modalLock && !force) return; $('#modal').hidden = true; $('#modalBox').innerHTML = ''; modalLock = false; if (FIG_PREVIEW) previewDone(); }
-function openSheet(html){ hideSel(); const s = $('#sheet'); s.innerHTML = '<div class="sheet-in">' + html + '</div>'; s.classList.remove('qe-on'); s.classList.add('open'); $('#sheetScrim').style.display = 'block'; const b = s.querySelector('button'); if (b) b.focus({ preventScroll:true }); }
-function closeSheet(){ const was = $('#sheet').classList.contains('open'); $('#sheet').classList.remove('open', 'qe-on'); $('#sheetScrim').style.display = 'none'; if (was && RT && RT.paged){ if (RT.glInline) rtReflowSoon(); else rtChrome(); } }
+let focusBack = null; /* element to return focus to when a dialog closes */
+function takeFocus(){ focusBack = document.activeElement instanceof HTMLElement ? document.activeElement : null; }
+function refocus(){ if (focusBack && focusBack.isConnected && focusBack.offsetParent !== null && focusBack !== document.activeElement){ try{ focusBack.focus({ preventScroll:true }); }catch(e){} } focusBack = null; }
+function openModal(html, lock){ closeSheet(); $('#modalBox').innerHTML = html; $('#modal').hidden = false; modalLock = !!lock; takeFocus(); const f = $('#modalBox').querySelector('input:not([type=file]),textarea,button'); if (f) setTimeout(() => f.focus(), 30); }
+function closeModal(force){ if (modalLock && !force) return; $('#modal').hidden = true; $('#modalBox').innerHTML = ''; modalLock = false; if (FIG_PREVIEW) previewDone(); refocus(); }
+function openSheet(html){ hideSel(); const s = $('#sheet'); s.innerHTML = '<div class="sheet-in">' + html + '</div>'; s.classList.remove('qe-on'); s.classList.add('open'); $('#sheetScrim').style.display = 'block'; takeFocus(); const b = s.querySelector('button'); if (b) b.focus({ preventScroll:true }); }
+function closeSheet(){ const was = $('#sheet').classList.contains('open'); $('#sheet').classList.remove('open', 'qe-on'); $('#sheetScrim').style.display = 'none'; if (was && RT && RT.paged){ if (RT.glInline) rtReflowSoon(); else rtChrome(); } refocus(); }
 let quietUntil = 0;
 function go(target, o){
   o = o || {}; quietUntil = Date.now() + 900;
@@ -463,7 +466,7 @@ function route(){
   const r = parseHash(); const prev = cur; cur = r;
   if (!(r.view === 'read' && prev.view === 'read' && prev.id === r.id)) figRelease();
   if (r.view !== 'read') rtOff(); else if (prev.view !== 'read') rtFull();
-  closeSheet(); closeModal(true); menu(false, true); hideSel(); hideFn(); hideTip(); showBar(); $('#selHint').hidden = true; if (CH) closeChat(); if (isMobile()) side(false);
+  focusBack = null; closeSheet(); closeModal(true); menu(false, true); hideSel(); hideFn(); hideTip(); showBar(); $('#selHint').hidden = true; if (CH) closeChat(); if (isMobile()) side(false);
   const isRead = r.view === 'read';
   $$('.view').forEach(v => v.hidden = true);
   document.body.classList.toggle('reading', isRead); document.documentElement.classList.toggle('in-read', isRead); $('#toolbar').hidden = !isRead; $('#prog').hidden = !isRead;
@@ -1320,6 +1323,7 @@ function hlSheet(id){
     if (act === 'note'){
       openModal('<div class="mhead"><h3>ملاحظة على التظليل</h3>' + closeBtn + '</div><p class="hint" style="margin:0 0 .6rem">«' + esc(short(a.text, 90)) + '»</p><textarea class="inp" id="nTxt" rows="4">' + esc(a.note || '') + '</textarea><div class="sh-actions"><button class="pbtn" id="nSave">احفظ</button></div>');
       $('#nSave').addEventListener('click', async () => { a.note = $('#nTxt').value.trim(); await put('annos', a); closeModal(true); $$('mark.hl[data-anno="' + a.id + '"]').forEach(m => m.classList.toggle('has-note', !!a.note)); hlSheet(a.id); });
+      $('#nTxt').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); $('#nSave').click(); } });
     }
     if (act === 'link') linkPicker(a);
     if (act === 'quote') quoteModal(a, it);
@@ -3754,6 +3758,7 @@ function mountHome(convId, bookId, fresh){
 function openChat(scope, itemId, o){
   o = o || {};
   if (CH) closeChat();
+  takeFocus();
   const list = listOf('chat:b:' + itemId), conv = (o.conv && list.find(x => x.id === o.conv)) || list[list.length - 1] || newConv(itemId);
   const C = { view:'panel', host:$('#chatIn'), conv, mode:o.mode || prof().ai.mode || null, attach:o.attach || null };
   initFull(C); markRead(conv); CH = C; hideSel(); closeSheet();
@@ -3763,11 +3768,12 @@ function openChat(scope, itemId, o){
 function closeChat(){
   if (!CH) return; const C = CH; CH = null;
   C.host.innerHTML = ''; C.host.onclick = null;
-  if (C.view === 'panel'){ $('#chat').hidden = true; $('#chatScrim').hidden = true; document.body.classList.remove('chat-open'); }
+  if (C.view === 'panel'){ $('#chat').hidden = true; $('#chatScrim').hidden = true; document.body.classList.remove('chat-open'); refocus(); }
+  else focusBack = null;
 }
 function expandChat(){
   const C = CH; if (!C || C.view !== 'panel') return;
-  const conv = C.conv; closeChat();
+  const conv = C.conv; focusBack = null; closeChat();
   location.hash = conv.msgs.length ? '#/c/' + conv.id : '#/bchat/' + enc(conv.bookId) + '/new';
 }
 function anchorNow(it, bk){
@@ -5925,6 +5931,17 @@ async function init(){
   $('#sheetScrim').addEventListener('click', closeSheet);
   $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
   document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (!$('#modal').hidden) closeModal(); else if ($('#ctxm')) closeCtx(); else if (sndOpenP) sndClose(); else if (document.body.classList.contains('side-open')) side(false); else if (CH && CH.view === 'panel') closeChat(); else if ($('#sheet').classList.contains('open')) closeSheet(); else if (document.body.classList.contains('menu-open')) menu(false); else if (RT && cur.view === 'read' && rtEsc()){} else { hideSel(); hideFn(); } });
+  /* keep Tab inside the open dialog: modal, sheet, or chat panel */
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Tab') return;
+    const top = !$('#modal').hidden ? $('#modal') : $('#sheet').classList.contains('open') ? $('#sheet') : (CH && CH.view === 'panel' && !$('#chat').hidden) ? $('#chat') : null;
+    if (!top) return;
+    const els = [...top.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])')].filter(el => el.offsetParent !== null);
+    if (!els.length) return;
+    const first = els[0], last = els[els.length - 1];
+    if (e.shiftKey && document.activeElement === first){ e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last){ e.preventDefault(); first.focus(); }
+  });
   $('#bmBtn').addEventListener('click', toggleBookmark);
   $('#sessBtn').addEventListener('click', sessionSheet);
 
