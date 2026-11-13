@@ -3,11 +3,20 @@ import { runIngest } from '../ingest/client.js';
 import { EXPORT_VERSION, planLibraryImport, validateItem } from '../core/library.js';
 import { FILTER_ALL, FILTER_UNFILED, collectionKey, cleanName, makeCollection, collectionsFromKv, sortCollections, hasBook, addBookToCollection, removeBookFromCollection, renameCollection, countCollectionBooks, filterByCollection, removeBookFromAll } from '../core/collections.js';
 import { isPasteTooLarge, needsLowMemoryWarning } from '../core/limits.js';
-import { AI_DEFAULTS, basePolicy, keylessAllowed, estimateMessagesTokens, fitRequest, parseSSE, shouldRetry, retryDelayMs, validateCard, createTimeoutGuard, linkAbort, migrateDeepSeekModel, providerRequestOptions, providerChatHeaders, providerModelHeaders, parseProviderErrorBody, finishAnswer,
+import { AI_DEFAULTS, basePolicy, keylessAllowed, estimateMessagesTokens, fitRequest, parseSSE, shouldRetry, retryDelayMs, validateCard, createTimeoutGuard, linkAbort, providerRequestOptions, providerChatHeaders, providerModelHeaders, parseProviderErrorBody, finishAnswer,
   GEMINI_FALLBACK_DEADLINE_MS, GEMINI_BUSY_MESSAGE, GEMINI_MODEL_GONE_MESSAGE,
-  geminiFallbackCandidates, filterModelChoices, firstByteTimeoutFor,
-  PROVIDERS, providerForBase, detectProvider, pickDefaultModel, parseModels, modelsEndpoint } from '../core/ai.js';
+  geminiFallbackCandidates, firstByteTimeoutFor,
+  PROVIDERS, providerForBase, detectProvider, parseModels, modelsEndpoint } from '../core/ai.js';
 import { SPOIL, NOSPOIL, SYS, MODES } from '../core/prompts.js';
+import {
+  AI_TASKS, migrateAiConfig, normalizeAiState, isAiState,
+  resolveAiConfig, defaultPinForTask, resolveChatPin, groupedPins, allPinned,
+  pinsForConnection, findConnection, pinKey, parsePinKey, taskLabel,
+  shortModelLabel, providerLabel, limitsForProvider,
+  modelChoicesFor, defaultModelFor, addConnection, removeConnection, renameConnection,
+  setConnectionPins, setTaskDefault, setAllDefaultsToPin, pinModel, nextConnectionId,
+  exportAiConfig
+} from '../core/ai-connections.js';
 import { findNormalizedRange } from '../core/text.js';
 import { PROMPT_VERSION, CORRECTIVE_MESSAGE, parseGlossary, glossaryHash, glossaryForText, extractChapterUnits, chunkUnits, buildMessages as buildTranslationMessages, parseTranslation, qaSegment, estimateChapter, fingerprint, chapterSourceHash, lastTwoSentences, bookPlan, runConcurrent, hashString, isPeak, isArabicHighlight, isSourceHighlight } from '../core/translate.js';
 import { trGetJob, trPutJob, trListJobs, trGetSegments, trPutSegment, trDeleteJob, trGetGlossary, trPutGlossary, trDeleteBook, trClearAll } from '../core/translate-store.js';
@@ -747,7 +756,7 @@ function noteCount(it){
   return n;
 }
 function readyCard(it){
-  const rd = readyOf(it), need = needCards(it), all = !need.length, ok = aiReady();
+  const rd = readyOf(it), need = needCards(it), all = !need.length, ok = aiReady('cards');
   const chars = need.reduce((a, ci) => a + Math.min(14000, chapterText(it, ci).length), 0);
   const pct = rd.total ? Math.round(rd.done / rd.total * 100) : 100;
   return '<section class="rc" aria-labelledby="rcH"><div class="rc-h"><h2 id="rcH">رفيق القراءة</h2><span class="rc-st">' + (all ? 'جاهز' : rd.done + ' من ' + rd.total + ' فصل جاهز') + '</span></div>' +
@@ -940,7 +949,7 @@ function refreshView(){
 }
 function prepBanner(it){
   if (!it || prof().dismissPrep[it.id] || !needCards(it).length) return '';
-  return '<div class="prep-ban" role="note"><span class="pb-t">يكتب المساعد بطاقة قصيرة لكل فصل عشان يعرف كتابك بدون ما يقرأه كامل مع كل سؤال</span><button class="gbtn ch-sm" data-prep="' + esc(it.id) + '">' + (aiReady() ? 'جهّز الكتاب' : 'اضبط الاتصال أولاً') + '</button><button class="btn" data-prepx="' + esc(it.id) + '" aria-label="إخفاء التلميح">' + svg('close') + '</button></div>';
+    return '<div class="prep-ban" role="note"><span class="pb-t">يكتب المساعد بطاقة قصيرة لكل فصل عشان يعرف كتابك بدون ما يقرأه كامل مع كل سؤال</span><button class="gbtn ch-sm" data-prep="' + esc(it.id) + '">' + (aiReady('cards') ? 'جهّز الكتاب' : 'اضبط الاتصال أولاً') + '</button><button class="btn" data-prepx="' + esc(it.id) + '" aria-label="إخفاء التلميح">' + svg('close') + '</button></div>';
 }
 function snip(text, nq){
   const t = String(text || ''), r = findNormalizedRange(t, nq);
@@ -2362,7 +2371,7 @@ if (import.meta.env.DEV) window.__mapRender = renderMap;
 
 /* ---------- add / import / export ---------- */
 async function exportLib(){
-  const data = { app:'maktabati', v:EXPORT_VERSION, exported:new Date().toISOString(), items:allItems(), annos:[...mem.annos.values()], kv:await kvForExport([...mem.kv.entries()].map(([k, v]) => ({ k, v }))) };
+  const data = { app:'maktabati', v:EXPORT_VERSION, exported:new Date().toISOString(), items:allItems(), annos:[...mem.annos.values()], kv:await kvForExport([...mem.kv.entries()].map(([k, v]) => ({ k, v }))), ai:exportAiConfig(aiState()) };
   const url = URL.createObjectURL(new Blob([JSON.stringify(data)], { type:'application/json' }));
   const a = document.createElement('a'); a.href = url; a.download = 'maktabati-' + dayKey(Date.now()) + '.json'; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 2000); toast('صدّرت المكتبة' + (allItems().some(i => i.source === 'scan') ? ' — ' + OCR_EXPORT_NOTICE : '')); prof().lastExport = Date.now(); profSave(); if (cur.view === 'profile') renderProfile(cur.tab);
@@ -2601,54 +2610,70 @@ function initTips(){
 }
 
 /* ---------- AI: config + client ---------- */
+/* One localStorage key holds the v2 state (connections, pinned models, task
+   defaults) or an old single config, which aiState() migrates in memory.
+   Keys live here only and are never part of an export. */
 const AIK = 'maktabati:ai';
 const AI_DEF = { base:'https://api.deepseek.com', model:'deepseek-flash', key:'', max:AI_DEFAULTS.maxTokens, ctx:AI_DEFAULTS.contextWindow, first:AI_DEFAULTS.firstByteTimeoutMs };
-function aiCfg(){
-  try{
-    const c = Object.assign({}, AI_DEF, JSON.parse(localStorage.getItem(AIK) || '{}'));
-    c.model = migrateDeepSeekModel(c.base, c.model);
-    return c;
-  }catch(e){ return Object.assign({}, AI_DEF); }
+function aiState(){
+  let raw = null;
+  try{ raw = JSON.parse(localStorage.getItem(AIK) || 'null'); }catch(e){ raw = null; }
+  return migrateAiConfig(raw);
+}
+function aiStateSave(state){
+  const next = normalizeAiState(state);
+  try{ localStorage.setItem(AIK, JSON.stringify(next)); }catch(e){ localFail('ai'); }
+  return next;
+}
+const aiResolve = (task, pin) => resolveAiConfig(aiState(), task || 'chat', pin || null);
+function aiCfg(task, pin){
+  const c = aiResolve(task, pin);
+  return c || Object.assign({}, AI_DEF, { connectionId:null, connectionLabel:null, provider:null, providerLabel:null, pin:null, task:task || 'chat' });
 }
 function aiMigrate(){
   try{
-    const raw = JSON.parse(localStorage.getItem(AIK) || '{}');
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return;
-    const next = migrateDeepSeekModel(raw.base || AI_DEF.base, raw.model || AI_DEF.model);
-    if (raw.model !== next){ raw.model = next; aiSave(raw); }
+    const raw = localStorage.getItem(AIK);
+    if (raw == null) return;
+    const parsed = JSON.parse(raw);
+    const state = migrateAiConfig(parsed);
+    if (!isAiState(parsed) || JSON.stringify(state) !== JSON.stringify(parsed)) aiStateSave(state);
   }catch(e){}
 }
-function aiSave(c){ try{ localStorage.setItem(AIK, JSON.stringify(c)); }catch(e){ localFail('ai'); } }
-const aiReady = () => {
-  const c = aiCfg(), p = basePolicy(c.base, c.key);
-  return !!(c.base && c.model && p.ok && (c.key || keylessAllowed(c.base)));
+const aiReady = (task, pin) => {
+  const c = aiResolve(task, pin);
+  if (!c || !c.base || !c.model) return false;
+  const p = basePolicy(c.base, c.key);
+  return !!(p.ok && (c.key || keylessAllowed(c.base)));
+};
+const aiAllKeys = () => aiState().connections.map(c => c.key).filter(Boolean);
+const redactKeys = text => {
+  let out = String(text == null ? '' : text);
+  for (const key of aiAllKeys()) if (key) out = out.split(key).join('[hidden]');
+  return out;
 };
 const SERVE_CMD = 'python3 -m http.server 8000';
-const errDetail = e => {
-  const d = e && e.detail ? String(e.detail) : '';
-  const k = aiCfg().key;
-  return k ? d.split(k).join('[hidden]') : d;
-};
+const errDetail = e => redactKeys(e && e.detail ? String(e.detail) : '');
 function aiErr(e){
+  const who = e && e.connectionLabel ? '«' + e.connectionLabel + '»' : '';
   if (e && e.name === 'AbortError') return 'انوقف.';
   if (e && e.geminiBusy) return e.message || GEMINI_BUSY_MESSAGE;
-  if (e && e.modelGone) return e.message || GEMINI_MODEL_GONE_MESSAGE;
-  if (e && e.empty) return e.message || 'المزوّد رجّع ردًّا فارغًا بدون نص.';
+  if (e && e.modelGone) return 'الموديل المختار ما عاد متاحًا' + (who ? ' لدى ' + who : '') + '. اختر موديلًا آخر.';
+  if (e && e.empty) return e.message || 'المزوّد رجّع ردًّا فارغًا بدون نص. جرّب مرة ثانية، أو غيّر الموديل.';
   if (e && e.card) return 'المزوّد ما رجّع بطاقة فصل بصيغة JSON صالحة بعد محاولتين. جرّب فصلًا آخر أو أعد المحاولة لاحقًا.';
-  if (e && e.timeout) return 'تأخر مزوّد الذكاء وما وصل رد في الوقت المتوقع. جرّب مرة ثانية.';
+  if (e && e.timeout) return 'تأخر مزوّد الذكاء' + (who ? ' (' + who + ')' : '') + ' وما وصل رد في الوقت المتوقع. جرّب مرة ثانية.';
   if (e && e.context) return 'المحتوى أطول من نافذة النموذج حتى بعد الاختصار. قلّل الفصل أو النص المرسل أو ارفع نافذة السياق من الإعدادات.';
   if (e && e.insecure) return 'لا أرسل المفتاح إلى رابط غير مشفّر. استخدم https، أو localhost لتشغيل محلي.';
-  if (e && e.network) return 'ما وصل الطلب للخدمة، غالباً بسبب CORS أو الاتصال. DeepSeek وOpenRouter وأي خدمة متوافقة مع OpenAI وتسمح بـCORS تعمل من المتصفح. Gemini له واجهة متوافقة مع OpenAI، وAnthropic يحتاج ترويسة anthropic-dangerous-direct-browser-access، وOpenAI الرسمي قد يعمل لكنه غير موثق للمتصفح. راجع الرابط أو استخدم OpenRouter.';
-  if (e && e.cfg) return 'اضبط الذكاء من «الإعدادات» أول: رابط الـAPI واسم النموذج والمفتاح (أو localhost بلا مفتاح).';
+  if (e && e.network) return 'ما وصل الطلب' + (who ? ' إلى ' + who : ' للخدمة') + '، غالباً بسبب CORS أو الاتصال. DeepSeek وOpenRouter وأي خدمة متوافقة مع OpenAI وتسمح بـCORS تعمل من المتصفح. Gemini له واجهة متوافقة مع OpenAI، وAnthropic يحتاج ترويسة anthropic-dangerous-direct-browser-access، وOpenAI الرسمي قد يعمل لكنه غير موثق للمتصفح. راجع الرابط أو استخدم OpenRouter.';
+  if (e && e.cfg) return (who ? 'تعذّر استخدام ' + who + ': ' : '') + 'المفتاح غير مضبوط أو الموديل غير محدد. أضف المفتاح من «الإعدادات» أو اختر موديلًا آخر.';
   if (e && (e.status === 401 || e.status === 403)){
     const d = errDetail(e);
-    return 'المفتاح غير صالح أو غير مصرّح له.' + (d ? ' ' + d : '') + ' تأكد من المفتاح ومن صلاحياته.';
+    return (who ? 'مفتاح ' + who + ' غير صالح أو غير مصرّح له.' : 'المفتاح غير صالح أو غير مصرّح له.') + (d ? ' ' + d : '') + ' تأكد من المفتاح ومن صلاحياته.';
   }
   if (e && (e.status === 402 || /insufficient|balance|credit|quota/i.test(String(e.detail || '')))) return 'رصيد المزوّد غير كافٍ. راجع رصيد الحساب أو استخدم مفتاحًا آخر.';
   if (e && e.status === 429) return 'المزوّد يطلب تهدئة الطلبات (429). انتظر قليلًا ثم جرّب.';
   if (e && e.status){
     const d = errDetail(e);
-    return 'الخدمة ردّت بخطأ ' + e.status + (d ? ': ' + d : '') + (e.status === 404 ? ' — تأكد من الرابط واسم النموذج.' : '');
+    return (who ? 'مزوّد ' + who + ' ردّ' : 'الخدمة ردّت') + ' بخطأ ' + e.status + (d ? ': ' + d : '') + (e.status === 404 ? ' — تأكد من الرابط واسم النموذج.' : '');
   }
   return 'ما وصل الطلب للخدمة' + (location.protocol === 'file:' ? '، لأن الصفحة مفتوحة كملف محلي والمتصفح يمنع الطلب (CORS).' : '، غالباً بسبب CORS أو الاتصال.') + ' افتح الصفحة من سيرفر محلي أو استضافة، أو استخدم وسيط.';
 }
@@ -2677,13 +2702,23 @@ async function fetchModelIds(base, key, signal){
   }finally{ clearTimeout(timer); unlink(); }
 }
 async function aiCall(o){
-  const c = aiCfg(), policy = basePolicy(c.base, c.key);
-  if (!c.base || !c.model || !policy.ok || (!c.key && !keylessAllowed(c.base))) throw policy.ok ? { cfg:true } : { insecure:true };
+  const task = o.task || 'chat';
+  const c = o.cfg || resolveAiConfig(aiState(), task, o.pin || null);
+  const tag = e => {
+    if (e && typeof e === 'object' && c && !e.connectionId){
+      e.connectionId = c.connectionId;
+      e.connectionLabel = c.connectionLabel;
+      e.pin = c.pin;
+    }
+    return e;
+  };
+  const policy = c ? basePolicy(c.base, c.key) : { ok:false };
+  if (!c || !c.base || !c.model || !policy.ok || (!c.key && !keylessAllowed(c.base))) throw tag(policy.ok ? { cfg:true } : { insecure:true });
   const max = Math.max(1, Math.min(8000, Number(o.max) || Number(c.max) || AI_DEFAULTS.maxTokens));
   const messages = o.messages || [];
   const estimated = estimateMessagesTokens(messages);
   const ctx = Math.max(1024, Number(c.ctx) || AI_DEFAULTS.contextWindow);
-  if (estimated + max > ctx) throw { context:true, estimated:estimated, budget:ctx };
+  if (estimated + max > ctx) throw tag({ context:true, estimated:estimated, budget:ctx });
   const provider = providerForBase(c.base);
   const isGemini = !!provider && provider.id === 'gemini';
   const requestedModel = String(c.model);
@@ -2787,11 +2822,11 @@ async function aiCall(o){
     throw { network:true };
   } catch(e){
     if (guard.timedOut){
-      if (isGemini && sawGemini503) throw { geminiBusy:true, message:GEMINI_BUSY_MESSAGE };
-      throw { timeout:true };
+      if (isGemini && sawGemini503) throw tag({ geminiBusy:true, message:GEMINI_BUSY_MESSAGE });
+      throw tag({ timeout:true });
     }
-    if (e && (e.status !== undefined || e.cfg || e.context || e.empty || e.insecure || e.network || e.name === 'AbortError' || e.geminiBusy || e.modelGone)) throw e;
-    throw { network:true, cause:e };
+    if (e && (e.status !== undefined || e.cfg || e.context || e.empty || e.insecure || e.network || e.name === 'AbortError' || e.geminiBusy || e.modelGone)) throw tag(e);
+    throw tag({ network:true, cause:e });
   } finally {
     guard.clear();
     unlink();
@@ -2816,7 +2851,7 @@ const needCards = it => arr(it.chapters).map((_, ci) => ci).filter(ci => !chCard
 async function makeCard(it, ci, signal){
   const system = 'تكتب بطاقات فصول مختصرة لمكتبة قارئ عربي. أرجع JSON فقط بدون أي نص آخر.';
   const user = 'الكتاب: ' + it.title + (it.author ? ' — ' + it.author : '') + '\nالفصل ' + (ci + 1) + ': ' + plain(chName(it, ci)) + '\n\nاكتب بطاقة لهالفصل بهالشكل بالضبط:\n{"ideas":["٣ إلى ٦ أفكار، كل فكرة جملة قصيرة"],"terms":["مصطلحات"],"topics":["مواضيع للبحث"]}\nاعتمد على النص فقط.\n\n<reference_material>\nالنص:\n' + chapterText(it, ci, 14000) + '\n</reference_material>';
-  const ask = strict => aiCall({ json:true, signal, max:AI_DEFAULTS.cardTokens, messages:[
+  const ask = strict => aiCall({ task:'cards', json:true, signal, max:AI_DEFAULTS.cardTokens, messages:[
     { role:'system', content:system + (strict ? ' أرجع كائن JSON صالحًا فقط، بلا شرح ولا Markdown ولا نص قبل أو بعد.' : '') },
     { role:'user', content:user + (strict ? '\n\nأرجع JSON صالحًا فقط.' : '') }
   ]});
@@ -2828,7 +2863,7 @@ async function makeCard(it, ci, signal){
 function prepModal(items){
   const jobs = []; (items || allItems()).forEach(it => needCards(it).forEach(ci => jobs.push([it, ci])));
   if (!jobs.length){ toast('كل الفصول جاهزة للذكاء'); return; }
-  if (!aiReady()){ toast('اضبط الذكاء من «الإعدادات» أول'); location.hash = '#/profile/ai'; return; }
+  if (!aiReady('cards')){ toast('اضبط الذكاء من «الإعدادات» أول'); location.hash = '#/profile/ai'; return; }
   const books = new Set(jobs.map(j => j[0].id)).size;
   const chars = jobs.reduce((n, j) => n + Math.min(14000, chapterText(j[0], j[1]).length), 0);
   openModal('<div class="mhead"><h3>جهّز للذكاء</h3>' + closeBtn + '</div><p style="margin:0 0 .5rem">بكتب «بطاقة فصل» صغيرة لكل فصل: أفكاره ومصطلحاته ومواضيعه. تنكتب مرة وحدة، وبها يعرف الرفيق كتبك بدون ما يقرأها كاملة مع كل سؤال.</p>' +
@@ -2853,7 +2888,7 @@ function prepModal(items){
     refreshView(); if (CH && CH.view === 'panel' && !isBusy(CH)) drawChat();
   };
 }
-function offerPrep(it){ if (aiReady() && needCards(it).length) setTimeout(() => prepModal([it]), 700); }
+function offerPrep(it){ if (aiReady('cards') && needCards(it).length) setTimeout(() => prepModal([it]), 700); }
 
 /* ---------- chapter translation (EN -> AR) ---------- */
 let TR_VIEW = null;              /* { bookId, ci } while the Arabic view is on */
@@ -2936,12 +2971,12 @@ function trCostHTML(est){
 async function trOpenSetup(){
   const cur = trCurrent();
   if (!cur) return;
-  if (!aiReady()){ toast('اضبط الذكاء من «الإعدادات» أول'); location.hash = '#/profile/ai'; return; }
+  if (!aiReady('translation')){ toast('اضبط الذكاء من «الإعدادات» أول'); location.hash = '#/profile/ai'; return; }
   const it = cur.it, ci = cur.ci, ch = cur.ch;
   const pdf = !!(it.ingest && it.ingest.kind === 'pdf');
   const units = extractChapterUnits(it, ci, { pdf });
   if (!units.length){ toast('ما فيه نص كافٍ لترجمة هذا الفصل.'); return; }
-  const cfg = aiCfg();
+  const cfg = aiCfg('translation');
   const gdoc = await trGetGlossary(it.id);
   const terms = gdoc && Array.isArray(gdoc.terms) ? gdoc.terms : [];
   const est = estimateChapter(it, ci, { model:cfg.model, base:cfg.base, glossary:terms, pdf });
@@ -3022,7 +3057,7 @@ async function trStart(ctx){
 
 async function trResume(){
   if (!TR_LAST) { trOpenSetup(); return; }
-  const cfg = aiCfg();
+  const cfg = aiCfg('translation');
   if (cfg.model !== TR_LAST.job.model || cfg.base !== TR_LAST.job.base){ toast('تغيّرت إعدادات الذكاء؛ افتح الترجمة من جديد.'); trOpenSetup(); return; }
   trRunChapter(TR_LAST);
 }
@@ -3104,7 +3139,7 @@ async function trAsk(messages, signal){
   let lastErr = null;
   for (let attempt = 0; attempt < 2; attempt++){
     try {
-      const content = await aiCall({ messages, max:8000, temperature:0.2, jsonObject:true, signal });
+      const content = await aiCall({ task:'translation', messages, max:8000, temperature:0.2, jsonObject:true, signal });
       return parseTranslation(content);
     } catch (e) {
       if (e && (e.name === 'AbortError' || e.status === 429)) throw e;
@@ -3342,7 +3377,7 @@ async function trLoadBookStatus(it, terms, cfg, force){
   if (!it || it.type !== 'book' || !trBookIsEnglish(it)) return null;
   const hit = TR_STATUS_CACHE.get(it.id);
   if (hit && !force && Date.now() - hit.at < 15000) return hit;
-  cfg = cfg || aiCfg();
+  cfg = cfg || aiCfg('translation');
   if (!terms){ const g = await trGetGlossary(it.id); terms = g && Array.isArray(g.terms) ? g.terms : []; }
   const chapters = {}; let any = false, all = true;
   const chs = arr(it.chapters);
@@ -3406,8 +3441,8 @@ function trBookRowsHTML(plan){
 
 async function trOpenBookSetup(it){
   if (!it || it.type !== 'book' || !trBookIsEnglish(it)) return;
-  if (!aiReady()){ toast('اضبط الذكاء من «الإعدادات» أول'); location.hash = '#/profile/ai'; return; }
-  const cfg = aiCfg();
+  if (!aiReady('translation')){ toast('اضبط الذكاء من «الإعدادات» أول'); location.hash = '#/profile/ai'; return; }
+  const cfg = aiCfg('translation');
   const gdoc = await trGetGlossary(it.id);
   const terms = gdoc && Array.isArray(gdoc.terms) ? gdoc.terms : [];
   const chs = arr(it.chapters).filter(c => c && typeof c === 'object');
@@ -3988,13 +4023,16 @@ function msgHTML(m, i){
     const qc = m.attach ? '<div class="qcard"><p dir="auto">«' + esc(short(m.attach, 220)) + '»</p>' + (m.where ? '<small dir="auto">' + esc(plain(m.where)) + '</small>' : '') + (m.bk && bid ? '<button class="qc-go" data-para="' + esc(bid + '|' + m.bk) + '">افتح الفقرة في الكتاب</button>' : '') + '</div>' : '';
     return '<div class="cm-u-w">' + qc + '<div class="cm-u">' + String(m.content).split('\n').map(l => '<p dir="auto">' + (esc(l) || '&nbsp;') + '</p>').join('') + '</div></div>';
   }
-  if (m.err) return '<div class="cm-a"><div class="msg warn" style="margin:0">' + svg('warn') + '<div>' + safeHtml(m.err) + '</div></div></div>';
+  if (m.err) return '<div class="cm-a"><div class="msg warn" style="margin:0">' + svg('warn') + '<div>' + safeHtml(m.err) +
+    (m.canSwitch ? ' <button type="button" class="linkbtn ch-switch" data-chmodel>' + tx('غيّر الموديل') + '</button>' : '') + '</div></div></div>';
   const cards = arr(m.cards).map(id => bookCard(id)).join('');
   const note = m.note ? '<div class="hint" style="margin:0 0 .35rem">' + esc(m.note) + '</div>' : '';
   const cut = m.cut ? '<div class="hint" style="margin:0 0 .35rem">' + esc(tx('انقطع الرد، أرسل رسالة جديدة للمتابعة.')) + '</div>' : '';
+  const model = m.model && m.model.label ? '<div class="cm-model" title="' + esc(m.model.connection || '') + '">' + esc(m.model.label) + '</div>' : '';
   return '<div class="cm-a md">' + note + cut + (m.content ? aiHTML(m.content) : m.streaming ? '<span class="typing" role="status" aria-label="' + tx('يكتب…') + '"><i></i><i></i><i></i></span>' : '') +
     (cards ? '<div class="bcards">' + cards + '</div>' : '') +
-    (m.content && !m.streaming ? '<div class="cm-tools"><button class="cm-copy" data-copy="' + i + '" aria-label="' + tx('انسخ') + '" title="' + tx('انسخ') + '">' + svg('copy') + '</button></div>' : '') + '</div>';
+    (m.content && !m.streaming ? '<div class="cm-tools"><button class="cm-copy" data-copy="' + i + '" aria-label="' + tx('انسخ') + '" title="' + tx('انسخ') + '">' + svg('copy') + '</button></div>' : '') +
+    (m.content ? model : '') + '</div>';
 }
 function drawMsgs(){
   const C = CH, box = C && hq(C, '#chMsgs'); if (!box) return;
@@ -4045,13 +4083,30 @@ function suggestHTML(){
   S.push('<button class="sug" data-add>' + tx('أضف كتاب') + '</button>');
   return '<div class="sugs">' + S.join('') + '</div><button class="read-btn" data-href="#/lib">' + svg('openbook') + (LANG === 'en' ? 'Read' : 'أقرأ') + '</button>';
 }
+function modelSwitchHTML(C){
+  const s = aiState(), groups = groupedPins(s);
+  if (!groups.length) return '';
+  const current = resolveChatPin(s, C.conv.ai);
+  const currentPin = current && allPinned(s).find(p => p.connectionId === current.connectionId && p.model === current.model);
+  const label = currentPin ? currentPin.label : tx('اختر موديلًا');
+  return '<div class="ch-model">' +
+    '<button type="button" class="ch-model-btn" data-chmodel aria-haspopup="listbox" aria-expanded="' + (C.modelOpen ? 'true' : 'false') + '">' +
+      '<span>' + esc(label) + '</span>' + svg('chev') + '</button>' +
+    '<div class="ch-model-menu" role="listbox" aria-label="' + esc(tx('اختر موديل المحادثة')) + '"' + (C.modelOpen ? '' : ' hidden') + '>' +
+      groups.map(g => '<p class="ch-model-g">' + esc(g.label) + '</p>' + g.pins.map(p => {
+        const on = !!(currentPin && currentPin.connectionId === p.connectionId && currentPin.model === p.model);
+        return '<button type="button" role="option" class="ch-model-i" data-pin-conn="' + esc(p.connectionId) + '" data-pin-model="' + esc(p.model) + '" aria-selected="' + on + '">' +
+          '<span>' + esc(p.label) + '</span><small dir="ltr">' + esc(p.model) + '</small></button>';
+      }).join('')).join('') +
+    '</div></div>';
+}
 function drawChat(){
   const C = CH; if (!C) return; const page = C.view === 'page', it = C.conv.bookId && itemById(C.conv.bookId), empty = !C.conv.msgs.length;
   const old = hq(C, '#chIn'), keep = old ? old.value : '';
   if (page) C.host.innerHTML = '<div class="home' + (empty ? ' is-empty' : '') + '">' + (it ? chipBar(C, it) : '') + (empty
-      ? '<div class="home-hero">' + (it ? '<h1 class="home-h">' + tx('ناقش') + ' «<bdi dir="auto">' + esc(short(it.title, 40)) + '</bdi>»</h1>' : greetHTML() + '<h1 class="home-h">' + tx('وش تبي تقرأ اليوم؟') + '</h1>') + composerHTML(C) + (it ? modesHTML(C) : suggestHTML()) + '</div>'
-      : '<div class="ch-msgs" id="chMsgs" aria-live="polite"></div><div class="home-foot">' + modesHTML(C) + composerHTML(C) + '</div>') + '</div>';
-  else C.host.innerHTML = '<div class="ch-head"><b dir="auto">' + tx('ناقش') + ' «' + esc(short(it ? it.title : '', 26)) + '»</b><span style="flex:1"></span>' +
+      ? '<div class="home-hero">' + (it ? '<h1 class="home-h">' + tx('ناقش') + ' «<bdi dir="auto">' + esc(short(it.title, 40)) + '</bdi>»</h1>' : greetHTML() + '<h1 class="home-h">' + tx('وش تبي تقرأ اليوم؟') + '</h1>') + modelSwitchHTML(C) + composerHTML(C) + (it ? modesHTML(C) : suggestHTML()) + '</div>'
+      : '<div class="ch-page-head">' + (it ? '<b dir="auto">' + tx('ناقش') + ' «' + esc(short(it.title, 32)) + '»</b>' : '<b>' + tx('محادثة') + '</b>') + '<span style="flex:1"></span>' + modelSwitchHTML(C) + '</div><div class="ch-msgs" id="chMsgs" aria-live="polite"></div><div class="home-foot">' + modesHTML(C) + composerHTML(C) + '</div>') + '</div>';
+  else C.host.innerHTML = '<div class="ch-head"><b dir="auto">' + tx('ناقش') + ' «' + esc(short(it ? it.title : '', 26)) + '»</b><span style="flex:1"></span>' + modelSwitchHTML(C) +
       '<button class="gbtn ch-sm" data-ch="hist">' + tx('السابقة') + '</button><button class="gbtn ch-sm" data-ch="new">' + tx('محادثة جديدة') + '</button><button class="btn" data-ch="expand" aria-label="' + tx('وسّع المحادثة') + '">' + svg('expand') + '</button><button class="btn" data-ch="close" aria-label="' + tx('إغلاق') + '">' + svg('close') + '</button></div>' +
       prepBanner(it) + '<div class="ch-msgs" id="chMsgs" aria-live="polite"></div><div class="ch-foot">' + modesHTML(C) + composerHTML(C) + '</div>';
   if (!page || !empty) drawMsgs();
@@ -4064,6 +4119,25 @@ function drawChat(){
   const ff = hq(C, '#chFile'); if (ff) ff.onchange = e => { const f = e.target.files[0]; e.target.value = ''; importFile(f); };
   const fu = hq(C, '#chFull'); if (fu) fu.onchange = () => { C.full = fu.checked; kv.set('chatfull:' + C.conv.bookId, C.full); };
   C.host.onclick = e => {
+    if (C.modelOpen && !e.target.closest('.ch-model') && !e.target.closest('[data-chmodel]')){
+      setTimeout(() => { if (CH === C && C.modelOpen){ C.modelOpen = false; drawChat(); } }, 0);
+    }
+    const mb = e.target.closest('[data-chmodel]');
+    if (mb){
+      e.preventDefault();
+      C.modelOpen = !C.modelOpen;
+      drawChat();
+      return;
+    }
+    const pk = e.target.closest('[data-pin-conn][data-pin-model]');
+    if (pk){
+      const pin = { connectionId:pk.dataset.pinConn, model:pk.dataset.pinModel };
+      if (allPinned(aiState()).some(p => p.connectionId === pin.connectionId && p.model === pin.model)){
+        C.conv.ai = pin; C.conv.t = Date.now(); C.modelOpen = false;
+        saveConv(C); drawChat();
+      }
+      return;
+    }
     const cp = e.target.closest('[data-copy]'); if (cp){ const m = C.conv.msgs[+cp.dataset.copy]; if (m) copyText(m.content, tx('انسخت')); return; }
     const pr = e.target.closest('[data-para]'); if (pr){ const [b, k] = pr.dataset.para.split('|'); openPara(b, k); return; }
     const sp = e.target.closest('[data-scope]');
@@ -4075,12 +4149,12 @@ function drawChat(){
       else if (a === 'expand') expandChat();
       else if (a === 'openbook') openBookAt(C.conv);
       else if (a === 'newbook'){ if (C.conv.bookId) location.hash = '#/bchat/' + enc(C.conv.bookId) + '/new'; }
-      else if (a === 'new'){ if (!isBusy(C)){ C.conv = newConv(C.conv.bookId); drawChat(); } }
+      else if (a === 'new'){ if (!isBusy(C)){ C.modelOpen = false; C.conv = newConv(C.conv.bookId); drawChat(); } }
       else if (a === 'hist') drawHist();
       else if (a === 'unattach'){ C.attach = null; drawChat(); }
       return;
     }
-    const cv = e.target.closest('[data-conv]'); if (cv){ const x = convs(C).find(y => y.id === cv.dataset.conv); if (x){ C.conv = x; markRead(x); drawChat(); } return; }
+    const cv = e.target.closest('[data-conv]'); if (cv){ const x = convs(C).find(y => y.id === cv.dataset.conv); if (x){ C.modelOpen = false; C.conv = x; markRead(x); drawChat(); } return; }
     const m = e.target.closest('[data-mode]'); if (m && !isBusy(C)){ C.mode = m.dataset.mode; chatSend(ta.value, C.mode); }
   };
 }
@@ -4126,7 +4200,7 @@ function buildMessages(conv, full){
   }
   const base = sysText() + (last.mode && MODES[last.mode] ? '\n\n' + MODES[last.mode].sys : '') + styleTxt();
   const history = ms.slice(-16).map(m => ({ role:m.role, content:m.role === 'user' && m.attach ? '<quoted_passage>\n' + m.attach + '\n</quoted_passage>' + (m.attachSrc ? '\n\n<source_text>\n' + m.attachSrc + '\n</source_text>' : '') + '\n\n' + m.content : m.content }));
-  const cfg = aiCfg();
+  const cfg = aiCfg('chat', conv.ai);
   const max = Math.max(1, Math.min(8000, Number(cfg.max) || AI_DEFAULTS.maxTokens));
   const budget = Math.max(1024, (Number(cfg.ctx) || AI_DEFAULTS.contextWindow) - max - 256);
   const fit = fitRequest({ base, parts, history, budget, focus });
@@ -4135,6 +4209,7 @@ function buildMessages(conv, full){
 }
 async function chatSend(text, mode){
   const C = CH; if (!C || isBusy(C)) return; const conv = C.conv;
+  C.modelOpen = false;
   text = String(text || '').trim();
   const md0 = mode || C.mode;
   if (!text) text = mode ? tx(MODES[mode].p) : C.attach ? tx('اشرح لي هالفقرة') : '';
@@ -4152,29 +4227,57 @@ async function chatSend(text, mode){
   }
   const am = { role:'assistant', content:'', streaming:true };
   conv.msgs.push(um, am); conv.t = Date.now(); touchHash(C);
-  if (!aiReady()){ delete am.streaming; am.err = tx('اضبط الذكاء من') + ' <a href="#/settings">' + tx('الإعدادات') + '</a> ' + tx('أول: رابط الـAPI واسم النموذج والمفتاح.'); await saveConv(C); drawChat(); return; }
+  const state = aiState();
+  const explicit = conv.ai || null;
+  if (explicit && !allPinned(state).some(p => p.connectionId === explicit.connectionId && p.model === explicit.model)){
+    const conn = findConnection(state, explicit.connectionId);
+    delete conv.ai;
+    delete am.streaming;
+    am.canSwitch = true;
+    am.err = esc('الموديل اللي اخترته ما عاد متاح' + (conn ? ' لدى «' + conn.label + '»' : '') + '. اختر موديلًا آخر للمحادثة.');
+    await saveConv(C); drawChat(); return;
+  }
+  const cfg = aiResolve('chat', explicit);
+  if (!cfg){
+    delete am.streaming;
+    am.err = esc('ما فيه موديل مثبّت للدردشة. أضف اتصالًا واختر موديلًا.') + ' <a class="linkbtn" href="#/profile/ai">' + tx('افتح الإعدادات') + '</a>';
+    await saveConv(C); drawChat(); return;
+  }
+  am.model = { label:shortModelLabel(cfg.provider, cfg.model), connection:cfg.connectionLabel, connectionId:cfg.connectionId };
   await saveConv(C);
   if (conv.deleted){ const k = conv.msgs.indexOf(am); if (k >= 0 && !am.content) conv.msgs.splice(k, 1); return; }
   /* Start a run that lives independently of the view. Leaving the chat (closeChat,
      expandChat, a route change) tears down the view only; the run keeps streaming
      and writing into conv.msgs, saving throttled along the way and once at the end. */
-  const run = { conv, am, full:C.full, ctrl:new AbortController() };
+  const run = { conv, am, full:C.full, ctrl:new AbortController(), cfg };
   RUN.set(conv.id, run); drawChat();
   runStream(run);
 }
 
+function chatErrHTML(e){
+  return errHTML(e);
+}
+
 async function runStream(run){
-  const { conv, am, full, ctrl } = run;
+  const { conv, am, full, ctrl, cfg } = run;
   const open = () => CH && CH.conv === conv;
   try{
-    await aiCall({ stream:true, signal:ctrl.signal, messages:buildMessages(conv, full),
+    await aiCall({ task:'chat', cfg, stream:true, signal:ctrl.signal, messages:buildMessages(conv, full),
       onDelta:t => { am.content = t; if (open()) schedMsgs(); scheduleSave(conv); },
-      onNote:t => { am.note = t; if (open()) schedMsgs(); } });
+      onNote:t => {
+        am.note = t;
+        const fallback = /استخدمت\s+(\S+)/.exec(t);
+        if (fallback) am.model = Object.assign({}, am.model, { label:shortModelLabel('gemini', fallback[1]) });
+        if (open()) schedMsgs();
+      } });
   }
   catch(e){
     if (e && e.name === 'AbortError'){
       if (!conv.deleted) am.content = am.content || tx('(انوقف)');
-    } else am.err = errHTML(e);
+    } else {
+      am.err = chatErrHTML(e);
+      am.canSwitch = !!(e && e.connectionLabel);
+    }
   }
   finally {
     flushSave(conv);
@@ -4305,27 +4408,324 @@ function tabRead(){
     '<p class="rd-prev" id="rdPrev" data-s="' + esc(smp) + '">' + esc(diac === 'hide' ? stripD(smp) : smp) + '</p>' +
     pfield('مزيج الأصوات الافتراضي', '<select class="inp" data-sel="read.sound" aria-label="مزيج الأصوات الافتراضي"><option value="">' + (SND_FILES ? 'مطر' : 'ضجيج هادئ') + '</option>' + SND_PRE.map(p => '<option value="p:' + p[0] + '"' + (R.sound === 'p:' + p[0] ? ' selected' : '') + '>' + p[1] + '</option>').join('') + sndState().saved.filter(p => sndHas(p.mix)).map(p => '<option value="s:' + esc(p.id) + '"' + (R.sound === 's:' + p.id ? ' selected' : '') + '>' + esc(p.name) + '</option>').join('') + '</select>', 'يبدأ لما تشغّل الصوت وما فيه أصوات مختارة.');
 }
+function aiPinLabel(state, pin){
+  if (!pin) return '';
+  const p = allPinned(state).find(x => x.connectionId === pin.connectionId && x.model === pin.model);
+  return p ? p.label : pin.model;
+}
+function aiArList(list){
+  const a = (list || []).filter(Boolean);
+  if (!a.length) return '';
+  if (a.length === 1) return a[0];
+  return a.slice(0, -1).join('، ') + ' و' + a[a.length - 1];
+}
+function aiFallbackToast(state, fallbacks){
+  const names = [...new Set((fallbacks || []).map(f => taskLabel(f.task)))];
+  if (!names.length) return '';
+  const first = (fallbacks || [])[0];
+  const target = first && first.to ? aiPinLabel(state, first.to) : '';
+  return ' ' + aiArList(names) + ' رجعت' + (target ? ' إلى «' + target + '»' : ' بلا موديل') + '.';
+}
+function aiConnectionCards(S){
+  if (!S.connections.length) return '<p class="empty" style="text-align:start; margin:.5rem 0">ما أضفت اتصالًا بعد. أضف مفتاح مزوّد أو نقطة نهاية محلية، وبعدها اختر الموديلات اللي تبيها.</p>';
+  return '<div class="ai-conns">' + S.connections.map(c => {
+    const pins = pinsForConnection(S, c.id);
+    const keyState = c.key ? 'مفتاح محفوظ' : keylessAllowed(c.base) ? 'بلا مفتاح (محلي)' : 'بلا مفتاح';
+    return '<div class="ai-conn" data-conn="' + esc(c.id) + '">' +
+      '<div class="ai-conn-h"><b>' + esc(c.label) + '</b><span class="ai-tag">' + esc(providerLabel(c.provider)) + '</span></div>' +
+      '<p class="ai-base" dir="ltr">' + esc(c.base) + '</p>' +
+      '<p class="ai-sub"><span class="ai-keytag">' + esc(keyState) + '</span>' +
+        (pins.length ? ' · مثبت: ' + pins.map(p => '<span class="ai-pin">' + esc(p.label) + '</span>').join('') : ' · ما اخترت موديلات بعد') + '</p>' +
+      '<div class="pbtns">' +
+        '<button class="gbtn" type="button" data-ai-models="' + esc(c.id) + '">اختر الموديلات</button>' +
+        '<button class="gbtn" type="button" data-ai-rename="' + esc(c.id) + '">أعد التسمية</button>' +
+        '<button class="gbtn" type="button" data-ai-test="' + esc(c.id) + '">جرّب الاتصال</button>' +
+        '<button class="gbtn danger" type="button" data-ai-remove="' + esc(c.id) + '">احذف</button>' +
+      '</div><div class="msg ai-test-msg" id="aiTestMsg-' + esc(c.id) + '" hidden></div></div>';
+  }).join('') + '</div>';
+}
+function aiTaskDefaultsHTML(S){
+  const groups = groupedPins(S);
+  return AI_TASKS.map(t => {
+    const current = defaultPinForTask(S, t.id);
+    const explicit = !!S.defaults[t.id];
+    const opts = groups.map(g => '<optgroup label="' + esc(g.label) + '">' + g.pins.map(p => {
+      const key = pinKey(p);
+      return '<option value="' + esc(key) + '"' + (current && pinKey(current) === key ? ' selected' : '') + '>' + esc(p.label) + '</option>';
+    }).join('') + '</optgroup>').join('');
+    const emptyText = t.id === 'chat' ? '' : 'اتبع الدردشة' + (!explicit && current ? ' (' + aiPinLabel(S, current) + ')' : '');
+    const empty = t.id === 'chat' ? '' : '<option value=""' + (explicit ? '' : ' selected') + '>' + esc(emptyText) + '</option>';
+    const noPins = !groups.length ? '<option value="" selected>لا موديلات مثبتة</option>' : '';
+    return '<div class="prow ai-default"><div class="pr-l"><div class="pl">' + esc(t.label) + '</div>' +
+      '<div class="ph">' + (t.id === 'chat' ? 'الموديل الافتراضي للدردشة، وإذا ما اخترت لغيره' : 'إذا ما اخترت، يستخدم افتراضي الدردشة') + '</div></div>' +
+      '<select class="inp ai-def" data-ai-default="' + esc(t.id) + '" aria-label="' + esc(t.label) + '">' + empty + noPins + opts + '</select></div>';
+  }).join('');
+}
+async function aiFetchModels(base, key){
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => { try{ ctrl.abort(); }catch(e){} }, 15000);
+  try{
+    let res;
+    try{ res = await fetch(modelsEndpoint(base), { headers:providerModelHeaders(base, key), signal:ctrl.signal }); }
+    catch(e){ if (ctrl.signal.aborted) throw { timeout:true }; throw { network:true }; }
+    if (!res.ok){ let detail = ''; try{ detail = await readProviderError(res); }catch(e){} throw { status:res.status, detail }; }
+    let j; try{ j = await res.json(); }catch(e){ throw { network:true }; }
+    return parseModels(j);
+  } finally { clearTimeout(timer); }
+}
+const aiWhy = e => e && e.status ? 'HTTP ' + e.status : e && e.timeout ? 'انتهت المهلة' : 'CORS أو اتصال';
+
+function aiTestConnection(id){
+  const S = aiState(), c = findConnection(S, id), pin = pinsForConnection(S, id)[0];
+  const box = $('#aiTestMsg-' + id);
+  if (!c || !box) return;
+  if (!pin){ box.hidden = false; box.innerHTML = 'اختر موديلًا لهذا الاتصال أول.'; return; }
+  box.hidden = false;
+  box.innerHTML = 'أجرّب «' + esc(c.label) + '»…';
+  const cfg = {
+    base:c.base, model:pin.model, key:c.key, max:c.max, ctx:c.ctx, first:c.first,
+    connectionId:c.id, connectionLabel:c.label, provider:c.provider,
+    providerLabel:providerLabel(c.provider), pin:{ connectionId:c.id, model:pin.model }, task:'chat'
+  };
+  aiCall({ cfg, messages:[{ role:'user', content:'رد بكلمة وحدة: تمام' }], max:256 })
+    .then(t => { box.innerHTML = '<b>الاتصال شغّال.</b> ' + esc(short(t, 60)); })
+    .catch(e => { box.innerHTML = '<b>ما اشتغل.</b> ' + errHTML(e); });
+}
+
+function aiAddModal(){
+  openModal('<div class="mhead"><h3>أضف اتصالًا</h3>' + closeBtn + '</div>' +
+    '<p class="hint" style="margin:0 0 .6rem">المفتاح ينحفظ في هالمتصفح بهالجهاز بس، وما يدخل في «تصدير المكتبة». كل موديلات المزوّد تستخدم هالمفتاح.</p>' +
+    '<label class="flabel" for="aiKey">المفتاح</label>' +
+    '<div style="display:flex; gap:.4rem"><input class="inp" id="aiKey" type="password" dir="ltr" style="text-align:left" autocomplete="off" spellcheck="false" placeholder="sk-…"><button class="gbtn" type="button" id="aiShow">أظهر</button></div>' +
+    '<label class="flabel" for="aiLabel" style="margin-top:.75rem">اسم الاتصال (اختياري)</label>' +
+    '<input class="inp" id="aiLabel" dir="auto" maxlength="40" placeholder="مثل: DeepSeek الشخصي">' +
+    '<div id="aiDetect" class="hint" role="status" aria-live="polite" style="margin:.6rem 0 0; min-height:1.6em">الصق المفتاح عشان أكتشف المزوّد.</div>' +
+    '<div id="aiChoice" hidden style="margin-top:.5rem"></div>' +
+    '<details id="aiAdvBox" style="margin-top:.6rem"><summary>نقطة نهاية مخصّصة أو محلية (Ollama، LM Studio)</summary><div style="margin-top:.5rem">' +
+      '<label class="flabel" for="aiBase">رابط الـAPI (Base URL)</label><input class="inp" id="aiBase" dir="ltr" style="text-align:left" placeholder="http://localhost:11434/v1">' +
+      '<label class="flabel" for="aiModel" style="margin-top:.5rem">اسم الموديل</label><input class="inp" id="aiModel" dir="ltr" style="text-align:left" placeholder="llama3.1">' +
+      '<label class="flabel" for="aiMax" style="margin-top:.5rem">أقصى توكنز للرد</label><input class="inp" id="aiMax" type="number" min="1" max="8000" value="' + AI_DEFAULTS.maxTokens + '">' +
+      '<label class="flabel" for="aiCtx" style="margin-top:.5rem">نافذة السياق (توكنز)</label><input class="inp" id="aiCtx" type="number" min="1024" max="1000000" value="' + AI_DEFAULTS.contextWindow + '">' +
+      '<label class="flabel" for="aiFirst" style="margin-top:.5rem">مهلة أول رد (ثانية)</label><input class="inp" id="aiFirst" type="number" min="5" max="300" value="' + Math.round(AI_DEFAULTS.firstByteTimeoutMs / 1000) + '">' +
+      '<p class="hint">اترك المفتاح فارغًا إذا كانت النقطة محلية.</p>' +
+    '</div></details>' +
+    '<div id="aiAddMsg"></div>' +
+    '<div class="sh-actions"><button class="pbtn" id="aiDoAdd">أضف</button><button class="gbtn" data-close>إلغاء</button></div>');
+
+  let chosen = null, customMode = false, detection = { kind:'empty' };
+  const keyEl = $('#aiKey'), labelEl = $('#aiLabel'), detectEl = $('#aiDetect'), choiceEl = $('#aiChoice'), adv = $('#aiAdvBox');
+  const setStatus = html => { detectEl.innerHTML = html; };
+  const setMsg = html => { $('#aiAddMsg').innerHTML = html ? '<div class="msg">' + html + '</div>' : ''; };
+  const providerSelect = (providers, includeCustom) =>
+    '<label class="flabel" for="aiProviderPick">اختر المزوّد</label><select class="inp" id="aiProviderPick" style="max-width:280px">' +
+    '<option value="" disabled selected>اختر المزوّد…</option>' +
+    providers.map(p => '<option value="' + esc(p) + '">' + esc(providerLabel(p)) + '</option>').join('') +
+    (includeCustom ? '<option value="custom">آخر / مخصّص</option>' : '') + '</select>';
+
+  const updateStatus = () => {
+    if (customMode) setStatus('اتصال مخصّص. اكتب الرابط واسم الموديل.');
+    else if (detection.kind === 'known' && chosen) setStatus('تم التعرّف: <b>' + esc(providerLabel(chosen)) + '</b>. المفتاح يبقى بهالجهاز.');
+    else if (detection.kind === 'ambiguous' && chosen) setStatus('تم التعرّف: <b>' + esc(providerLabel(chosen)) + '</b>.');
+    else if (detection.kind === 'ambiguous') setStatus('هذا المفتاح يصلح لـDeepSeek وOpenAI. اختر المزوّد.');
+    else if (detection.kind === 'unknown' && chosen) setStatus('تم اختيار: <b>' + esc(providerLabel(chosen)) + '</b>.');
+    else if (detection.kind === 'unknown') setStatus('ما عرفت المزوّد من صيغة المفتاح. اختر المزوّد من القائمة.');
+    else setStatus('الصق المفتاح عشان أكتشف المزوّد.');
+  };
+
+  const showChoice = d => {
+    detection = d; chosen = d.kind === 'known' ? d.provider : null;
+    if (d.kind === 'ambiguous' || d.kind === 'unknown'){
+      choiceEl.hidden = false;
+      choiceEl.innerHTML = providerSelect(d.kind === 'ambiguous' ? d.providers : Object.keys(PROVIDERS), d.kind === 'unknown');
+      const sel = $('#aiProviderPick');
+      if (sel) sel.onchange = () => {
+        chosen = sel.value;
+        customMode = chosen === 'custom';
+        if (customMode) adv.open = true;
+        updateStatus();
+      };
+    } else {
+      choiceEl.hidden = true; choiceEl.innerHTML = '';
+    }
+    updateStatus();
+  };
+
+  keyEl.addEventListener('input', () => {
+    const d = detectProvider(keyEl.value);
+    customMode = false;
+    if (d.kind === 'known' || d.kind === 'ambiguous' || d.kind === 'unknown') showChoice(d);
+    else { detection = { kind:'empty' }; chosen = null; choiceEl.hidden = true; updateStatus(); }
+  });
+  keyEl.addEventListener('paste', () => setTimeout(() => keyEl.dispatchEvent(new Event('input', { bubbles:true })), 0));
+  $('#aiShow').onclick = () => {
+    keyEl.type = keyEl.type === 'password' ? 'text' : 'password';
+    $('#aiShow').textContent = keyEl.type === 'password' ? 'أظهر' : 'أخفِ';
+  };
+  adv.addEventListener('toggle', () => { if (adv.open){ customMode = true; chosen = 'custom'; updateStatus(); } });
+
+  $('#aiDoAdd').onclick = async () => {
+    const key = keyEl.value.trim();
+    const provider = customMode ? 'custom' : chosen;
+    setMsg('');
+    if (!provider){
+      setMsg(detection.kind === 'ambiguous' ? 'اختر DeepSeek أو OpenAI أول.' : 'اختر المزوّد أول.');
+      return;
+    }
+    let base = '', max = AI_DEFAULTS.maxTokens, ctx = AI_DEFAULTS.contextWindow, first = AI_DEFAULTS.firstByteTimeoutMs;
+    if (provider === 'custom'){
+      base = $('#aiBase').value.trim();
+      max = Math.max(1, Math.min(8000, +$('#aiMax').value || AI_DEFAULTS.maxTokens));
+      ctx = Math.max(1024, Math.min(1000000, +$('#aiCtx').value || AI_DEFAULTS.contextWindow));
+      first = Math.max(5, Math.min(300, +$('#aiFirst').value || 90)) * 1000;
+      if (!/^https?:\/\//i.test(base)){ setMsg('رابط الـAPI لازم يبدأ بـhttp:// أو https://.'); adv.open = true; return; }
+      if (!key && !keylessAllowed(base)){ setMsg('المفتاح مطلوب لهذا الرابط.'); return; }
+    } else {
+      const lim = limitsForProvider(provider);
+      base = PROVIDERS[provider].base; max = lim.max; ctx = lim.ctx; first = lim.first;
+      if (!key){ setMsg('الصق مفتاح ' + providerLabel(provider) + ' أول.'); return; }
+    }
+    setStatus('أتحقق من الموديلات…');
+    let list = [], note = '';
+    try{ list = await aiFetchModels(base, key); }
+    catch(e){
+      if (e && (e.status === 401 || e.status === 403)){
+        setStatus('');
+        const detail = e.detail ? String(e.detail).split(key).join('[hidden]') : '';
+        setMsg('المفتاح غير صالح أو غير مصرّح له' + (detail ? ' ' + esc(detail) : '') + '.');
+        return;
+      }
+      note = 'تعذّر جلب /models (' + esc(aiWhy(e)) + '). ';
+    }
+    let model = provider === 'custom' ? $('#aiModel').value.trim() : '';
+    if (!model) model = defaultModelFor(provider, list);
+    if (!model){
+      setStatus('');
+      setMsg(provider === 'custom' ? 'ما لقيت موديلًا. اكتب اسم الموديل أو جرّب /models من جديد.' : 'المزوّد ما رجّع موديلًا افتراضيًا. أضف الاتصال ثم اختر موديلًا.');
+      return;
+    }
+    const S = aiState();
+    const id = nextConnectionId(S);
+    let next = addConnection(S, { id, provider, base, key, label:labelEl.value.trim(), max, ctx, first });
+    next = pinModel(next, id, model);
+    if (AI_TASKS.every(t => !next.defaults[t.id])) next = setAllDefaultsToPin(next, { connectionId:id, model });
+    aiStateSave(next);
+    closeModal(true);
+    renderProfile('ai');
+    const finalLabel = (findConnection(aiState(), id) || {}).label || providerLabel(provider);
+    toast(note + 'أضفت «' + finalLabel + '» بموديل ' + shortModelLabel(provider, model) + '.');
+  };
+}
+
+function aiChooseModelsModal(connectionId){
+  const S = aiState(), conn = findConnection(S, connectionId);
+  if (!conn) return;
+  const chosen = new Set(pinsForConnection(S, connectionId).map(p => p.model));
+  let ids = [], fetched = new Set(), manual = new Set(), loadOk = false;
+  openModal('<div class="mhead"><h3>موديلات «' + esc(conn.label) + '»</h3>' + closeBtn + '</div>' +
+    '<p class="hint" style="margin:0 0 .5rem">نختار من <bdi dir="ltr">/models</bdi> مرة وحدة. المثبت فقط يظهر في مفتاح المحادثة وفي افتراضيات المهام.</p>' +
+    '<input class="inp" id="aiModelSearch" type="search" placeholder="ابحث عن موديل…" aria-label="ابحث عن موديل">' +
+    '<div class="ai-models" id="aiModelList"><p class="hint">أجيب الموديلات…</p></div>' +
+    '<p class="hint" id="aiModelNote"></p>' +
+    '<div class="ai-manual"><input class="inp" id="aiModelManual" dir="ltr" style="text-align:left" placeholder="اسم موديل آخر" aria-label="اسم موديل آخر"><button class="gbtn" type="button" id="aiModelAddManual">أضف</button></div>' +
+    '<div class="sh-actions"><button class="pbtn" id="aiModelsSave" disabled>احفظ</button><button class="gbtn" data-close>إلغاء</button></div>');
+  const listEl = $('#aiModelList'), noteEl = $('#aiModelNote'), searchEl = $('#aiModelSearch'), saveEl = $('#aiModelsSave');
+  const render = () => {
+    const q = searchEl.value.trim().toLowerCase();
+    const all = [...new Set([...ids, ...chosen, ...manual])];
+    const rows = all.filter(id => !q || id.toLowerCase().includes(q));
+    listEl.innerHTML = rows.length ? rows.map(id => {
+      const stale = loadOk && !fetched.has(id) && !manual.has(id);
+      return '<label class="ai-model"><input type="checkbox" data-model="' + esc(id) + '"' + (chosen.has(id) ? ' checked' : '') + '>' +
+        '<span class="ai-model-id" dir="ltr">' + esc(id) + '</span>' + (stale ? '<small>غير متاح الآن</small>' : '') + '</label>';
+    }).join('') : '<p class="hint">' + (all.length ? 'ما فيه موديلات تطابق البحث.' : 'المزوّد ما رجّع موديلات. تقدر تضيف اسم موديل يدويًا.') + '</p>';
+  };
+  listEl.addEventListener('change', e => {
+    const cb = e.target.closest('input[data-model]'); if (!cb) return;
+    if (cb.checked) chosen.add(cb.dataset.model); else chosen.delete(cb.dataset.model);
+  });
+  searchEl.addEventListener('input', render);
+  $('#aiModelAddManual').onclick = () => {
+    const v = $('#aiModelManual').value.trim();
+    if (!v) return;
+    chosen.add(v);
+    manual.add(v);
+    if (!ids.includes(v)) ids.push(v);
+    $('#aiModelManual').value = '';
+    render();
+  };
+  saveEl.onclick = () => {
+    const r = setConnectionPins(aiState(), connectionId, [...chosen]);
+    aiStateSave(r.state);
+    closeModal(true);
+    renderProfile('ai');
+    const names = [...new Set(r.fallbacks.map(f => taskLabel(f.task)))];
+    const target = r.fallbacks[0] && r.fallbacks[0].to ? aiPinLabel(r.state, r.fallbacks[0].to) : '';
+    toast('انحفظت موديلات «' + conn.label + '».' + (names.length ? ' ' + aiArList(names) + ' رجعت' + (target ? ' إلى «' + target + '»' : ' بلا موديل') + '.' : ''));
+  };
+  aiFetchModels(conn.base, conn.key).then(list => {
+    ids = modelChoicesFor(conn.provider, list);
+    fetched = new Set(ids);
+    loadOk = true;
+    noteEl.textContent = list.length ? 'اختر الموديلات اللي تبيها. المثبت فقط يظهر في المحادثة.' : 'المزوّد ما رجّع قائمة موديلات. المثبت الحالي يبقى، وتقدر تضيف اسم موديل يدويًا.';
+    saveEl.disabled = false;
+    render();
+  }).catch(e => {
+    loadOk = false;
+    noteEl.innerHTML = 'تعذّر جلب قائمة الموديلات من «' + esc(conn.label) + '» (' + esc(aiWhy(e)) + '). المثبت الحالي يبقى، وتقدر تضيف اسم موديل يدويًا.';
+    saveEl.disabled = false;
+    render();
+  });
+  render();
+}
+
+function aiRenameModal(connectionId){
+  const c = findConnection(aiState(), connectionId);
+  if (!c) return;
+  openModal('<div class="mhead"><h3>أعد تسمية الاتصال</h3>' + closeBtn + '</div>' +
+    '<label class="flabel" for="aiRename">اسم الاتصال</label><input class="inp" id="aiRename" dir="auto" maxlength="40" value="' + esc(c.label) + '">' +
+    '<div class="sh-actions"><button class="pbtn" id="aiRenameSave">احفظ</button><button class="gbtn" data-close>إلغاء</button></div>');
+  $('#aiRenameSave').onclick = () => {
+    const v = $('#aiRename').value.trim();
+    if (!v) return;
+    aiStateSave(renameConnection(aiState(), connectionId, v));
+    closeModal(true); renderProfile('ai'); toast('تغيّر اسم الاتصال.');
+  };
+}
+
+function aiRemoveConnection(connectionId){
+  const S = aiState(), c = findConnection(S, connectionId);
+  if (!c) return;
+  const affected = AI_TASKS.filter(t => {
+    const pin = defaultPinForTask(S, t.id);
+    return pin && pin.connectionId === connectionId;
+  }).map(t => t.label);
+  confirmBox({
+    title:'احذف الاتصال',
+    text:'يحذف «' + esc(c.label) + '» ومفتاحه وموديلاته المثبتة من هالجهاز.' +
+      (affected.length ? ' <br><b>' + esc(aiArList(affected)) + '</b> تستخدمه، وسترجع لافتراضي الدردشة.' : ''),
+    ok:'احذف',
+    run:() => {
+      const r = removeConnection(aiState(), connectionId);
+      aiStateSave(r.state);
+      renderProfile('ai');
+      toast('انحذف «' + c.label + '».' + aiFallbackToast(r.state, r.fallbacks));
+    }
+  });
+}
+
 function tabAi(){
-  const c = aiCfg(), A = prof().ai;
-  const inp = (id, lab, val, ph, type) => '<label class="flabel" for="' + id + '">' + lab + '</label><input class="inp" id="' + id + '" type="' + (type || 'text') + '" value="' + esc(val || '') + '"' + (ph ? ' placeholder="' + esc(ph) + '"' : '') + ' dir="ltr" style="text-align:left" autocomplete="off" spellcheck="false">';
+  const S = aiState(), A = prof().ai;
   const jobs = []; allItems().forEach(it => needCards(it).forEach(ci => jobs.push([it, ci])));
   const tot = allItems().reduce((a, it) => { const r = readyOf(it); a.t += r.total; a.r += r.done; return a; }, { t:0, r:0 });
   const chars = jobs.reduce((n, j) => n + Math.min(14000, chapterText(j[0], j[1]).length), 0), books = new Set(jobs.map(j => j[0].id)).size;
-  const savedProvider = providerForBase(c.base);
-  const initialStatus = c.key && c.base && c.model
-    ? 'تم التعرّف: <b>' + esc(savedProvider ? savedProvider.label : 'مخصّص') + '</b> · <bdi dir="ltr">' + esc(c.model) + '</bdi>'
-    : 'الصق المفتاح عشان أكتشف المزوّد.';
-  return '<h2 class="pf-h">الاتصال</h2><p class="quiet" style="margin:0">الصق مفتاح الـAPI بس. بنكتشف المزوّد ونضبط الرابط والنموذج والحدود تلقائيًا. المفتاح ينحفظ في هالمتصفح بهالجهاز بس، وما يدخل في «تصدير المكتبة».</p>' +
-    '<label class="flabel" for="sKey">المفتاح</label><div style="display:flex; gap:.4rem"><input class="inp" id="sKey" type="password" value="' + esc(c.key) + '" dir="ltr" style="text-align:left" autocomplete="off" spellcheck="false"><button class="gbtn" id="sShow" type="button">أظهر</button></div>' +
-    '<div id="sDetect" class="hint" role="status" aria-live="polite" style="margin:.5rem 0 0; min-height:1.4em">' + initialStatus + '</div>' +
-    '<div class="pbtns"><button class="pbtn" id="sSave">احفظ</button><button class="gbtn" id="sTest">جرّب الاتصال</button><button class="linkbtn" id="sClear" style="color:var(--m-fg)">امسح المفتاح</button></div><div id="sMsg"></div>' +
-    '<button type="button" id="sCustomLink" class="linkbtn" style="font-size:.85rem; color:var(--soft); padding:0; margin-top:.75rem; text-align:start">custom / local endpoint — نقطة نهاية مخصّصة أو محلية (Ollama، LM Studio)</button>' +
-    '<div id="sAdv" hidden style="margin-top:.5rem">' +
-    inp('sBase', tx('رابط الـAPI') + ' <bdi dir="ltr">(Base URL)</bdi>', c.base, 'https://api.deepseek.com') + inp('sModel', 'اسم النموذج', c.model, 'deepseek-flash') +
-    '<p class="hint" style="margin:0 0 .5rem">للمزوّدات المخصّصة أو المحلية فقط. المفاتيح المعروفة تُضبط تلقائيًا.</p>' +
-    inp('sMax', 'أقصى توكنز للرد', c.max, '1200', 'number') + inp('sCtx', 'نافذة السياق (توكنز)', c.ctx, '64000', 'number') +
-    inp('sFirst', 'مهلة أول رد (ثانية)', Math.round((Number(c.first) || AI_DEFAULTS.firstByteTimeoutMs) / 1000), '90', 'number') +
-    '<p class="hint" style="margin:0 0 .5rem">النافذة تشمل التعليمات والسياق والرد. Gemini 3 يصرف جزءًا من الحد على التفكير.</p></div>' +
+  return '<h2 class="pf-h">الاتصالات</h2>' +
+    '<p class="quiet" style="margin:0">تقدر تضيف أكثر من اتصال: مفتاح لكل مزوّد أو نقطة نهاية مخصّصة. المفاتيح تنحفظ في هالمتصفح بهالجهاز بس، وما تدخل في «تصدير المكتبة».</p>' +
+    aiConnectionCards(S) +
+    '<div class="pbtns"><button class="pbtn" id="aiAdd" type="button">أضف اتصالًا</button></div>' +
+    '<h2 class="pf-h">افتراضيات المهام</h2>' +
+    '<p class="quiet" style="margin:0">اختر من الموديلات المثبتة فقط. إذا ما اخترت لمهمة، تستخدم افتراضي الدردشة.</p>' +
+    aiTaskDefaultsHTML(S) +
+    '<p class="hint" style="margin:.5rem 0 0">تغيير موديل المحادثة يخص المحادثة الحالية فقط؛ ما يغيّر الافتراضيات.</p>' +
     '<h2 class="pf-h">أسلوب الرد</h2>' +
     pfield('اللغة', pseg('ai.lang', [['msa', 'بسيطة فصحى'], ['gulf', 'خليجي'], ['mirror', 'مثل ما أكتب']], A.lang)) +
     pfield('الطول', pseg('ai.len', [['short', 'مختصر'], ['normal', 'عادي'], ['long', 'مفصّل']], A.len)) +
@@ -4334,7 +4734,7 @@ function tabAi(){
     ptog('ai.full', 'اسمح بالكتاب كامل', A.full, 'يرسل نص الكتاب كامل مع الأسئلة، وهذا يكلّف أكثر.') +
     '<h2 class="pf-h">رفيق القراءة</h2><p style="margin:0 0 .25rem">' + tot.r + ' من ' + tot.t + ' فصل جاهز</p>' +
     (jobs.length ? '<p class="ph" style="margin:0">' + estText(jobs.length, books, chars) + '</p>' : '<p class="ph" style="margin:0">كل الفصول جاهزة للذكاء</p>') +
-    '<div class="pbtns"><button class="gbtn" id="pfPrepAll"' + (jobs.length ? '' : ' disabled') + '>' + (aiReady() || !jobs.length ? 'جهّز كل الكتب' : 'اضبط الاتصال أولاً') + '</button></div>';
+    '<div class="pbtns"><button class="gbtn" id="pfPrepAll"' + (jobs.length ? '' : ' disabled') + '>' + (aiReady('cards') || !jobs.length ? 'جهّز كل الكتب' : 'اضبط الاتصال أولاً') + '</button></div>';
 }
 function tabPrivacy(){
   const M = prof().ai.mem, est = navigator.storage && navigator.storage.estimate;
@@ -4393,6 +4793,15 @@ function renderProfile(tab){
   $('#v-profile').innerHTML = '<div class="pf"><nav class="ptabs" aria-label="أقسام الملف">' + PTABS.map(t => '<a class="ptab nu" href="#/profile/' + t + '"' + (t === tab ? ' aria-current="page"' : '') + '>' + PTAB_L[t] + '</a>').join('') + '</nav><div class="pf-body" id="pfBody">' + ({ profile:tabProfile, read:tabRead, ai:tabAi, privacy:tabPrivacy, look:tabLook, about:tabAbout }[tab])() + '</div></div>';
   const body = $('#pfBody');
   body.onclick = e => {
+    if (e.target.closest('#aiAdd')){ aiAddModal(); return; }
+    const aiModels = e.target.closest('[data-ai-models]');
+    if (aiModels){ aiChooseModelsModal(aiModels.dataset.aiModels); return; }
+    const aiRename = e.target.closest('[data-ai-rename]');
+    if (aiRename){ aiRenameModal(aiRename.dataset.aiRename); return; }
+    const aiRemove = e.target.closest('[data-ai-remove]');
+    if (aiRemove){ aiRemoveConnection(aiRemove.dataset.aiRemove); return; }
+    const aiTest = e.target.closest('[data-ai-test]');
+    if (aiTest){ aiTestConnection(aiTest.dataset.aiTest); return; }
     const s = e.target.closest('[data-seg] [data-v]');
     if (s){ const g = s.parentElement; $$('button', g).forEach(x => x.setAttribute('aria-pressed', x === s)); applySeg(g.dataset.seg, s.dataset.v); return; }
     const t = e.target.closest('[data-tg]');
@@ -4419,9 +4828,13 @@ function renderProfile(tab){
     }
     if (e.target.closest('#pvExp')){ exportLib(); return; }
     if (e.target.closest('#pvImpB')){ $('#pvImp').click(); return; }
-    if (e.target.closest('#pfPrepAll')){ if (!aiReady()){ const b = $('#sBase'); if (b) b.focus(); toast('اضبط الذكاء من «الإعدادات» أول'); } else prepModal(); return; }
+    if (e.target.closest('#pfPrepAll')){ if (!aiReady('cards')){ const b = $('#aiAdd'); if (b) b.focus(); toast('اضبط الذكاء من «الإعدادات» أول'); } else prepModal(); return; }
   };
-  body.onchange = e => { const el = e.target; if (el.dataset.sel === 'read.sound'){ prof().read.sound = el.value; profSave(); } };
+  body.onchange = e => {
+    const el = e.target;
+    if (el.dataset.aiDefault){ aiStateSave(setTaskDefault(aiState(), el.dataset.aiDefault, parsePinKey(el.value))); renderProfile('ai'); return; }
+    if (el.dataset.sel === 'read.sound'){ prof().read.sound = el.value; profSave(); }
+  };
   body.oninput = e => {
     const el = e.target;
     if (el.matches('[data-rng]')){ const v = +el.value; setRead('fs', v); $('#fsO').textContent = fsLabel(v); el.setAttribute('aria-valuetext', fsLabel(v)); }
@@ -4430,300 +4843,6 @@ function renderProfile(tab){
   if (tab === 'privacy'){
     $('#pvImp').addEventListener('change', e => { importLib(e.target.files[0]); e.target.value = ''; });
     if (navigator.storage && navigator.storage.estimate) navigator.storage.estimate().then(e => { const el = $('#stUse'); const f = b => b > 1e9 ? (b / 1e9).toFixed(1) + ' GB' : (b / 1e6).toFixed(1) + ' MB'; if (el) el.textContent = f(e.usage || 0) + (e.quota ? ' / ' + f(e.quota) : ''); }).catch(() => {});
-  }
-  if (tab === 'ai'){
-    const read = () => ({
-      base:$('#sBase').value.trim(), model:$('#sModel').value.trim(), key:$('#sKey').value.trim(),
-      max:Math.max(1, Math.min(8000, +($('#sMax') && $('#sMax').value) || AI_DEFAULTS.maxTokens)),
-      ctx:Math.max(1024, Math.min(1000000, +($('#sCtx') && $('#sCtx').value) || AI_DEFAULTS.contextWindow)),
-      first:Math.max(5, Math.min(300, +($('#sFirst') && $('#sFirst').value) || 90)) * 1000
-    });
-    const msg = (h, ok) => { $('#sMsg').innerHTML = '<div class="msg' + (ok ? ' ok' : '') + '">' + h + '</div>'; };
-    const status = html => { const el = $('#sDetect'); if (el) el.innerHTML = html; };
-    const openAdv = () => { const d = $('#sAdv'); if (d) d.hidden = false; const b = $('#sBase'); if (b) b.focus(); };
-    const why = e => e && e.status ? 'HTTP ' + e.status : e && e.timeout ? 'انتهت المهلة' : 'CORS أو اتصال';
-    const fetchModels = async (base, key) => {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => { try{ ctrl.abort(); }catch(e){} }, 15000);
-      try{
-        let res;
-        /* Bearer by default; Claude's /models path uses x-api-key + anthropic-version. */
-        try{ res = await fetch(modelsEndpoint(base), { headers:providerModelHeaders(base, key), signal:ctrl.signal }); }
-        catch(e){ if (ctrl.signal.aborted) throw { timeout:true }; throw { network:true }; }
-        if (!res.ok){ let detail = ''; try{ detail = await readProviderError(res); }catch(e){} throw { status:res.status, detail }; }
-        let j; try{ j = await res.json(); }catch(e){ throw { network:true }; }
-        return parseModels(j);
-      } finally { clearTimeout(timer); }
-    };
-
-    const startCfg = aiCfg();
-    const startProvider = providerForBase(startCfg.base);
-    let currentProvider = startProvider ? startProvider.id : ((startCfg.base && startCfg.model && (startCfg.base !== AI_DEF.base || startCfg.model !== AI_DEF.model)) ? 'custom' : null);
-    let customMode = currentProvider === 'custom';
-    let currentModels = [];
-    let detecting = null, detectSeq = 0, detectTimer = null;
-    let lastVerified = { key:'', base:'' };
-
-    const saveConfig = () => { const c = read(); aiSave(c); return c; };
-
-    const renderStatus = (id, model, note = '') => {
-      let h;
-      if (id && id !== 'custom' && PROVIDERS[id]){
-        h = 'تم التعرّف: <b>' + esc(PROVIDERS[id].label) + '</b>' + (model ? ' · <bdi dir="ltr">' + esc(model) + '</bdi>' : ' · اختر موديلًا');
-      } else if (id === 'custom'){
-        h = 'تم التعرّف: <b>مخصّص</b>' + (model ? ' · <bdi dir="ltr">' + esc(model) + '</bdi>' : ' · اختر موديلًا');
-      } else {
-        h = 'الصق المفتاح عشان أكتشف المزوّد.';
-      }
-      if (id && currentModels.length){
-        const opts = currentModels.slice();
-        if (model && !opts.includes(model)) opts.unshift(model);
-        h += '<label style="display:block; margin-top:.35rem">غيّر الموديل <select id="sModelPick" class="inp" dir="ltr" style="margin-top:.25rem; max-width:100%">' +
-          (!model ? '<option value="" disabled selected>اختر موديلًا</option>' : '') +
-          opts.map(m => '<option value="' + esc(m) + '"' + (m === model ? ' selected' : '') + '>' + esc(m) + '</option>').join('') +
-          '</select></label>';
-      }
-      if (note) h += '<div class="hint" style="margin-top:.35rem">' + note + '</div>';
-      status(h);
-      const pick = $('#sModelPick');
-      if (pick) pick.onchange = () => {
-        const m = pick.value; if (!m) return;
-        $('#sModel').value = m;
-        saveConfig();
-        renderStatus(id, m, '');
-      };
-    };
-
-    const setLimits = id => {
-      const l = PROVIDERS[id].limits;
-      $('#sMax').value = l.max; $('#sCtx').value = l.ctx; $('#sFirst').value = Math.round(l.first / 1000);
-    };
-
-    const applyProvider = (id, model, list, note = '') => {
-      const p = PROVIDERS[id];
-      const changed = currentProvider !== id;
-      $('#sBase').value = p.base;
-      $('#sModel').value = model || '';
-      if (changed) setLimits(id);
-      currentProvider = id;
-      customMode = false;
-      const adv = $('#sAdv'); if (adv) adv.hidden = true;
-      currentModels = Array.isArray(list) ? list.slice() : [];
-      saveConfig();
-      lastVerified = { key:$('#sKey').value.trim(), base:p.base };
-      renderStatus(id, model || '', note);
-    };
-
-    const applyCustom = (base, model, list, note = '') => {
-      currentProvider = 'custom';
-      customMode = true;
-      const adv = $('#sAdv'); if (adv) adv.hidden = false;
-      currentModels = Array.isArray(list) ? list.slice() : [];
-      saveConfig();
-      lastVerified = { key:$('#sKey').value.trim(), base };
-      renderStatus('custom', model || '', note);
-    };
-
-    const chooseCustom = () => {
-      detectSeq++; clearTimeout(detectTimer);
-      currentProvider = 'custom'; customMode = true; currentModels = [];
-      $('#sBase').value = ''; $('#sModel').value = '';
-      $('#sMax').value = AI_DEFAULTS.maxTokens; $('#sCtx').value = AI_DEFAULTS.contextWindow; $('#sFirst').value = Math.round(AI_DEFAULTS.firstByteTimeoutMs / 1000);
-      lastVerified = { key:'', base:'' };
-      openAdv();
-      status('أدخل رابط الـAPI واسم النموذج، ثم احفظ.');
-    };
-
-    const showProviderPicker = () => {
-      const opts = Object.values(PROVIDERS).map(p => '<option value="' + esc(p.id) + '">' + esc(p.label) + '</option>').join('');
-      status('<div>ما عرفت المزوّد من صيغة المفتاح. اختر المزوّد:</div>' +
-        '<select id="sProviderPick" class="inp" dir="ltr" style="margin-top:.35rem; max-width:280px" aria-label="اختر المزوّد">' +
-        '<option value="" disabled selected>اختر المزوّد…</option>' + opts + '<option value="custom">آخر / مخصّص</option></select>');
-      const sel = $('#sProviderPick');
-      if (!sel) return;
-      sel.onchange = () => {
-        const v = sel.value; if (!v) return;
-        if (v === 'custom'){ chooseCustom(); return; }
-        startDetect({ ids:[v] }).catch(() => {});
-      };
-    };
-
-    const verifyCustom = async (key, isCurrent) => {
-      const base = $('#sBase').value.trim(), model = $('#sModel').value.trim();
-      if (!base || !model){ status('أدخل رابط الـAPI واسم النموذج أول.'); openAdv(); return false; }
-      status('أتحقّق من الرابط…');
-      try{
-        const list = await fetchModels(base, key);
-        if (!isCurrent()) return false;
-        if (!list.length) throw { models:true };
-        applyCustom(base, model, list);
-        return true;
-      }catch(e){
-        if (!isCurrent()) return false;
-        if (e && (e.status === 401 || e.status === 403)){ status('المفتاح غير صالح أو غير مصرّح له.'); return false; }
-        /* The reader explicitly chose this endpoint; keep it even if /models is unavailable. */
-        applyCustom(base, model, [], 'تعذّر جلب <bdi dir="ltr">/models</bdi> (' + esc(why(e)) + '). حفظت نقطة النهاية المخصّصة كما هي.');
-        return true;
-      }
-    };
-
-    const detectNow = async (opts, isCurrent) => {
-      const key = String(opts.key || '');
-      if (!key){
-        if (customMode){ status('نقطة نهاية مخصّصة. عدّل الرابط والنموذج أو الصق مفتاحًا.'); return true; }
-        status('الصق المفتاح عشان أكتشف المزوّد.'); return false;
-      }
-      if (customMode && !opts.ids) return verifyCustom(key, isCurrent);
-      const d = detectProvider(key);
-      let ids = opts.ids;
-      if (!ids){
-        if (d.kind === 'empty'){ status('الصق المفتاح عشان أكتشف المزوّد.'); return false; }
-        if (d.kind === 'unsupported'){ status(esc(d.message)); return false; }
-        if (d.kind === 'unknown'){ showProviderPicker(); return false; }
-        ids = d.kind === 'known' ? [d.provider] : d.providers.slice();
-      }
-      status('أتحقّق من المفتاح…');
-      let firstFail = null, authFails = 0;
-      for (const id of ids){
-        if (!isCurrent()) return false;
-        const p = PROVIDERS[id];
-        if (!p) continue;
-        try{
-          const list = await fetchModels(p.base, key);
-          if (!isCurrent()) return false;
-          if (!list.length) throw { models:true };
-          const choices = filterModelChoices(id, list);
-          const changed = currentProvider !== id;
-          const prev = $('#sModel').value.trim();
-          const model = !changed && choices.includes(prev) ? prev : (pickDefaultModel(id, choices) || '');
-          const note = model ? '' : 'المزوّد ما رجّع الموديل الافتراضي المتوقع. اختر موديلًا من القائمة.';
-          applyProvider(id, model, choices, note);
-          return true;
-        }catch(e){
-          if (!isCurrent()) return false;
-          if (e && (e.status === 401 || e.status === 403)) authFails++;
-          if (!firstFail) firstFail = e;
-        }
-      }
-      if (!ids.length){ status('ما قدرت أتحقّق من المزوّد.'); return false; }
-      if (authFails === ids.length){ status('المفتاح غير صالح أو غير مصرّح له. تأكد من المفتاح وصلاحياته.'); return false; }
-      const id = ids[0], p = PROVIDERS[id];
-      const changed = currentProvider !== id;
-      const model = changed ? p.model : ($('#sModel').value.trim() || p.model);
-      const note = 'تعذّر جلب <bdi dir="ltr">/models</bdi> (' + esc(why(firstFail)) + '). استخدمنا «' + esc(model) + '».';
-      applyProvider(id, model, [], note);
-      return true;
-    };
-
-    const startDetect = opts => {
-      opts = opts || {};
-      const msgBox = $('#sMsg'); if (msgBox) msgBox.innerHTML = '';
-      const seq = ++detectSeq;
-      const key = opts.key != null ? String(opts.key).trim() : $('#sKey').value.trim();
-      const isCurrent = () => seq === detectSeq && $('#sKey').value.trim() === key;
-      status('أتحقّق…');
-      const p = (async () => {
-        try{ return await detectNow(Object.assign({}, opts, { key }), isCurrent); }
-        catch(e){ if (isCurrent()) status('ما قدرت أتحقّق: ' + esc(why(e))); return false; }
-      })();
-      detecting = p;
-      p.finally(() => { if (detecting === p) detecting = null; }).catch(() => {});
-      return p;
-    };
-
-    const scheduleDetect = () => {
-      clearTimeout(detectTimer);
-      detectTimer = setTimeout(() => { startDetect().catch(() => {}); }, 400);
-    };
-
-    const ensureDetected = async forceProbe => {
-      clearTimeout(detectTimer);
-      if (detecting){ try{ await detecting; }catch(e){} }
-      const runAndCheck = async () => {
-        const ok = await startDetect();
-        if (!ok) return false;
-        if (!$('#sModel').value.trim()){ status('اختر موديلًا من القائمة أول.'); return false; }
-        return true;
-      };
-      const key = $('#sKey').value.trim();
-      const model = $('#sModel').value.trim();
-      if (!key){
-        if (!model){ status('اختر موديلًا من القائمة أول.'); return false; }
-        if (customMode){
-          if ($('#sBase').value.trim() && model) return true;
-          status('أدخل رابط الـAPI واسم النموذج أول.'); openAdv(); return false;
-        }
-        status('الصق المفتاح عشان أكتشف المزوّد.');
-        return true;
-      }
-      if (customMode){
-        const base = $('#sBase').value.trim();
-        if (!base || !model){ status('أدخل رابط الـAPI واسم النموذج أول.'); openAdv(); return false; }
-        if (lastVerified.key === key && lastVerified.base === base) return true;
-        return runAndCheck();
-      }
-      const d = detectProvider(key);
-      if (d.kind === 'unknown'){ showProviderPicker(); return false; }
-      if (d.kind === 'unsupported'){ status(esc(d.message)); return false; }
-      const saved = providerForBase(aiCfg().base);
-      const savedId = saved ? saved.id : null;
-      const canonical = id => $('#sBase').value.trim() === PROVIDERS[id].base;
-      if (d.kind === 'known'){
-        if (!forceProbe && model && savedId === d.provider && canonical(d.provider)) return true;
-        return runAndCheck();
-      }
-      /* A generic sk- key can belong to DeepSeek or OpenAI; resolve it on Save/Test
-         even when the saved base already points at one of them. */
-      return runAndCheck();
-    };
-
-    $('#sShow').onclick = () => { const k = $('#sKey'); k.type = k.type === 'password' ? 'text' : 'password'; $('#sShow').textContent = k.type === 'password' ? 'أظهر' : 'أخفِ'; };
-    $('#sKey').addEventListener('input', scheduleDetect);
-    $('#sKey').addEventListener('change', scheduleDetect);
-    $('#sKey').addEventListener('paste', () => setTimeout(scheduleDetect, 0));
-    $('#sCustomLink').onclick = () => {
-      detectSeq++; clearTimeout(detectTimer);
-      const adv = $('#sAdv');
-      if (!adv.hidden){
-        adv.hidden = true;
-        customMode = false;
-        currentModels = [];
-        const p = providerForBase($('#sBase').value.trim());
-        currentProvider = p ? p.id : null;
-        if (p) renderStatus(p.id, $('#sModel').value.trim());
-        else status('الصق المفتاح عشان أكتشف المزوّد.');
-      } else {
-        adv.hidden = false;
-        customMode = true; currentProvider = 'custom'; currentModels = [];
-        status('نقطة نهاية مخصّصة. عدّل الرابط والنموذج والحدود.');
-      }
-    };
-    $('#sSave').onclick = async () => {
-      $('#sMsg').innerHTML = '';
-      const ok = await ensureDetected(false);
-      if (!ok) return;
-      saveConfig();
-      msg('<b>انحفظت.</b> في هالمتصفح بس.', true);
-    };
-    $('#sTest').onclick = async () => {
-      $('#sMsg').innerHTML = '';
-      const ok = await ensureDetected(true);
-      if (!ok) return;
-      saveConfig(); msg('<b>أجرّب…</b>', true);
-      try{
-        /* Room for a short answer plus a Gemini thinking round; an empty or failed
-           answer now throws, so the error path below shows the real reason. */
-        const t = await aiCall({ messages:[{ role:'user', content:'رد بكلمة وحدة: تمام' }], max:256 });
-        msg('<b>الاتصال شغّال.</b>' + esc(short(t, 60)), true);
-      }catch(e){ msg('<b>ما اشتغل.</b>' + errHTML(e)); }
-    };
-    $('#sClear').onclick = () => {
-      detectSeq++; clearTimeout(detectTimer);
-      const c2 = aiCfg(); c2.key = ''; aiSave(c2); $('#sKey').value = '';
-      lastVerified = { key:'', base:'' }; currentModels = [];
-      status('الصق المفتاح عشان أكتشف المزوّد.');
-      msg('<b>انمسح المفتاح.</b>', true);
-    };
   }
 }
 
@@ -6106,7 +6225,7 @@ async function init(){
     const scb = t.closest('[data-screen]'); if (scb && RD){ renderReader(RD.it, null, { screen:scb.dataset.screen }); return; }
     const tb = t.closest('[data-theme-btn]'); if (tb){ const th = document.documentElement.dataset.theme === 'dark' ? pref.get('lite', 'light') : 'dark'; applyTheme(th); pref.set('theme', th); prof().read.theme = th; profSave(); return; }
     const cl = t.closest('[data-close]'); if (cl){ if (cl.closest('#sheet')) closeSheet(); else closeModal(true); return; }
-    const pp = t.closest('[data-prep]'); if (pp){ const pit = itemById(pp.dataset.prep); if (!aiReady()){ closeChat(); location.hash = '#/profile/ai'; } else if (pit) prepModal([pit]); return; }
+    const pp = t.closest('[data-prep]'); if (pp){ const pit = itemById(pp.dataset.prep); if (!aiReady('cards')){ closeChat(); location.hash = '#/profile/ai'; } else if (pit) prepModal([pit]); return; }
     const px = t.closest('[data-prepx]'); if (px){ prof().dismissPrep[px.dataset.prepx] = 1; profSave(); const pb = px.closest('.prep-ban'); if (pb) pb.remove(); return; }
     const bmn = t.closest('[data-bmenu]'); if (bmn){ e.preventDefault(); const bit = itemById(bmn.dataset.bmenu); if (bit) bookMenu(bit); return; }
     const hr = t.closest('[data-href]'); if (hr){ e.preventDefault(); const h = hr.dataset.href; closeSheet(); closeModal(true); if (isMobile()) side(false); if (location.hash === h) route(); else location.hash = h; return; }

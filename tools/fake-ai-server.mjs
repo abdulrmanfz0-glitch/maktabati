@@ -5,8 +5,8 @@ export async function startFakeAI() {
   const stats = { requests:0, closed:0, models:[], last:null, modelFetches:[] };
   const control = { gemini503:false, gemini503Once:false, gemini404:false };
   const modelLists = {
-    '/v1/models': ['deepseek-flash', 'deepseek-chat'],
-    '/deepseek/v1/models': ['deepseek-flash', 'deepseek-chat'],
+    '/v1/models': ['deepseek-flash', 'deepseek-chat', 'deepseek-v4-pro'],
+    '/deepseek/v1/models': ['deepseek-flash', 'deepseek-chat', 'deepseek-v4-pro'],
     '/openai/v1/models': ['gpt-4o-mini', 'gpt-4o'],
     '/gemini/v1/models': [
       'models/gemini-3.1-flash-lite',
@@ -141,6 +141,7 @@ export async function startFakeAI() {
       const model = String(body.model || '');
       stats.requests++; stats.models.push(model);
       stats.last = {
+        path:u.pathname,
         model,
         stream:!!body.stream,
         temperature:body.temperature,

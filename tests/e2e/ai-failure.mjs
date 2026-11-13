@@ -25,7 +25,11 @@ async function waitReady() { await b.waitFor(`!!document.querySelector('#v-home 
 async function openSettingsTest() {
   await go('#/'); await waitReady();
   await go('#/profile/ai');
-  await b.waitFor(`!!document.querySelector('#sTest')`, 10000);
+  await b.waitFor(`!!document.querySelector('[data-ai-test]')`, 10000);
+}
+async function testConnection() {
+  await ev(`document.querySelector('[data-ai-test]').click()`);
+  await b.waitFor(`!!document.querySelector('.ai-test-msg') && !document.querySelector('.ai-test-msg').hidden`, 10000);
 }
 
 try {
@@ -89,23 +93,23 @@ try {
   // 6) test connection (non-stream) shows the same empty-answer error
   await setModel('fake-empty-json');
   await go('#/profile/ai');
-  await b.waitFor(`!!document.querySelector('#sTest')`, 10000);
-  await ev(`document.querySelector('#sTest').click()`);
-  await waitText('#sMsg', 'استهلك حدّ التوكنز', 12000);
+  await b.waitFor(`!!document.querySelector('[data-ai-test]')`, 10000);
+  await testConnection();
+  await waitText('.ai-test-msg', 'استهلك حدّ التوكنز', 12000);
   ok('test connection empty JSON', 'Arabic error shown');
 
   // 7) test connection shows the provider's own 400 text
   await setModel('fake-error-400');
   await openSettingsTest();
-  await ev(`document.querySelector('#sTest').click()`);
-  await waitText('#sMsg', 'Invalid Auth key.', 12000);
+  await testConnection();
+  await waitText('.ai-test-msg', 'Invalid Auth key.', 12000);
   ok('test connection 400 provider text', 'Invalid Auth key.');
 
   // 8) test connection shows the provider's 401 reason
   await setModel('fake-error-401');
   await openSettingsTest();
-  await ev(`document.querySelector('#sTest').click()`);
-  await waitText('#sMsg', 'ACCESS_TOKEN_TYPE_UNSUPPORTED', 12000);
+  await testConnection();
+  await waitText('.ai-test-msg', 'ACCESS_TOKEN_TYPE_UNSUPPORTED', 12000);
   ok('test connection 401 reason', 'ACCESS_TOKEN_TYPE_UNSUPPORTED');
   await go('#/'); await waitReady();
 
