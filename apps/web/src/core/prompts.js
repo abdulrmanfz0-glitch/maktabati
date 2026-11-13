@@ -7,7 +7,7 @@ export const NOSPOIL = 'فرّق بين المقروء وغير المقروء: 
 /* The no-internet line stays the default for every provider without search. */
 export const NO_WEB_LINE = 'إذا طلب البحث أو سأل عن معلومة حية أو حديثة (أسعار، أسهم، أخبار، أو أي شي حي أو حديث)، ابدأ بسطر قصير: «ما أقدر أبحث في الإنترنت، هذي معلومات عامة قد تكون قديمة»، وبعدها أعطِ معرفة عامة فقط. لا تذكر سعرًا أو تقييمًا أو حدثًا حديثًا كأنه حقيقة حالية. لا تقل هالجملة في أي رد ثاني.';
 /* Used only when Gemini actually has the google_search tool in this request. */
-export const WEB_SEARCH_LINE = 'ابحث متى ما احتجت معلومة حديثة أو مو متأكد منها، قدّم الكتاب إذا السؤال عنه، ولا تزعم إنك بحثت إذا ما بحثت.';
+export const WEB_SEARCH_LINE = 'تقدر تبحث في الإنترنت لما يحتاج السؤال معلومة حديثة أو من خارج الكتاب، وإذا كان السؤال عن الكتاب فجاوب من الكتاب أولًا، ولا تزعم إنك بحثت إذا ما بحثت.';
 export const WEB_SEARCH_FAILED_NOTE = 'تعذّر البحث';
 
 export const SYS = [

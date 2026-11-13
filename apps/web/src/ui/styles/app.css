@@ -311,6 +311,7 @@ body{ --tb-h:52px; }
 .cm-web{ margin-top:10px; }
 .cm-web-i{ display:flex; align-items:center; gap:5px; font-size:.8rem; color:var(--soft); }
 .cm-web-i svg{ width:14px; height:14px; }
+.cm-search-live{ margin:0 0 .4rem; color:var(--accent); }
 .cm-src{ border-top:1px solid var(--rule); margin-top:2px; }
 .cm-src summary{ min-height:44px; display:flex; align-items:center; gap:5px; list-style:none; cursor:pointer; font-size:.82rem; color:var(--accent); }
 .cm-src summary::-webkit-details-marker{ display:none; }

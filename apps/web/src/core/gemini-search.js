@@ -133,27 +133,6 @@ export function classifyGeminiSearchError({ status = 0, body = '', retryAfter = 
   return { kind, status:code, retryAfterMs };
 }
 
-function waitSeconds(retryAfterMs) {
-  const ms = Number(retryAfterMs);
-  return Number.isFinite(ms) && ms > 0 ? Math.max(1, Math.ceil(ms / 1000)) : 0;
-}
-
-/** Arabic/English copy for a classified search failure. */
-export function searchErrorText(kind, retryAfterMs = 0, lang = 'ar') {
-  const en = lang === 'en';
-  const wait = waitSeconds(retryAfterMs);
-  if (kind === 'grounding') return en
-    ? 'Web search with this model needs a paid Gemini key.'
-    : 'البحث في الإنترنت بهذا الموديل يحتاج مفتاح Gemini مدفوع.';
-  if (kind === 'rate-limit') return en
-    ? 'Gemini search hit its rate limit.' + (wait ? ' Wait ' + wait + 's, then try again.' : ' Wait a moment, then try again.')
-    : 'بحث Gemini وصل حد الطلبات.' + (wait ? ' انتظر ' + wait + ' ثانية ثم جرّب.' : ' انتظر قليلًا ثم جرّب.');
-  if (kind === 'quota') return en
-    ? 'Gemini search quota is exhausted on this key. Try later or use another key.'
-    : 'انتهت حصة بحث Gemini على هذا المفتاح. جرّب لاحقًا أو استخدم مفتاحًا آخر.';
-  return en ? 'Web search failed.' : 'تعذّر البحث في الإنترنت.';
-}
-
 /** Domain shown in the source list; empty for non-http(s) or invalid URLs. */
 export function citationDomain(url) {
   try {

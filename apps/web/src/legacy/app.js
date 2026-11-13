@@ -5,10 +5,11 @@ import { FILTER_ALL, FILTER_UNFILED, collectionKey, cleanName, makeCollection, c
 import { isPasteTooLarge, needsLowMemoryWarning } from '../core/limits.js';
 import { AI_DEFAULTS, basePolicy, keylessAllowed, estimateMessagesTokens, fitRequest, parseSSE, shouldRetry, retryDelayMs, validateCard, createTimeoutGuard, linkAbort, providerRequestOptions, providerChatHeaders, providerModelHeaders, parseProviderErrorBody, finishAnswer,
   GEMINI_FALLBACK_DEADLINE_MS, GEMINI_BUSY_MESSAGE, GEMINI_MODEL_GONE_MESSAGE,
-  geminiFallbackCandidates, firstByteTimeoutFor, webSearchPlan,
+  geminiFallbackCandidates, firstByteTimeoutFor,
   PROVIDERS, providerForBase, detectProvider, parseModels, modelsEndpoint } from '../core/ai.js';
 import { companionSystem, withoutWebSearchInstruction, WEB_SEARCH_FAILED_NOTE, MODES } from '../core/prompts.js';
-import { geminiNativeEndpoint, buildGeminiSearchRequest, geminiSearchHeaders, parseGeminiSearchSSE, normalizeGroundingMetadata, uniqueCitationSources, searchFailureCode, classifyGeminiSearchError, searchErrorText } from '../core/gemini-search.js';
+import { geminiNativeEndpoint, buildGeminiSearchRequest, geminiSearchHeaders, parseGeminiSearchSSE, normalizeGroundingMetadata, uniqueCitationSources, searchFailureCode, classifyGeminiSearchError } from '../core/gemini-search.js';
+import { searchPlan, deepSeekSearchFields, deepSeekSearchSources, deepSeekSearchQueries, classifyDeepSeekSearchError, searchErrorText, isSearchErrorKind, historyWithServerToolCalls } from '../core/web-search.js';
 import {
   AI_TASKS, migrateAiConfig, normalizeAiState, isAiState,
   resolveAiConfig, defaultPinForTask, resolveChatPin, groupedPins, allPinned,
@@ -213,7 +214,7 @@ function idbWriteImport(writes){
 }
 /* profile: ONE localStorage key for all new preferences (never exported) */
 const PK = 'maktabati:profile';
-const PDEF = { name:'', color:0, read:{}, ai:{ lang:'mirror', len:'normal', mode:'', spoiler:true, full:false, searchNoteSeen:false, mem:{ status:true, hl:true, notes:true, quotes:true, gloss:true } }, lastExport:0, lib:{ sort:'read', type:'all', view:'grid', col:'all' }, dismissPrep:{} };
+const PDEF = { name:'', color:0, read:{}, ai:{ lang:'mirror', len:'normal', mode:'', spoiler:true, full:false, searchNoteSeen:false, autoSearch:true, mem:{ status:true, hl:true, notes:true, quotes:true, gloss:true } }, lastExport:0, lib:{ sort:'read', type:'all', view:'grid', col:'all' }, dismissPrep:{} };
 let PROF = null;
 function prof(){
   if (PROF) return PROF;
@@ -2809,24 +2810,25 @@ async function aiCall(o){
   if (estimated + max > ctx) throw tag({ context:true, estimated:estimated, budget:ctx });
   const provider = providerForBase(c.base);
   const isGemini = !!provider && provider.id === 'gemini';
+  const isDeepSeek = !!provider && provider.id === 'deepseek';
   const requestedModel = String(c.model);
-  /* Only reader chat asks for search. The cfg is the conversation's chosen pin,
-     so the search request always uses that connection, model and key. */
-  const searchPlan = o.webSearch ? webSearchPlan({ base:c.base, model:requestedModel, allowed:true }) : { enabled:false };
-  if (searchPlan.enabled){
+  /* Reader chat passes the already-resolved plan. The cfg is the conversation's
+     chosen pin, so search can never be routed to another connection/provider. */
+  const search = o.search || { attach:false, mode:'none' };
+  if (search.attach && isGemini){
     try{
       return await geminiSearchCall(o, c, max, messages);
     }catch(e){
       if (e && e.name === 'AbortError') throw tag(e);
       if (e && e.partial) throw tag(e);
       logGeminiSearchFailure(e, c.key, requestedModel);
-      /* These three need a clear message and an explicit "send without search"
-         action, not a silent fallback. */
-      if (e && (e.searchKind === 'grounding' || e.searchKind === 'rate-limit' || e.searchKind === 'quota')) throw tag(e);
+      /* Classified search failures need a clear message and a no-search action,
+         not a silent fallback. */
+      if (e && isSearchErrorKind(e.searchKind)) throw tag(e);
       const code = searchFailureCode(e);
       if (o.onNote) { try{ o.onNote(WEB_SEARCH_FAILED_NOTE + (code ? ' (' + code + ')' : '')); }catch(ignore){} }
       /* One automatic no-search retry for unclassified/transport failures. */
-      return await aiCall(Object.assign({}, o, { messages:withoutWebSearchInstruction(messages), webSearch:false, onNote:undefined }));
+      return await aiCall(Object.assign({}, o, { messages:withoutWebSearchInstruction(messages), search:{ attach:false, mode:'none' }, onNote:undefined }));
     }
   }
   const body = { model:requestedModel, messages, stream:!!o.stream, temperature:Number.isFinite(Number(o.temperature)) ? Number(o.temperature) : (o.json ? 0.2 : 0.7), max_tokens:max };
@@ -2834,6 +2836,7 @@ async function aiCall(o){
      low reasoning effort because Gemini 3 always thinks and its thinking tokens count
      against max_tokens. Other OpenAI-compatible providers never see either field. */
   Object.assign(body, providerRequestOptions(c.base));
+  if (search.attach && isDeepSeek) Object.assign(body, deepSeekSearchFields(search));
   if (o.jsonObject) body.response_format = { type:'json_object' };
   const ctrl = new AbortController();
   let out = '';
@@ -2877,6 +2880,10 @@ async function aiCall(o){
             break;
           }
           if (isGemini && res.status === 404) throw { modelGone:true, message:GEMINI_MODEL_GONE_MESSAGE };
+          if (search.attach && isDeepSeek){
+            const classified = classifyDeepSeekSearchError({ status:res.status, detail, retryAfter:res.headers.get('retry-after') || '' });
+            if (classified.kind) throw { status:res.status, detail, search:true, searchKind:classified.kind, retryAfterMs:classified.retryAfterMs };
+          }
           if (shouldRetry(res.status) && attempt < AI_DEFAULTS.maxRetries){
             await sleepAbortable(retryDelayMs(attempt, res.headers.get('retry-after')), ctrl.signal);
             continue;
@@ -2899,7 +2906,7 @@ async function aiCall(o){
         if (!res.body) throw { status:res.status, detail:'المزوّد ما أرسل جسم الرد.' };
         guard.idle();
         const rd = res.body.getReader(), dec = new TextDecoder();
-        let buf = '', finish = null;
+        let buf = '', finish = null, deepSeekCalls = null, deepSeekAnnotations = null;
         for (;;){
           const r = await rd.read();
           guard.idle();
@@ -2908,18 +2915,27 @@ async function aiCall(o){
           const s = parseSSE(buf); buf = s.rest;
           for (const ev of s.events){
             if (ev.error) throw { status:res.status, detail:ev.error };
+            if (ev.toolEvent && o.onToolEvent){ try{ o.onToolEvent(ev.toolEvent); }catch(ignore){} }
+            if (ev.serverToolCalls) deepSeekCalls = ev.serverToolCalls;
+            if (ev.annotations) deepSeekAnnotations = ev.annotations;
             if (ev.delta){ out += ev.delta; if (o.onDelta) o.onDelta(out); }
             if (ev.finish) finish = ev.finish;
           }
-          if (s.done) return finishAnswer(out, finish);
+          if (s.done) break;
         }
         if (buf.trim()){
           const s = parseSSE(buf + '\n');
           for (const ev of s.events){
             if (ev.error) throw { status:res.status, detail:ev.error };
+            if (ev.toolEvent && o.onToolEvent){ try{ o.onToolEvent(ev.toolEvent); }catch(ignore){} }
+            if (ev.serverToolCalls) deepSeekCalls = ev.serverToolCalls;
+            if (ev.annotations) deepSeekAnnotations = ev.annotations;
             if (ev.delta){ out += ev.delta; if (o.onDelta) o.onDelta(out); }
             if (ev.finish) finish = ev.finish;
           }
+        }
+        if (search.attach && isDeepSeek && (deepSeekCalls || deepSeekAnnotations) && o.onSearchMeta){
+          try{ o.onSearchMeta({ serverToolCalls:deepSeekCalls, annotations:deepSeekAnnotations }); }catch(ignore){}
         }
         return finishAnswer(out, finish);
       }
@@ -2932,6 +2948,11 @@ async function aiCall(o){
       if (isGemini && sawGemini503) throw tag({ geminiBusy:true, message:GEMINI_BUSY_MESSAGE });
       throw tag({ timeout:true });
     }
+    if (search.attach && isDeepSeek && e && e.searchKind === undefined && e.status !== undefined){
+      const classified = classifyDeepSeekSearchError({ status:e.status, detail:e.detail });
+      if (classified.kind){ e.searchKind = classified.kind; e.retryAfterMs = classified.retryAfterMs; }
+    }
+    if (e && isSearchErrorKind(e.searchKind)) throw tag(e);
     if (e && (e.status !== undefined || e.cfg || e.context || e.empty || e.insecure || e.network || e.name === 'AbortError' || e.geminiBusy || e.modelGone)) throw tag(e);
     throw tag({ network:true, cause:e });
   } finally {
@@ -3991,7 +4012,7 @@ function bookContext(it, full){
 
 /* ---------- companion chat ---------- */
 const sysText = (webSearch, noWebLine = true) => companionSystem({ spoiler:prof().ai.spoiler, webSearch, noWebLine });
-const searchPlanFor = (cfg, allowed = true) => cfg ? webSearchPlan({ base:cfg.base, model:cfg.model, allowed }) : { enabled:false, reason:'cfg' };
+const searchPlanFor = (cfg, manual = false) => cfg ? searchPlan({ provider:cfg.provider, model:cfg.model, autoSetting:prof().ai.autoSearch, manual }) : { mode:'none', attach:false, reason:'cfg' };
 function styleTxt(){
   const a = prof().ai, L = { msa:'اكتب بالفصحى البسيطة.', gulf:'اكتب باللهجة الخليجية البسيطة.', mirror:'' }, N = { short:'اجعل الرد مختصراً (فقرة أو فقرتين).', normal:'', long:'فصّل الشرح مع أمثلة عند الحاجة.' };
   const s = [L[a.lang], N[a.len]].filter(Boolean).join(' ');
@@ -4148,8 +4169,9 @@ function msgHTML(m, i){
   const note = m.note ? '<div class="hint" style="margin:0 0 .35rem">' + esc(m.note) + '</div>' : '';
   const cut = m.cut ? '<div class="hint" style="margin:0 0 .35rem">' + esc(tx('انقطع الرد، أرسل رسالة جديدة للمتابعة.')) + '</div>' : '';
   const model = m.model && m.model.label ? '<div class="cm-model" title="' + esc(m.model.connection || '') + '">' + esc(m.model.label) + '</div>' : '';
+  const live = m.searchStatus ? '<div class="cm-web-i cm-search-live">' + svg('globe') + esc(m.searchStatus) + '</div>' : '';
   const web = m.web ? '<div class="cm-web"><div class="cm-web-i">' + svg('globe') + tx('بحث في الإنترنت') + '</div>' + webSourcesHTML(m.web) + '</div>' : '';
-  return '<div class="cm-a md">' + note + cut + (m.content ? aiHTML(m.content) : m.streaming ? '<span class="typing" role="status" aria-label="' + tx('يكتب…') + '"><i></i><i></i><i></i></span>' : '') +
+  return '<div class="cm-a md">' + note + cut + live + (m.content ? aiHTML(m.content) : m.streaming ? '<span class="typing" role="status" aria-label="' + tx('يكتب…') + '"><i></i><i></i><i></i></span>' : '') +
     (cards ? '<div class="bcards">' + cards + '</div>' : '') + web +
     (m.content && !m.streaming ? '<div class="cm-tools"><button class="cm-copy" data-copy="' + i + '" aria-label="' + tx('انسخ') + '" title="' + tx('انسخ') + '">' + svg('copy') + '</button></div>' : '') +
     (m.content ? model : '') + '</div>';
@@ -4176,8 +4198,8 @@ function drawHist(){
 const ACCEPT = '.pdf,.epub,.md,.markdown,.txt,.json,application/pdf,application/epub+zip,text/plain,text/markdown,application/json'; /* same as UP_ACCEPT */
 function searchToggleHTML(C){
   const cfg = aiResolve('chat', C.conv.ai);
-  const plan = searchPlanFor(cfg, true);
-  if (!plan.enabled) return '';
+  const plan = searchPlanFor(cfg, C.conv.webSearch === true);
+  if (plan.mode !== 'manual' || plan.reason === 'model' || plan.reason === 'cfg' || plan.reason === 'auto-off') return '';
   const on = C.conv.webSearch === true;
   return '<div class="ch-web-row"><button type="button" class="chip ch-web" data-websearch aria-pressed="' + on + '" aria-label="' + esc(tx('البحث في الإنترنت')) + '">' +
     svg('globe') + '<span>' + tx('البحث في الإنترنت') + '</span></button></div>';
@@ -4269,13 +4291,9 @@ function drawChat(){
     const wb = e.target.closest('[data-websearch]');
     if (wb){
       const cfg = aiResolve('chat', C.conv.ai);
-      if (!searchPlanFor(cfg, true).enabled) return;
-      const on = C.conv.webSearch !== true;
-      C.conv.webSearch = on;
-      if (on && !prof().ai.searchNoteSeen){
-        prof().ai.searchNoteSeen = true; profSave();
-        toast(tx('البحث في الإنترنت قد يكلّف أكثر على حساب Gemini.'));
-      }
+      const plan = searchPlanFor(cfg, true);
+      if (plan.mode !== 'manual' || plan.reason === 'model' || plan.reason === 'auto-off' || plan.reason === 'cfg') return;
+      C.conv.webSearch = C.conv.webSearch !== true;
       saveConv(C); drawChat();
       return;
     }
@@ -4326,6 +4344,7 @@ function localCommand(text){
 function buildMessages(conv, full, webSearch, noWebLine = true){
   const ms = conv.msgs.filter(m => !m.err && (m.role === 'user' || m.content));
   const last = ms.filter(m => m.role === 'user').slice(-1)[0] || { content:'' };
+  const cfg = aiCfg('chat', conv.ai);
   const q = last.content + ' ' + (last.attach || '');
   const parts = [];
   let focus = last.attach || '';
@@ -4342,8 +4361,10 @@ function buildMessages(conv, full, webSearch, noWebLine = true){
     if (last.mode === 'link' && it) parts.push({ id:'rest_library', label:'باقي المكتبة', text:allItems().filter(x => x.id !== it.id).map(x => bookMemory(x, false)).join('\n\n') + passagesTxt(searchHits(q, 6).filter(h => h.it.id !== it.id)) });
   }
   const base = sysText(!!webSearch, noWebLine !== false) + (last.mode && MODES[last.mode] ? '\n\n' + MODES[last.mode].sys : '') + styleTxt();
-  const history = ms.slice(-16).map(m => ({ role:m.role, content:m.role === 'user' && m.attach ? '<quoted_passage>\n' + m.attach + '\n</quoted_passage>' + (m.attachSrc ? '\n\n<source_text>\n' + m.attachSrc + '\n</source_text>' : '') + '\n\n' + m.content : m.content }));
-  const cfg = aiCfg('chat', conv.ai);
+  const history = ms.slice(-16).map(m => {
+    const row = { role:m.role, content:m.role === 'user' && m.attach ? '<quoted_passage>\n' + m.attach + '\n</quoted_passage>' + (m.attachSrc ? '\n\n<source_text>\n' + m.attachSrc + '\n</source_text>' : '') + '\n\n' + m.content : m.content };
+    return historyWithServerToolCalls(row, m, cfg.provider);
+  });
   const max = Math.max(1, Math.min(8000, Number(cfg.max) || AI_DEFAULTS.maxTokens));
   const budget = Math.max(1024, (Number(cfg.ctx) || AI_DEFAULTS.contextWindow) - max - 256);
   const fit = fitRequest({ base, parts, history, budget, focus });
@@ -4422,15 +4443,43 @@ function chatErrHTML(e){
 async function runStream(run){
   const { conv, am, full, ctrl, cfg, noSearch } = run;
   const open = () => CH && CH.conv === conv;
-  const web = !noSearch && searchPlanFor(cfg, conv.webSearch === true).enabled;
+  const plan = noSearch ? { mode:'none', attach:false } : searchPlanFor(cfg, conv.webSearch === true);
+  const web = plan.attach;
   const noWebLine = !noSearch;
+  let searchUsed = false;
   try{
-    await aiCall({ task:'chat', cfg, stream:true, signal:ctrl.signal, messages:buildMessages(conv, full, web, noWebLine), webSearch:web,
+    await aiCall({ task:'chat', cfg, stream:true, signal:ctrl.signal, messages:buildMessages(conv, full, web, noWebLine), search:plan,
+      onToolEvent:ev => {
+        if (!ev) return;
+        if (ev.type === 'call_started'){
+          const qs = ev.call && ev.call.action && Array.isArray(ev.call.action.queries) ? ev.call.action.queries.filter(Boolean) : [];
+          am.searchStatus = tx('يبحث') + (qs.length ? ': ' + qs.slice(0, 2).join('، ') : '…');
+          if (open()) schedMsgs();
+        } else if (ev.type === 'call_completed'){
+          am.searchStatus = ev.call && ev.call.status === 'failed' ? tx('تعذّر البحث') : tx('تم البحث');
+          if (open()) schedMsgs();
+        }
+      },
+      onSearchMeta:meta => {
+        const calls = meta && Array.isArray(meta.serverToolCalls) ? meta.serverToolCalls : [];
+        const annotations = meta && Array.isArray(meta.annotations) ? meta.annotations : [];
+        if (calls.length) am.serverToolCalls = calls;
+        const sources = deepSeekSearchSources(calls, annotations);
+        const queries = deepSeekSearchQueries(calls);
+        if (sources.length || queries.length){
+          am.web = { sources, queries };
+          searchUsed = true;
+        }
+        delete am.searchStatus;
+        if (open()) schedMsgs();
+        scheduleSave(conv);
+      },
       onSearch:info => {
         const sources = uniqueCitationSources(info && info.citations);
         const queries = Array.isArray(info && info.queries) ? info.queries.slice(0, 8) : [];
         if (!sources.length && !queries.length) return;
         am.web = { sources, queries };
+        searchUsed = true;
         if (open()) schedMsgs();
         scheduleSave(conv);
       },
@@ -4450,7 +4499,7 @@ async function runStream(run){
   catch(e){
     if (e && e.name === 'AbortError'){
       if (!conv.deleted) am.content = am.content || tx('(انوقف)');
-    } else if (e && (e.searchKind === 'grounding' || e.searchKind === 'rate-limit' || e.searchKind === 'quota')){
+    } else if (e && isSearchErrorKind(e.searchKind)){
       am.err = esc(searchErrorText(e.searchKind, e.retryAfterMs, LANG));
       am.retryNoSearch = true;
     } else {
@@ -4461,11 +4510,16 @@ async function runStream(run){
   finally {
     flushSave(conv);
     delete am.streaming;
+    delete am.searchStatus;
     RUN.delete(conv.id);
     conv.t = Date.now();
     if (!am.content && !am.err) am.err = errHTML({ empty:true });
     const wasOpen = open();
     if (wasOpen) drawChat();
+    if (!conv.deleted && wasOpen && searchUsed && !prof().ai.searchNoteSeen){
+      prof().ai.searchNoteSeen = true; profSave();
+      toast(tx('البحث في الإنترنت قد يكلّف مبلغًا بسيطًا إضافيًا على حساب مزوّدك.'));
+    }
     if (!conv.deleted){
       if (!wasOpen && !run.stop) conv.unread = true;
       try{ await saveRec(conv); }catch(e){}
@@ -4905,6 +4959,8 @@ function tabAi(){
     '<p class="quiet" style="margin:0">اختر من الموديلات المثبتة فقط. إذا ما اخترت لمهمة، تستخدم افتراضي الدردشة.</p>' +
     aiTaskDefaultsHTML(S) +
     '<p class="hint" style="margin:.5rem 0 0">تغيير موديل المحادثة يخص المحادثة الحالية فقط؛ ما يغيّر الافتراضيات.</p>' +
+    '<h2 class="pf-h">البحث في الإنترنت</h2>' +
+    ptog('ai.autoSearch', 'البحث التلقائي في الإنترنت', A.autoSearch, 'يشتغل تلقائيًا لما يحتاج السؤال معلومة حديثة أو من خارج الكتاب. مع وضع التفكير في DeepSeek يصير البحث أعمق وأغلى.') +
     '<h2 class="pf-h">أسلوب الرد</h2>' +
     pfield('اللغة', pseg('ai.lang', [['msa', 'بسيطة فصحى'], ['gulf', 'خليجي'], ['mirror', 'مثل ما أكتب']], A.lang)) +
     pfield('الطول', pseg('ai.len', [['short', 'مختصر'], ['normal', 'عادي'], ['long', 'مفصّل']], A.len)) +
@@ -6236,9 +6292,13 @@ const EN_UI = {
 /* web-search strings */
 Object.entries({
   'البحث في الإنترنت':'Web search',
-  'البحث في الإنترنت قد يكلّف أكثر على حساب Gemini.':'Web search may cost extra on your Gemini account.',
+  'البحث التلقائي في الإنترنت':'Automatic web search',
+  'يشتغل تلقائيًا لما يحتاج السؤال معلومة حديثة أو من خارج الكتاب. مع وضع التفكير في DeepSeek يصير البحث أعمق وأغلى.':'Runs automatically when a question needs current or outside information. With DeepSeek thinking on, search becomes deeper and more expensive.',
+  'البحث في الإنترنت قد يكلّف مبلغًا بسيطًا إضافيًا على حساب مزوّدك.':'Web search may cost a little extra on your provider account.',
   'أرسل بدون بحث':'Send without search',
   'بحث في الإنترنت':'Searched the web',
+  'يبحث':'Searching',
+  'تم البحث':'Search finished',
   'المصادر':'Sources',
   'تعذّر البحث':'Web search failed'
 }).forEach(([k, v]) => { if (!(k in EN_UI)) EN_UI[k] = v; });
