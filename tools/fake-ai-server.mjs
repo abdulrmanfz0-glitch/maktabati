@@ -2,8 +2,8 @@
 import http from 'node:http';
 
 export async function startFakeAI() {
-  const stats = { requests:0, closed:0, models:[], last:null, modelFetches:[] };
-  const control = { gemini503:false, gemini503Once:false, gemini404:false };
+  const stats = { requests:0, searchRequests:0, closed:0, models:[], last:null, lastSearch:null, modelFetches:[] };
+  const control = { gemini503:false, gemini503Once:false, gemini404:false, search429Once:false, searchSlow:false, searchNoGrounding:false, searchGroundingBlocked:false, searchQuota:false };
   const modelLists = {
     '/v1/models': ['deepseek-flash', 'deepseek-chat', 'deepseek-v4-pro'],
     '/deepseek/v1/models': ['deepseek-flash', 'deepseek-chat', 'deepseek-v4-pro'],
@@ -82,7 +82,7 @@ export async function startFakeAI() {
   const server = http.createServer((req, res) => {
     const u = new URL(req.url, 'http://127.0.0.1');
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key, anthropic-version, anthropic-dangerous-direct-browser-access');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key, x-goog-api-key, anthropic-version, anthropic-dangerous-direct-browser-access');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
     if (u.pathname === '/stats') { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(stats)); return; }
@@ -159,6 +159,76 @@ export async function startFakeAI() {
       };
       stats.lastUserContent = (body.messages || []).filter(m => m && m.role === 'user').map(m => String(m.content || '')).join('\n');
       stats.lastFull = body; /* complete request body for e2e assertions (labels, placeholders) */
+
+      /* Native Gemini streamGenerateContent (search enabled). Records only booleans
+         about credentials, never the key itself. */
+      if (/:streamGenerateContent$/.test(u.pathname)) {
+        const match = /\/models\/([^/:]+):streamGenerateContent$/.exec(u.pathname);
+        stats.searchRequests++;
+        stats.lastSearch = {
+          model:match ? decodeURIComponent(match[1]) : '',
+          apiKeyHeader:!!req.headers['x-goog-api-key'],
+          authHeader:!!req.headers.authorization,
+          queryKey:u.searchParams.has('key'),
+          tools:Array.isArray(body.tools) ? body.tools : null,
+          system:body.systemInstruction && Array.isArray(body.systemInstruction.parts)
+            ? body.systemInstruction.parts.map(p => String((p && p.text) || '')).join('\n') : '',
+          body
+        };
+        if (control.searchGroundingBlocked) {
+          res.writeHead(429, { 'Content-Type':'application/json', 'Cache-Control':'no-cache' });
+          res.end(JSON.stringify([{ error:{ code:429, message:'Grounding with Google Search is not available for your project. Please enable billing.', status:'RESOURCE_EXHAUSTED' } }]));
+          return;
+        }
+        if (control.searchQuota) {
+          res.writeHead(429, { 'Content-Type':'application/json', 'Cache-Control':'no-cache' });
+          res.end(JSON.stringify([{ error:{ code:429, message:'You exceeded your current quota, please check your plan and billing details.', status:'RESOURCE_EXHAUSTED', details:[{ '@type':'type.googleapis.com/google.rpc.QuotaFailure', violations:[{ quotaId:'GenerateContentRequestsPerDayPerProjectPerModel-FreeTier', quotaValue:'100' }] }] } }]));
+          return;
+        }
+        if (control.search429Once) {
+          control.search429Once = false;
+          res.writeHead(429, { 'Content-Type':'application/json', 'Retry-After':'7', 'Cache-Control':'no-cache' });
+          res.end(JSON.stringify([{ error:{ code:429, message:'Resource has been exhausted (e.g. check quota).', status:'RESOURCE_EXHAUSTED', details:[{ '@type':'type.googleapis.com/google.rpc.RetryInfo', retryDelay:'7s' }] } }]));
+          return;
+        }
+        const sendSearch = obj => { try{ res.write('data: ' + JSON.stringify(obj) + '\n\n'); }catch (e) {} };
+        const chunks = [
+          { candidates:[{ content:{ role:'model', parts:[{ text:'وصلت ' }] }, groundingMetadata:{
+            webSearchQueries:['سؤال تجريبي'],
+            groundingChunks:[{ web:{ uri:'https://example.com/one', title:'example.com' } }],
+            groundingSupports:[{ segment:{ startIndex:0, endIndex:6 }, groundingChunkIndices:[0] }]
+          } }] },
+          /* A second event with a new chunk and a global support index. The app must
+             accumulate chunks across events, as the Gemini streaming docs require. */
+          { candidates:[{ content:{ role:'model', parts:[{ text:'المعلومة من الويب.' }] }, groundingMetadata:{
+            groundingChunks:[{ web:{ uri:'https://news.example.org/two', title:'news.example.org' } }],
+            groundingSupports:[{ segment:{ startIndex:7, endIndex:26 }, groundingChunkIndices:[1] }]
+          } }] }
+        ];
+        res.writeHead(200, { 'Content-Type':'text/event-stream', 'Cache-Control':'no-cache', 'Connection':'keep-alive' });
+        if (control.searchNoGrounding) {
+          sendSearch({ candidates:[{ content:{ role:'model', parts:[{ text:'تم بلا مصادر' }] }, finishReason:'STOP' }] });
+          res.write('data: [DONE]\n\n'); res.end();
+          return;
+        }
+        const endSearch = () => {
+          sendSearch({ candidates:[{ content:{ role:'model', parts:[] }, finishReason:'STOP' }] });
+          res.write('data: [DONE]\n\n'); res.end();
+        };
+        if (control.searchSlow) {
+          res.on('close', () => { stats.closed++; });
+          let index = 0;
+          const timer = setInterval(() => {
+            if (res.writableEnded || res.destroyed){ clearInterval(timer); return; }
+            if (index < chunks.length) sendSearch(chunks[index++]);
+            else { clearInterval(timer); endSearch(); }
+          }, 700);
+          return;
+        }
+        for (const chunk of chunks) sendSearch(chunk);
+        endSearch();
+        return;
+      }
 
       if (u.pathname.startsWith('/gemini/')) {
         if (control.gemini404) {

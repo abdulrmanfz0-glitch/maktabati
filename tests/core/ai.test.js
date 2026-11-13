@@ -5,7 +5,7 @@ import {
   createTimeoutGuard, linkAbort, isDeepSeekBase, isGeminiBase, migrateDeepSeekModel,
   GEMINI_REASONING_EFFORT, providerRequestOptions, providerChatHeaders, providerModelHeaders, parseProviderErrorBody, emptyAnswerError, finishAnswer,
   GEMINI_FIRST_BYTE_TIMEOUT_MS, GEMINI_BUSY_MESSAGE, GEMINI_MODEL_GONE_MESSAGE,
-  geminiFallbackCandidates, filterModelChoices, firstByteTimeoutFor,
+  geminiFallbackCandidates, filterModelChoices, firstByteTimeoutFor, webSearchPlan,
   PROVIDERS, providerForBase, detectProvider, pickDefaultModel, parseModels, modelsEndpoint
 } from '../../apps/web/src/core/ai.js';
 
@@ -67,6 +67,23 @@ describe('Gemini request controls', () => {
     expect(providerRequestOptions('https://openrouter.ai/api/v1')).toEqual({});
     expect(providerRequestOptions('https://api.anthropic.com/v1')).toEqual({});
     expect(providerRequestOptions('http://localhost:11434/v1')).toEqual({});
+  });
+});
+
+describe('reader-chat web search switch', () => {
+  it('enables search only for Gemini, a supported model, and an allowed conversation', () => {
+    const gemini = 'https://generativelanguage.googleapis.com/v1beta/openai';
+    expect(webSearchPlan({ base:gemini, model:'gemini-3.1-flash-lite', allowed:true }))
+      .toEqual({ enabled:true, reason:'ok' });
+    expect(webSearchPlan({ base:gemini, model:'gemini-3.8-flash' }).enabled).toBe(true);
+    expect(webSearchPlan({ base:gemini, model:'gemini-3.8-flash', allowed:false }))
+      .toEqual({ enabled:false, reason:'off' });
+    expect(webSearchPlan({ base:gemini, model:'gemini-3.5-flash', allowed:true }))
+      .toEqual({ enabled:false, reason:'model' });
+    expect(webSearchPlan({ base:'https://api.deepseek.com', model:'deepseek-flash', allowed:true }))
+      .toEqual({ enabled:false, reason:'provider' });
+    expect(webSearchPlan({ base:'http://localhost:11434/v1', model:'gemini-3.8-flash', allowed:true }))
+      .toEqual({ enabled:false, reason:'provider' });
   });
 });
 
