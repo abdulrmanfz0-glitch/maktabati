@@ -163,10 +163,8 @@ the whole app is inlined by `vite-plugin-singlefile`.
   and chat messages are sent to the provider you configured. If you enable
   "allow the whole book", the whole book is sent. Review the provider's privacy
   and data-retention terms.
-- The hosted demo (maktabati-61y.pages.dev) uses Cloudflare Web Analytics, a
-  cookieless page-view counter (visits, pages, referrers, countries). It does
-  not see your books, highlights, chats, or API key, and does not track
-  individual visitors. Self-hosted builds load nothing unless you enable it.
+- The app loads no analytics and no tracking beacons of any kind; there is
+  nothing to enable on self-hosted builds.
 - Remote images in imported Markdown, imported HTML, and AI replies are not
   loaded. They are shown as plain links or alt text. Local `data:image/...` and
   `blob:` images are displayed.
@@ -237,7 +235,7 @@ Third-party components and assets are listed in
   كذلك مع ترويسة CORS خاصة، وOpenAI الرسمي غير موثق للمتصفح.
 - **الخصوصية:** الكتب والتظليلات في IndexedDB على جهازك، والمفتاح في
   `localStorage`. عند السؤال تُرسل المقاطع ذات الصلة إلى مزوّد الذكاء الذي
-  اخترته. النسخة المستضافة تستخدم Cloudflare Web Analytics لعدّ الزيارات فقط، بلا كوكيز، ولا ترى كتبك أو مفتاحك. الصور الخارجية محجوبة وتظهر كروابط أو نص بديل.
+  اخترته. التطبيق لا يحمّل أي تحليلات أو أدوات تتبع إطلاقًا. الصور الخارجية محجوبة وتظهر كروابط أو نص بديل.
 - **الحدود:** EPUB أكبر من 5,000 ملف، أو 64MB للملف الواحد، أو 256MB بعد فك
   الضغط، أو نسبة ضغط أعلى من 100:1 يُرفض. النص الملصوق حتى 2 مليون حرف،
   والملفات حتى 250MB، وفوق 25MB على جهاز بذاكرة 4GB أو أقل يظهر تأكيد.
