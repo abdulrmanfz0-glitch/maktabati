@@ -47,9 +47,16 @@ export function ocrTimeEstimate(pages, avgMs = OCR_DEFAULT_MS_PER_PAGE) {
   return arDuration(total);
 }
 
-/** Retry-button label: empty when nothing failed, otherwise with the count. */
+/** Retry-button label: empty when nothing failed, with the count in parentheses. */
 export function ocrRetryLabel(n) {
-  return n > 0 ? 'أعد قراءة ' + arCount(n, 'صفحة') + ' الفاشلة' : '';
+  if (n <= 0) return '';
+  if (n === 1) return 'أعد قراءة الصفحة الفاشلة';
+  return 'أعد قراءة الصفحات الفاشلة (' + n + ')';
+}
+
+/** «قرابة» is dropped for under-a-minute durations: «أقل من دقيقة» stands alone. */
+export function ocrApproxDuration(est) {
+  return est === 'أقل من دقيقة' ? est : 'قرابة ' + est;
 }
 
 /** Additive upgrade (v2 -> v3): create the store with a bookId index if missing. */

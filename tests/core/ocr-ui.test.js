@@ -2,7 +2,7 @@
 // mem/IDB sync under stale writes, onlyFailed retries, and single-PDF-open runs.
 import { describe, it, expect } from 'vitest';
 import { persistOnce, ocrLockHeld, scanBookFields } from '../../apps/web/src/core/scan-save.js';
-import { ocrTimeEstimate, arCount, arDuration, ocrRetryLabel, OCR_DEFAULT_MS_PER_PAGE, OCR_FAILED_LINE, OCR_CHAT_LABEL, OCR_BOOK_DISCLOSURE, OCR_EXPORT_NOTICE, ensureOcrPagesStore, putOcrPageAndBook, getOcrPage, getAllPages, putBook, getBook } from '../../apps/web/src/core/ocr-store.js';
+import { ocrTimeEstimate, arCount, arDuration, ocrRetryLabel, ocrApproxDuration, OCR_DEFAULT_MS_PER_PAGE, OCR_FAILED_LINE, OCR_CHAT_LABEL, OCR_BOOK_DISCLOSURE, OCR_EXPORT_NOTICE, ensureOcrPagesStore, putOcrPageAndBook, getOcrPage, getAllPages, putBook, getBook } from '../../apps/web/src/core/ocr-store.js';
 import { createOcrRunner, mergeOcrBook } from '../../apps/web/src/core/ocr-run.js';
 import { scanPageId, ensureStores } from '../../apps/web/src/core/scan-save.js';
 
@@ -70,11 +70,17 @@ describe('time estimate and shared copy', () => {
     expect(arDuration(7200)).toBe('2 ساعتان');
     expect(arDuration(10800)).toBe('3 ساعات');
   });
-  it('retry label carries the count, empty when nothing failed', () => {
+  it('retry label: grammatical, count in parentheses, empty when nothing failed', () => {
     expect(ocrRetryLabel(0)).toBe('');
-    expect(ocrRetryLabel(1)).toBe('أعد قراءة 1 صفحة الفاشلة');
-    expect(ocrRetryLabel(3)).toBe('أعد قراءة 3 صفحات الفاشلة');
-    expect(ocrRetryLabel(12)).toBe('أعد قراءة 12 صفحة الفاشلة');
+    expect(ocrRetryLabel(1)).toBe('أعد قراءة الصفحة الفاشلة');
+    expect(ocrRetryLabel(2)).toBe('أعد قراءة الصفحات الفاشلة (2)');
+    expect(ocrRetryLabel(3)).toBe('أعد قراءة الصفحات الفاشلة (3)');
+    expect(ocrRetryLabel(12)).toBe('أعد قراءة الصفحات الفاشلة (12)');
+  });
+  it('approx durations drop قرابة under a minute', () => {
+    expect(ocrApproxDuration('أقل من دقيقة')).toBe('أقل من دقيقة');
+    expect(ocrApproxDuration('4 دقايق')).toBe('قرابة 4 دقايق');
+    expect(ocrApproxDuration('1 دقيقة')).toBe('قرابة 1 دقيقة');
   });
   it('shared Arabic copy exists and mentions the essentials', () => {
     expect(OCR_FAILED_LINE).toBe('تعذّرت قراءة هذه الصفحة.');

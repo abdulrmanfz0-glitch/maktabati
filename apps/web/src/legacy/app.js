@@ -12,7 +12,7 @@ import { findNormalizedRange } from '../core/text.js';
 import { PROMPT_VERSION, CORRECTIVE_MESSAGE, parseGlossary, glossaryHash, glossaryForText, extractChapterUnits, chunkUnits, buildMessages as buildTranslationMessages, parseTranslation, qaSegment, estimateChapter, fingerprint, chapterSourceHash, lastTwoSentences, bookPlan, runConcurrent, hashString, isPeak, isArabicHighlight, isSourceHighlight } from '../core/translate.js';
 import { trGetJob, trPutJob, trListJobs, trGetSegments, trPutSegment, trDeleteJob, trGetGlossary, trPutGlossary, trDeleteBook, trClearAll } from '../core/translate-store.js';
 import { scannedSaveAllowed, scanBookFields, isPendingScan, ensureStores, quotaAllows, saveScannedBook, deleteScannedFile, sweepOrphanFiles, getScannedFile, persistOnce, ocrLockHeld } from '../core/scan-save.js';
-import { ensureOcrPagesStore, makeOcrStore, delOcrPagesForBook, sweepOcrPages, getBook, OCR_FAILED_LINE, OCR_CHAT_LABEL, OCR_BOOK_DISCLOSURE, OCR_EXPORT_NOTICE, OCR_DEFAULT_MS_PER_PAGE, OCR_FIRST_DOWNLOAD_MB, ocrTimeEstimate, arCount, ocrRetryLabel } from '../core/ocr-store.js';
+import { ensureOcrPagesStore, makeOcrStore, delOcrPagesForBook, sweepOcrPages, getBook, OCR_FAILED_LINE, OCR_CHAT_LABEL, OCR_BOOK_DISCLOSURE, OCR_EXPORT_NOTICE, OCR_DEFAULT_MS_PER_PAGE, OCR_FIRST_DOWNLOAD_MB, ocrTimeEstimate, arCount, ocrRetryLabel, ocrApproxDuration } from '../core/ocr-store.js';
 
 (function(){
 'use strict';
@@ -1289,8 +1289,8 @@ function updateOcrChip(state){
   c.hidden = false;
   const t = $('#toast'); if (t) t.style.bottom = '84px'; // toasts stack above the chip
   const left = Math.max(0, state.total - (state.done || 0));
-  const est = left > 0 ? ocrTimeEstimate(left, kv.get('ocrMsAvg', null) || OCR_DEFAULT_MS_PER_PAGE) : '…';
-  c.innerHTML = '<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px"><bdi dir="auto">' + esc(short(state.title || '', 24)) + '</bdi></span><span class="hint" style="white-space:nowrap">' + (state.done || 0) + ' من ' + arCount(state.total, 'صفحة') + (left > 0 ? ' · باقي قرابة ' + est : '') + '</span><button class="gbtn ch-sm" data-ocrchip="pause">إيقاف</button>';
+  const est = left > 0 ? ocrApproxDuration(ocrTimeEstimate(left, kv.get('ocrMsAvg', null) || OCR_DEFAULT_MS_PER_PAGE)) : '…';
+  c.innerHTML = '<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px"><bdi dir="auto">' + esc(short(state.title || '', 24)) + '</bdi></span><span class="hint" style="white-space:nowrap">' + (state.done || 0) + ' من ' + arCount(state.total, 'صفحة') + (left > 0 ? ' · باقي ' + est : '') + '</span><button class="gbtn ch-sm" data-ocrchip="pause">إيقاف</button>';
 }
 async function startOcr(it, opts = {}){
   if (!idb){ toast('التخزين غير متاح. ما قدرت أقرأ النص.'); return; }
@@ -5026,7 +5026,7 @@ function showPreview(P){
       (rec === 'vision' ? tx('نص هالملف ما ينقرأ (غالبًا صفحات ممسوحة كصور)، ويحتاج قراءة الصفحات كصور. هالميزة مو متوفرة بعد، فما راح أحفظه.') : '') +
       (issues.length ? '<ul class="ing-issues" style="margin:.4rem 0 0; padding-inline-start:1.2em">' + issues.map(t => '<li>' + tx(t) + '</li>').join('') + '</ul>' : '') +
       (unread.length ? '<p style="margin:.4rem 0 0"><span>' + tx('صفحات ما قدرت أقرأها:') + '</span> <bdi dir="ltr">' + esc(unread.slice(0, 40).join(', ') + (unread.length > 40 ? ' …' : '')) + '</bdi></p>' : '') + '</div>' : '') +
-    (scanOk ? '<div class="msg" role="note" style="margin:.6rem 0 0"><b>كتاب ممسوح ضوئيًا</b><p style="margin:.35rem 0 0; line-height:1.75">' + arCount(rep.pages || 0, 'صفحة') + '. قراءة النص محليًا تاخذ ' + (scanEst.indexOf('أقل') === 0 ? scanEst : 'قرابة ' + scanEst) + ' (تقدير). أول مرة ينزّل التطبيق قرابة ' + OCR_FIRST_DOWNLOAD_MB + ' ميجا من ملفات التعرف من هالموقع فقط، مرة وحدة. صفحات الكتاب ما تطلع من جهازك، وإذا قفلت التبويب توقف القراءة وتكمل من آخر صفحة بعدين.</p></div>' : '') +
+    (scanOk ? '<div class="msg" role="note" style="margin:.6rem 0 0"><b>كتاب ممسوح ضوئيًا</b><p style="margin:.35rem 0 0; line-height:1.75">' + arCount(rep.pages || 0, 'صفحة') + '. قراءة النص محليًا تاخذ ' + ocrApproxDuration(scanEst) + ' (تقدير). أول مرة ينزّل التطبيق قرابة ' + OCR_FIRST_DOWNLOAD_MB + ' ميجا من ملفات التعرف من هالموقع فقط، مرة وحدة. صفحات الكتاب ما تطلع من جهازك، وإذا قفلت التبويب توقف القراءة وتكمل من آخر صفحة بعدين.</p></div>' : '') +
     '<p class="flabel">' + tx('النوع') + '</p>' + seg('pvType', Object.keys(TYPES).map(k => [k, TYPES[k]]), it.type) +
     '<label class="flabel" for="pvT">' + tx('العنوان') + '</label><input class="inp" id="pvT" dir="auto" value="' + esc(it.title) + '">' +
     '<label class="flabel" for="pvA">' + tx('المؤلف') + '</label><input class="inp" id="pvA" dir="auto" value="' + esc(it.author || '') + '">' +
