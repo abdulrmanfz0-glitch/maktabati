@@ -1,6 +1,8 @@
 // Pure AI request budgeting, base-URL policy, SSE parsing, retries, and card validation.
 // No fetch, DOM, timers, or storage here; callers pass values in and get values out.
 
+import { supportsGeminiSearch } from './gemini-search.js';
+
 export const AI_DEFAULTS = Object.freeze({
   maxTokens: 1200,
   cardTokens: 700,
@@ -146,6 +148,19 @@ export function providerForBase(base) {
     if (path === providerPath || path.startsWith(providerPath ? providerPath + '/' : '/')) return provider;
   }
   return null;
+}
+
+/**
+ * Whether a reader-chat request should use Gemini's native google_search tool.
+ * Translation, chapter cards, OCR and the connection test never pass a request
+ * here, so they cannot enable search by accident.
+ */
+export function webSearchPlan({ base, model, allowed = true } = {}) {
+  const provider = providerForBase(base);
+  if (!provider || provider.id !== 'gemini') return { enabled:false, reason:'provider' };
+  if (!allowed) return { enabled:false, reason:'off' };
+  if (!supportsGeminiSearch(model)) return { enabled:false, reason:'model' };
+  return { enabled:true, reason:'ok' };
 }
 
 /**

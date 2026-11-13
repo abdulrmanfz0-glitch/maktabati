@@ -308,6 +308,22 @@ body{ --tb-h:52px; }
 .cm-a h4{ font-size:16px; font-weight:600; margin:1.1em 0 .4em; }
 .cm-a ul, .cm-a ol{ padding-inline-start:1.4em; margin:0 0 .9em; }
 .cm-a table{ font-size:14px; }
+.cm-web{ margin-top:10px; }
+.cm-web-i{ display:flex; align-items:center; gap:5px; font-size:.8rem; color:var(--soft); }
+.cm-web-i svg{ width:14px; height:14px; }
+.cm-src{ border-top:1px solid var(--rule); margin-top:2px; }
+.cm-src summary{ min-height:44px; display:flex; align-items:center; gap:5px; list-style:none; cursor:pointer; font-size:.82rem; color:var(--accent); }
+.cm-src summary::-webkit-details-marker{ display:none; }
+.cm-src summary svg{ width:14px; height:14px; transition:transform .15s; }
+.cm-src[open] summary svg{ transform:rotate(-90deg); }
+.cm-src ul{ list-style:none; margin:2px 0 0; padding:0; display:flex; flex-direction:column; gap:2px; }
+.cm-src a{ display:flex; align-items:baseline; gap:8px; min-height:44px; padding:5px 2px; font-size:.82rem; color:var(--soft); text-decoration:none; overflow-wrap:anywhere; }
+.cm-src a:hover{ color:var(--accent); }
+.cm-src .dom{ color:var(--accent); font-weight:600; }
+.cm-src .ttl{ opacity:.8; }
+.ch-web-row{ display:flex; align-items:center; gap:6px; margin:0 0 8px; padding-inline-start:2px; }
+.ch-web{ min-height:32px; padding:0 10px; font-size:12.5px; background:transparent; }
+.ch-web svg{ width:14px; height:14px; }
 .cm-tools{ display:flex; gap:2px; margin-top:4px; }
 .cm-copy{ width:32px; height:32px; display:inline-grid; place-items:center; border:0; border-radius:8px; background:transparent; color:var(--soft); cursor:pointer; }
 .cm-copy:hover{ background:var(--hover); color:var(--ink); }
