@@ -5,7 +5,7 @@ import {
   createTimeoutGuard, linkAbort, isDeepSeekBase, isGeminiBase, migrateDeepSeekModel,
   GEMINI_REASONING_EFFORT, providerRequestOptions, providerChatHeaders, providerModelHeaders, parseProviderErrorBody, emptyAnswerError, finishAnswer,
   GEMINI_FIRST_BYTE_TIMEOUT_MS, GEMINI_BUSY_MESSAGE, GEMINI_MODEL_GONE_MESSAGE,
-  geminiFallbackCandidates, filterModelChoices, firstByteTimeoutFor, webSearchPlan,
+  geminiFallbackCandidates, filterModelChoices, firstByteTimeoutFor,
   PROVIDERS, providerForBase, detectProvider, pickDefaultModel, parseModels, modelsEndpoint
 } from '../../apps/web/src/core/ai.js';
 
@@ -67,23 +67,6 @@ describe('Gemini request controls', () => {
     expect(providerRequestOptions('https://openrouter.ai/api/v1')).toEqual({});
     expect(providerRequestOptions('https://api.anthropic.com/v1')).toEqual({});
     expect(providerRequestOptions('http://localhost:11434/v1')).toEqual({});
-  });
-});
-
-describe('reader-chat web search switch', () => {
-  it('enables search only for Gemini, a supported model, and an allowed conversation', () => {
-    const gemini = 'https://generativelanguage.googleapis.com/v1beta/openai';
-    expect(webSearchPlan({ base:gemini, model:'gemini-3.1-flash-lite', allowed:true }))
-      .toEqual({ enabled:true, reason:'ok' });
-    expect(webSearchPlan({ base:gemini, model:'gemini-3.8-flash' }).enabled).toBe(true);
-    expect(webSearchPlan({ base:gemini, model:'gemini-3.8-flash', allowed:false }))
-      .toEqual({ enabled:false, reason:'off' });
-    expect(webSearchPlan({ base:gemini, model:'gemini-3.5-flash', allowed:true }))
-      .toEqual({ enabled:false, reason:'model' });
-    expect(webSearchPlan({ base:'https://api.deepseek.com', model:'deepseek-flash', allowed:true }))
-      .toEqual({ enabled:false, reason:'provider' });
-    expect(webSearchPlan({ base:'http://localhost:11434/v1', model:'gemini-3.8-flash', allowed:true }))
-      .toEqual({ enabled:false, reason:'provider' });
   });
 });
 
@@ -286,6 +269,12 @@ describe('default model preference', () => {
 });
 
 describe('token estimator and trimmer', () => {
+  it('keeps server_tool_calls attached to fitted history', () => {
+    const calls = [{ calls:[{ id:'srvtoolu_1' }] }];
+    const fit = fitRequest({ base:'نظام', history:[{ role:'assistant', content:'جواب', server_tool_calls:calls }], budget:10000 });
+    expect(fit.ok).toBe(true);
+    expect(fit.messages[1].server_tool_calls).toBe(calls);
+  });
   it('estimates Arabic as heavier than Latin for the same character count', () => {
     const ar = estimateMessagesTokens([{ role:'user', content:'ا'.repeat(100) }]);
     const en = estimateMessagesTokens([{ role:'user', content:'a'.repeat(100) }]);
@@ -343,6 +332,22 @@ describe('SSE parser', () => {
   it('returns provider error objects', () => {
     const r = parseSSE('data: {"error":{"message":"insufficient balance"}}\n');
     expect(r.events).toEqual([{ error:'insufficient balance' }]);
+  });
+  it('parses DeepSeek server tool events and final server_tool_calls/annotations', () => {
+    const call = { index:0, type:'deepseek_web_search', action:{ type:'search', queries:['مؤلف الكتاب'] } };
+    const event = parseSSE('data: ' + JSON.stringify({ choices:[{ delta:{}, server_tool_event:{ type:'call_started', step:0, call } }] }) + '\n');
+    expect(event.events).toEqual([{ toolEvent:{ type:'call_started', step:0, call } }]);
+    const final = parseSSE('data: ' + JSON.stringify({ choices:[{ delta:{ server_tool_calls:[{ calls:[call] }], annotations:[{ type:'url_citation', url_citation:{ url:'https://example.com/a', title:'a' } }] }, finish_reason:'stop' }] }) + '\n');
+    expect(final.events).toEqual([
+      { serverToolCalls:[{ calls:[call] }] },
+      { annotations:[{ type:'url_citation', url_citation:{ url:'https://example.com/a', title:'a' } }] },
+      { finish:'stop' }
+    ]);
+  });
+  it('keeps a mid-stream error chunk without a DONE marker', () => {
+    const r = parseSSE('data: {"error":{"message":"stream failed"},"choices":[]}\n');
+    expect(r.events).toEqual([{ error:'stream failed' }]);
+    expect(r.done).toBe(false);
   });
 });
 

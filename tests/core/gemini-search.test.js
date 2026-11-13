@@ -3,7 +3,7 @@ import {
   supportsGeminiSearch, geminiNativeEndpoint, geminiSearchHeaders,
   buildGeminiSearchRequest, parseGeminiSearchSSE, normalizeGroundingMetadata,
   mergeCitations, uniqueCitationSources, citationDomain, searchFailureCode,
-  classifyGeminiSearchError, searchErrorText
+  classifyGeminiSearchError
 } from '../../apps/web/src/core/gemini-search.js';
 
 const event = obj => 'data: ' + JSON.stringify(obj) + '\n';
@@ -202,9 +202,6 @@ describe('search failure diagnostics', () => {
   it('classifies a free-tier grounding error from the recorded body', () => {
     const body = JSON.stringify({ error:{ code:429, message:'Grounding with Google Search is not available on the free tier. Please enable billing for your project.', status:'RESOURCE_EXHAUSTED' } });
     expect(classifyGeminiSearchError({ status:429, body })).toEqual({ kind:'grounding', status:429, retryAfterMs:null });
-    expect(searchErrorText('grounding', 0, 'ar')).toContain('مفتاح Gemini مدفوع');
-    expect(searchErrorText('grounding', 0, 'ar')).not.toContain('أرسل بدون بحث');
-    expect(searchErrorText('grounding', 0, 'en')).toContain('paid Gemini key');
   });
 
   it('classifies a rate limit and reads RetryInfo / Retry-After', () => {
@@ -212,16 +209,11 @@ describe('search failure diagnostics', () => {
     expect(classifyGeminiSearchError({ status:429, body })).toEqual({ kind:'rate-limit', status:429, retryAfterMs:21000 });
     expect(classifyGeminiSearchError({ status:429, body:'{"error":{"message":"Too many requests"}}', retryAfter:'30' }))
       .toEqual({ kind:'rate-limit', status:429, retryAfterMs:30000 });
-    expect(searchErrorText('rate-limit', 21000, 'ar')).toContain('21');
-    expect(searchErrorText('rate-limit', 21000, 'ar')).toContain('حد الطلبات');
-    expect(searchErrorText('rate-limit', 0, 'ar')).toContain('انتظر قليلًا');
   });
 
   it('classifies quota exhaustion from the recorded quota failure body', () => {
     const body = JSON.stringify({ error:{ code:429, message:'You exceeded your current quota, please check your plan and billing details.', status:'RESOURCE_EXHAUSTED', details:[{ '@type':'type.googleapis.com/google.rpc.QuotaFailure', violations:[{ quotaId:'GenerateContentRequestsPerDayPerProjectPerModel-FreeTier', quotaValue:'100' }] }] } });
     expect(classifyGeminiSearchError({ status:429, body })).toEqual({ kind:'quota', status:429, retryAfterMs:null });
-    expect(searchErrorText('quota', 0, 'ar')).toContain('حصة');
-    expect(searchErrorText('quota', 0, 'en')).toContain('quota');
   });
 
   it('leaves an unclassified 400 for the normal no-search fallback', () => {

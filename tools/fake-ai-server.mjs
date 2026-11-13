@@ -3,7 +3,7 @@ import http from 'node:http';
 
 export async function startFakeAI() {
   const stats = { requests:0, searchRequests:0, closed:0, models:[], last:null, lastSearch:null, modelFetches:[] };
-  const control = { gemini503:false, gemini503Once:false, gemini404:false, search429Once:false, searchSlow:false, searchNoGrounding:false, searchGroundingBlocked:false, searchQuota:false };
+  const control = { gemini503:false, gemini503Once:false, gemini404:false, search429Once:false, searchSlow:false, searchNoGrounding:false, searchGroundingBlocked:false, searchQuota:false, deepseek402:false, deepseek429:false, deepseekMidError:false, deepseekSlow:false, deepseekSkipOnce:false };
   const modelLists = {
     '/v1/models': ['deepseek-flash', 'deepseek-chat', 'deepseek-v4-pro'],
     '/deepseek/v1/models': ['deepseek-flash', 'deepseek-chat', 'deepseek-v4-pro'],
@@ -83,6 +83,7 @@ export async function startFakeAI() {
     const u = new URL(req.url, 'http://127.0.0.1');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-api-key, x-goog-api-key, anthropic-version, anthropic-dangerous-direct-browser-access');
+    res.setHeader('Access-Control-Expose-Headers', 'Retry-After');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
     if (u.pathname === '/stats') { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(stats)); return; }
@@ -139,6 +140,7 @@ export async function startFakeAI() {
       let body = {};
       try { body = JSON.parse(raw); } catch (e) {}
       const model = String(body.model || '');
+      const hasDSWeb = Array.isArray(body.tools) && body.tools.some(t => t && t.type === 'deepseek_web_search');
       stats.requests++; stats.models.push(model);
       stats.last = {
         path:u.pathname,
@@ -146,6 +148,9 @@ export async function startFakeAI() {
         stream:!!body.stream,
         temperature:body.temperature,
         response_format:body.response_format || null,
+        tools:body.tools || null,
+        title:body.title || null,
+        toolChoice:body.tool_choice || null,
         thinking:body.thinking || null,
         reasoning_effort:body.reasoning_effort || null,
         hasAuth:!!req.headers.authorization,
@@ -243,6 +248,16 @@ export async function startFakeAI() {
           return;
         }
       }
+      if (hasDSWeb && control.deepseek402) {
+        res.writeHead(402, { 'Content-Type':'application/json', 'Cache-Control':'no-cache' });
+        res.end(JSON.stringify({ error:{ code:402, message:'Insufficient Balance' } }));
+        return;
+      }
+      if (hasDSWeb && control.deepseek429) {
+        res.writeHead(429, { 'Content-Type':'application/json', 'Retry-After':'5', 'Cache-Control':'no-cache' });
+        res.end(JSON.stringify({ error:{ code:429, message:'Rate limit exceeded, please retry later' } }));
+        return;
+      }
 
       if (model === 'fake-error-400') {
         res.writeHead(400, { 'Content-Type':'application/json', 'Cache-Control':'no-cache' });
@@ -302,6 +317,46 @@ export async function startFakeAI() {
       res.writeHead(200, { 'Content-Type':'text/event-stream', 'Cache-Control':'no-cache', 'Connection':'keep-alive' });
       const send = obj => { try{ res.write('data: ' + JSON.stringify(obj) + '\n\n'); }catch (e) {} };
       const delta = text => send({ choices:[{ delta:{ content:text } }] });
+      if (hasDSWeb){
+        if (control.deepseekSkipOnce){
+          control.deepseekSkipOnce = false;
+          delta('تم'); res.write('data: [DONE]\n\n'); res.end(); return;
+        }
+        const call = {
+          index:0, id:'srvtoolu_fake', type:'deepseek_web_search', kind:'search',
+          action:{ type:'search', queries:['مؤلف الكتاب'] },
+          status:'completed',
+          sources:[{ type:'url', url:'https://example.com/one', title:'example.com' }]
+        };
+        const serverToolCalls = [{ index:0, reasoning_content:'', calls:[call] }];
+        const annotations = [{ type:'url_citation', url_citation:{ url:'https://example.com/one', title:'example.com', start_index:0, end_index:6 } }];
+        const emitStart = () => send({ choices:[{ delta:{}, server_tool_event:{ type:'step_reasoning_done', step:0 } }] });
+        const emitCall = () => send({ choices:[{ delta:{}, server_tool_event:{ type:'call_started', step:0, call } }] });
+        const emitDone = () => send({ choices:[{ delta:{}, server_tool_event:{ type:'call_completed', step:0, call } }] });
+        const emitFinal = () => {
+          send({ choices:[{ delta:{ content:'المعلومة من الويب.', server_tool_calls:serverToolCalls, annotations }, finish_reason:'stop' }] });
+          res.write('data: [DONE]\n\n'); res.end();
+        };
+        if (control.deepseekMidError){
+          delta('بدأ');
+          send({ error:{ message:'stream failed' }, choices:[] });
+          res.end();
+          return;
+        }
+        if (control.deepseekSlow){
+          res.on('close', () => { stats.closed++; });
+          const steps = [emitStart, emitCall, () => delta('وصلت '), emitDone, emitFinal];
+          let i = 0;
+          const timer = setInterval(() => {
+            if (res.writableEnded || res.destroyed){ clearInterval(timer); return; }
+            if (i < steps.length) steps[i++]();
+            else clearInterval(timer);
+          }, 700);
+          return;
+        }
+        emitStart(); emitCall(); delta('وصلت '); emitDone(); emitFinal();
+        return;
+      }
       if (model === 'fake-close' || model === 'fake-idle') {
         delta(model === 'fake-close' ? 'بدأ' : 'سكون');
         res.on('close', () => { stats.closed++; });

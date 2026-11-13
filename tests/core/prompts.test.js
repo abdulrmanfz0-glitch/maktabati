@@ -59,8 +59,8 @@ describe('web search prompt switch', () => {
   it('replaces only the no-internet line when Gemini has the search tool', () => {
     const prompt = companionSystem({ spoiler:true, webSearch:true });
     expect(prompt).not.toContain(NO_WEB_LINE);
-    expect(prompt).toContain('ابحث متى ما احتجت معلومة حديثة أو مو متأكد منها');
-    expect(prompt).toContain('قدّم الكتاب إذا السؤال عنه');
+    expect(prompt).toContain('تقدر تبحث في الإنترنت لما يحتاج السؤال معلومة حديثة أو من خارج الكتاب');
+    expect(prompt).toContain('جاوب من الكتاب أولًا');
     expect(prompt).toContain('ولا تزعم إنك بحثت إذا ما بحثت');
     expect(prompt).not.toContain('@@SPOIL@@');
     expect(prompt).toContain('فرّق بين المقروء وغير المقروء');
