@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   searchModeFor, searchPlan, deepSeekSearchFields, historyWithServerToolCalls,
   deepSeekSearchSources, deepSeekSearchQueries, classifyDeepSeekSearchError,
-  searchErrorText
+  searchErrorText, toolUnsupportedError, unsupportedSearchKey,
+  isSearchUnsupported, rememberUnsupported
 } from '../../apps/web/src/core/web-search.js';
 
 const calls = [{
@@ -33,9 +34,14 @@ const annotations = [
 ];
 
 describe('search mode mapping', () => {
-  it('maps DeepSeek and Gemini 3+ to auto', () => {
+  it('maps DeepSeek flash to auto and other DeepSeek models to none', () => {
     expect(searchModeFor('deepseek', 'deepseek-flash')).toBe('auto');
-    expect(searchModeFor('deepseek', 'deepseek-v4-pro')).toBe('auto');
+    expect(searchModeFor('deepseek', 'models/deepseek-flash')).toBe('auto');
+    expect(searchModeFor('deepseek', 'deepseek-v4-pro')).toBe('none');
+    expect(searchModeFor('deepseek', 'deepseek-chat')).toBe('none');
+  });
+
+  it('maps Gemini 3+ to auto', () => {
     for (const id of ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-3-flash-preview', 'gemini-4-hydrogen']) {
       expect(searchModeFor('gemini', id), id).toBe('auto');
     }
@@ -74,6 +80,7 @@ describe('search plan', () => {
   it('does not attach an unsupported Gemini model or a provider without search', () => {
     expect(searchPlan({ provider:'gemini', model:'gemini-3.5-flash', autoSetting:true }).attach).toBe(false);
     expect(searchPlan({ provider:'openai', model:'gpt-4o', autoSetting:true }).attach).toBe(false);
+    expect(searchPlan({ provider:'deepseek', model:'deepseek-v4-pro', autoSetting:true })).toEqual({ mode:'none', attach:false, reason:'provider' });
   });
 });
 
@@ -133,5 +140,26 @@ describe('DeepSeek multi-turn history', () => {
     expect(out.server_tool_calls).toBe(calls);
     expect(historyWithServerToolCalls(row, message, 'gemini').server_tool_calls).toBeUndefined();
     expect(historyWithServerToolCalls({ role:'user', content:'س' }, message, 'deepseek').server_tool_calls).toBeUndefined();
+  });
+});
+
+describe('tool 400 and session memory', () => {
+  it('detects only a tool/model 400', () => {
+    expect(toolUnsupportedError(400, 'The model does not support tools')).toBe(true);
+    expect(toolUnsupportedError(400, 'unknown field: tools')).toBe(true);
+    expect(toolUnsupportedError(400, 'deepseek_web_search is not supported')).toBe(true);
+    expect(toolUnsupportedError(400, 'Invalid model')).toBe(true);
+    expect(toolUnsupportedError(400, 'Invalid request')).toBe(false);
+    expect(toolUnsupportedError(400, 'Invalid Auth key.')).toBe(false);
+    expect(toolUnsupportedError(429, 'The model does not support tools')).toBe(false);
+  });
+
+  it('remembers an unsupported connection+model for the session', () => {
+    const memory = new Set();
+    expect(isSearchUnsupported(memory, 'c1', 'models/deepseek-flash')).toBe(false);
+    rememberUnsupported(memory, 'c1', 'models/deepseek-flash');
+    expect(isSearchUnsupported(memory, 'c1', 'deepseek-flash')).toBe(true);
+    expect(isSearchUnsupported(memory, 'c2', 'deepseek-flash')).toBe(false);
+    expect(unsupportedSearchKey('c1', 'models/deepseek-flash')).toBe('c1|deepseek-flash');
   });
 });

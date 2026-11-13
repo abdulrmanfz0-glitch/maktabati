@@ -10,10 +10,14 @@ export const SEARCH_MODES = Object.freeze({ auto:'auto', manual:'manual', none:'
  * manual: Gemini 2.5 and older, billed per prompt; the chat toggle controls it.
  * none: providers without a native search tool here.
  */
+const modelIdOf = model => String(model == null ? '' : model).trim().replace(/^models\//i, '');
+
 export function searchModeFor(provider, model) {
-  if (provider === 'deepseek') return SEARCH_MODES.auto;
+  if (provider === 'deepseek') {
+    return modelIdOf(model) === 'deepseek-flash' ? SEARCH_MODES.auto : SEARCH_MODES.none;
+  }
   if (provider === 'gemini') {
-    const m = /^gemini-(\d+)(?:\.(\d+))?/i.exec(String(model || '').trim().replace(/^models\//i, ''));
+    const m = /^gemini-(\d+)(?:\.(\d+))?/i.exec(modelIdOf(model));
     if (!m) return SEARCH_MODES.manual;
     return Number(m[1]) >= 3 ? SEARCH_MODES.auto : SEARCH_MODES.manual;
   }
@@ -42,6 +46,28 @@ export function searchPlan({ provider, model, autoSetting = true, manual = false
 /** Only the web-search tool: no title, tool_choice, or other server tools. */
 export function deepSeekSearchFields(search) {
   return search && search.attach ? { tools:[{ type:'deepseek_web_search' }] } : {};
+}
+
+/**
+ * A 400 whose message is about the tool/model is the signal that this
+ * connection+model cannot search. Used to retry once without the tool.
+ */
+export function toolUnsupportedError(status, detail) {
+  if (Number(status) !== 400) return false;
+  return /(tool|tools|model|unsupported|deepseek_web_search|google_search|googleSearch)/i.test(String(detail == null ? '' : detail));
+}
+
+/** Per-session memory key for a connection+model that cannot search. */
+export function unsupportedSearchKey(connectionId, model) {
+  return (connectionId == null ? '' : String(connectionId)) + '|' + modelIdOf(model);
+}
+
+export function isSearchUnsupported(memory, connectionId, model) {
+  return !!memory && memory.has(unsupportedSearchKey(connectionId, model));
+}
+
+export function rememberUnsupported(memory, connectionId, model) {
+  if (memory) memory.add(unsupportedSearchKey(connectionId, model));
 }
 
 /** Add the previous assistant's calls back, unchanged, for DeepSeek only. */

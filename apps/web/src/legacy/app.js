@@ -9,7 +9,7 @@ import { AI_DEFAULTS, basePolicy, keylessAllowed, estimateMessagesTokens, fitReq
   PROVIDERS, providerForBase, detectProvider, parseModels, modelsEndpoint } from '../core/ai.js';
 import { companionSystem, withoutWebSearchInstruction, WEB_SEARCH_FAILED_NOTE, MODES } from '../core/prompts.js';
 import { geminiNativeEndpoint, buildGeminiSearchRequest, geminiSearchHeaders, parseGeminiSearchSSE, normalizeGroundingMetadata, uniqueCitationSources, searchFailureCode, classifyGeminiSearchError } from '../core/gemini-search.js';
-import { searchPlan, deepSeekSearchFields, deepSeekSearchSources, deepSeekSearchQueries, classifyDeepSeekSearchError, searchErrorText, isSearchErrorKind, historyWithServerToolCalls } from '../core/web-search.js';
+import { searchPlan, deepSeekSearchFields, deepSeekSearchSources, deepSeekSearchQueries, classifyDeepSeekSearchError, searchErrorText, isSearchErrorKind, historyWithServerToolCalls, toolUnsupportedError, isSearchUnsupported, rememberUnsupported } from '../core/web-search.js';
 import {
   AI_TASKS, migrateAiConfig, normalizeAiState, isAiState,
   resolveAiConfig, defaultPinForTask, resolveChatPin, groupedPins, allPinned,
@@ -2633,6 +2633,10 @@ function aiCfg(task, pin){
   const c = aiResolve(task, pin);
   return c || Object.assign({}, AI_DEF, { connectionId:null, connectionLabel:null, provider:null, providerLabel:null, pin:null, task:task || 'chat' });
 }
+/* Per-session memory of connection+model pairs that returned a tool-related 400. */
+const unsupportedSearch = new Set();
+const searchUnsupportedFor = cfg => cfg && isSearchUnsupported(unsupportedSearch, cfg.connectionId, cfg.model);
+const rememberUnsupportedFor = cfg => cfg && rememberUnsupported(unsupportedSearch, cfg.connectionId, cfg.model);
 function aiMigrate(){
   try{
     const raw = localStorage.getItem(AIK);
@@ -2821,6 +2825,10 @@ async function aiCall(o){
     }catch(e){
       if (e && e.name === 'AbortError') throw tag(e);
       if (e && e.partial) throw tag(e);
+      if (e && toolUnsupportedError(e.status, e.detail)){
+        rememberUnsupportedFor(c);
+        return await aiCall(Object.assign({}, o, { messages:withoutWebSearchInstruction(messages), search:{ attach:false, mode:'none' }, onNote:undefined }));
+      }
       logGeminiSearchFailure(e, c.key, requestedModel);
       /* Classified search failures need a clear message and a no-search action,
          not a silent fallback. */
@@ -2880,6 +2888,10 @@ async function aiCall(o){
             break;
           }
           if (isGemini && res.status === 404) throw { modelGone:true, message:GEMINI_MODEL_GONE_MESSAGE };
+          if (search.attach && isDeepSeek && toolUnsupportedError(res.status, detail)){
+            rememberUnsupportedFor(c);
+            return await aiCall(Object.assign({}, o, { messages:withoutWebSearchInstruction(messages), search:{ attach:false, mode:'none' }, onNote:undefined }));
+          }
           if (search.attach && isDeepSeek){
             const classified = classifyDeepSeekSearchError({ status:res.status, detail, retryAfter:res.headers.get('retry-after') || '' });
             if (classified.kind) throw { status:res.status, detail, search:true, searchKind:classified.kind, retryAfterMs:classified.retryAfterMs };
@@ -4012,7 +4024,11 @@ function bookContext(it, full){
 
 /* ---------- companion chat ---------- */
 const sysText = (webSearch, noWebLine = true) => companionSystem({ spoiler:prof().ai.spoiler, webSearch, noWebLine });
-const searchPlanFor = (cfg, manual = false) => cfg ? searchPlan({ provider:cfg.provider, model:cfg.model, autoSetting:prof().ai.autoSearch, manual }) : { mode:'none', attach:false, reason:'cfg' };
+const searchPlanFor = (cfg, manual = false) => {
+  if (!cfg) return { mode:'none', attach:false, reason:'cfg' };
+  if (searchUnsupportedFor(cfg)) return { mode:searchPlan({ provider:cfg.provider, model:cfg.model }).mode, attach:false, reason:'unsupported' };
+  return searchPlan({ provider:cfg.provider, model:cfg.model, autoSetting:prof().ai.autoSearch, manual });
+};
 function styleTxt(){
   const a = prof().ai, L = { msa:'اكتب بالفصحى البسيطة.', gulf:'اكتب باللهجة الخليجية البسيطة.', mirror:'' }, N = { short:'اجعل الرد مختصراً (فقرة أو فقرتين).', normal:'', long:'فصّل الشرح مع أمثلة عند الحاجة.' };
   const s = [L[a.lang], N[a.len]].filter(Boolean).join(' ');

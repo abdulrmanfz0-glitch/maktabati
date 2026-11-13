@@ -191,7 +191,23 @@ try {
   assert(await ev(`!!document.querySelector('#v-home [data-websearch]')`), 'manual toggle missing after switching back');
   ok('Gemini 2.5 manual', 'toggle only for per-prompt models, off -> chat, on -> native');
 
-  // 5) DeepSeek search errors: 402, 429 with wait, and a mid-stream error.
+  // 5) A slow DeepSeek search keeps streaming after the view closes.
+  await choosePin('c1', 'deepseek-flash');
+  fake.control.deepseekSlow = true;
+  const beforeBg = await assistantCount();
+  await sendHome('رد بحث يكمل في الخلفية');
+  await b.waitFor(`document.querySelectorAll('#v-home .cm-a').length > ${beforeBg}`, 8000);
+  await waitText('#v-home', 'وصلت');
+  const convId = (await ev('location.hash')).replace(/^#\/c\//, '');
+  assert(convId && convId !== '#/', 'no conversation id');
+  await go('#/lib');
+  await settle(2500);
+  await go('#/c/' + convId);
+  await b.waitFor(`(() => { const a = [...document.querySelectorAll('#v-home .cm-a')]; const l = a[a.length - 1]; return !!l && l.textContent.includes('وصلت المعلومة من الويب.') && !!l.querySelector('.cm-web .cm-src a'); })()`, 20000);
+  fake.control.deepseekSlow = false;
+  ok('DeepSeek background search', 'status/reply/sources after reopen');
+
+  // 6) DeepSeek search errors: 402, 429 with wait, and a mid-stream error.
   await choosePin('c1', 'deepseek-flash');
   fake.control.deepseek402 = true;
   await sendAndWait('سؤال برصيد ناقص', 'رصيد DeepSeek ما يكفي');
@@ -215,6 +231,18 @@ try {
   fake.control.deepseekMidError = false;
   ok('DeepSeek mid-stream error', 'clear error + no-search retry');
 
+  // 5b) A tool-related 400 retries once without the tool and is remembered.
+  fake.control.deepseekTool400 = true;
+  const beforeTool400 = fake.stats.requests;
+  await sendAndWait('سؤال أدوات غير مدعومة', 'تم');
+  assert(fake.stats.requests === beforeTool400 + 2, 'DeepSeek tool 400 did not retry exactly once');
+  assert(!fake.stats.last.tools, 'DeepSeek tool 400 retry still sent the tool');
+  assert((await lastLinks()).length === 0, 'DeepSeek tool 400 rendered sources');
+  fake.control.deepseekTool400 = false;
+  await sendAndWait('سؤال بعد الحفظ', 'تم');
+  assert(!fake.stats.last.tools, 'DeepSeek unsupported model was not remembered');
+  ok('DeepSeek tool 400', 'one no-tool retry + session memory');
+
   // 6) Gemini paid-key error stays.
   await choosePin('c2', 'gemini-3.8-flash');
   fake.control.searchGroundingBlocked = true;
@@ -223,21 +251,17 @@ try {
   fake.control.searchGroundingBlocked = false;
   ok('Gemini grounding error', 'paid-key copy + no-search retry');
 
-  // 7) A slow DeepSeek search keeps streaming after the view closes.
-  await choosePin('c1', 'deepseek-flash');
-  fake.control.deepseekSlow = true;
-  const beforeBg = await assistantCount();
-  await sendHome('رد بحث يكمل في الخلفية');
-  await b.waitFor(`document.querySelectorAll('#v-home .cm-a').length > ${beforeBg}`, 8000);
-  await waitText('#v-home', 'وصلت');
-  const convId = (await ev('location.hash')).replace(/^#\/c\//, '');
-  assert(convId && convId !== '#/', 'no conversation id');
-  await go('#/lib');
-  await settle(2500);
-  await go('#/c/' + convId);
-  await b.waitFor(`(() => { const a = [...document.querySelectorAll('#v-home .cm-a')]; const l = a[a.length - 1]; return !!l && l.textContent.includes('وصلت المعلومة من الويب.') && !!l.querySelector('.cm-web .cm-src a'); })()`, 20000);
-  fake.control.deepseekSlow = false;
-  ok('DeepSeek background search', 'status/reply/sources after reopen');
+  // 6b) Gemini tool 400 retries once on the OpenAI path and is remembered.
+  fake.control.geminiTool400 = true;
+  const beforeGeminiTool400 = fake.stats.searchRequests;
+  await sendAndWait('سؤال أدوات Gemini', 'تم');
+  assert(fake.stats.searchRequests === beforeGeminiTool400 + 1, 'Gemini tool 400 did not attempt native once');
+  assert((await lastLinks()).length === 0, 'Gemini tool 400 rendered sources');
+  fake.control.geminiTool400 = false;
+  const beforeGeminiMemory = fake.stats.searchRequests;
+  await sendAndWait('سؤال بعد الحفظ Gemini', 'تم');
+  assert(fake.stats.searchRequests === beforeGeminiMemory, 'Gemini unsupported model was not remembered');
+  ok('Gemini tool 400', 'one no-tool retry + session memory');
 
   // 8) Diagnostics and request origins.
   const warns = await ev('window.__warns');
@@ -256,6 +280,8 @@ try {
   fake.control.deepseek429 = false;
   fake.control.deepseekMidError = false;
   fake.control.deepseekSkipOnce = false;
+  fake.control.deepseekTool400 = false;
+  fake.control.geminiTool400 = false;
   fake.control.searchGroundingBlocked = false;
   await b.close();
   await fake.close();

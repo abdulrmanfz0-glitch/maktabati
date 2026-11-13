@@ -3,7 +3,7 @@ import http from 'node:http';
 
 export async function startFakeAI() {
   const stats = { requests:0, searchRequests:0, closed:0, models:[], last:null, lastSearch:null, modelFetches:[] };
-  const control = { gemini503:false, gemini503Once:false, gemini404:false, search429Once:false, searchSlow:false, searchNoGrounding:false, searchGroundingBlocked:false, searchQuota:false, deepseek402:false, deepseek429:false, deepseekMidError:false, deepseekSlow:false, deepseekSkipOnce:false };
+  const control = { gemini503:false, gemini503Once:false, gemini404:false, search429Once:false, searchSlow:false, searchNoGrounding:false, searchGroundingBlocked:false, searchQuota:false, deepseek402:false, deepseek429:false, deepseekMidError:false, deepseekSlow:false, deepseekSkipOnce:false, deepseekTool400:false, geminiTool400:false };
   const modelLists = {
     '/v1/models': ['deepseek-flash', 'deepseek-chat', 'deepseek-v4-pro'],
     '/deepseek/v1/models': ['deepseek-flash', 'deepseek-chat', 'deepseek-v4-pro'],
@@ -180,6 +180,11 @@ export async function startFakeAI() {
             ? body.systemInstruction.parts.map(p => String((p && p.text) || '')).join('\n') : '',
           body
         };
+        if (control.geminiTool400) {
+          res.writeHead(400, { 'Content-Type':'application/json', 'Cache-Control':'no-cache' });
+          res.end(JSON.stringify([{ error:{ code:400, message:'The model does not support tools', status:'INVALID_ARGUMENT' } }]));
+          return;
+        }
         if (control.searchGroundingBlocked) {
           res.writeHead(429, { 'Content-Type':'application/json', 'Cache-Control':'no-cache' });
           res.end(JSON.stringify([{ error:{ code:429, message:'Grounding with Google Search is not available for your project. Please enable billing.', status:'RESOURCE_EXHAUSTED' } }]));
@@ -247,6 +252,11 @@ export async function startFakeAI() {
           res.end(JSON.stringify([{ error:{ code:503, message:'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', status:'UNAVAILABLE' } }]));
           return;
         }
+      }
+      if (hasDSWeb && control.deepseekTool400) {
+        res.writeHead(400, { 'Content-Type':'application/json', 'Cache-Control':'no-cache' });
+        res.end(JSON.stringify({ error:{ code:400, message:'The model does not support tools' } }));
+        return;
       }
       if (hasDSWeb && control.deepseek402) {
         res.writeHead(402, { 'Content-Type':'application/json', 'Cache-Control':'no-cache' });
