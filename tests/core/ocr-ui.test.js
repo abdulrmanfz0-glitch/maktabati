@@ -2,7 +2,7 @@
 // mem/IDB sync under stale writes, onlyFailed retries, and single-PDF-open runs.
 import { describe, it, expect } from 'vitest';
 import { persistOnce, ocrLockHeld, scanBookFields } from '../../apps/web/src/core/scan-save.js';
-import { ocrTimeEstimate, OCR_DEFAULT_MS_PER_PAGE, OCR_FAILED_LINE, OCR_CHAT_LABEL, OCR_BOOK_DISCLOSURE, OCR_EXPORT_NOTICE, ensureOcrPagesStore, putOcrPageAndBook, getOcrPage, getAllPages, putBook, getBook } from '../../apps/web/src/core/ocr-store.js';
+import { ocrTimeEstimate, arCount, arDuration, ocrRetryLabel, OCR_DEFAULT_MS_PER_PAGE, OCR_FAILED_LINE, OCR_CHAT_LABEL, OCR_BOOK_DISCLOSURE, OCR_EXPORT_NOTICE, ensureOcrPagesStore, putOcrPageAndBook, getOcrPage, getAllPages, putBook, getBook } from '../../apps/web/src/core/ocr-store.js';
 import { createOcrRunner, mergeOcrBook } from '../../apps/web/src/core/ocr-run.js';
 import { scanPageId, ensureStores } from '../../apps/web/src/core/scan-save.js';
 
@@ -39,11 +39,42 @@ describe('ocrLockHeld', () => {
 });
 
 describe('time estimate and shared copy', () => {
-  it('estimates seconds and minutes from measured ms/page', () => {
-    expect(ocrTimeEstimate(80, 400)).toBe('32 ثانية');
+  it('estimates via Arabic duration grammar', () => {
+    expect(ocrTimeEstimate(80, 400)).toBe('أقل من دقيقة');
     expect(ocrTimeEstimate(600, 400)).toBe('4 دقايق');
-    expect(ocrTimeEstimate(1, 400)).toBe('1 ثانية');
-    expect(ocrTimeEstimate(0)).toBe('1 ثانية');
+    expect(ocrTimeEstimate(1, 400)).toBe('أقل من دقيقة');
+    expect(ocrTimeEstimate(0)).toBe('أقل من دقيقة');
+  });
+  it('arCount follows the Arabic count grammar', () => {
+    expect(arCount(1, 'صفحة')).toBe('1 صفحة');
+    expect(arCount(2, 'صفحة')).toBe('2 صفحتان');
+    expect(arCount(3, 'صفحة')).toBe('3 صفحات');
+    expect(arCount(10, 'صفحة')).toBe('10 صفحات');
+    expect(arCount(11, 'صفحة')).toBe('11 صفحة');
+    expect(arCount(0, 'صفحة')).toBe('0 صفحة');
+    expect(arCount(2, 'دقيقة')).toBe('2 دقيقتان');
+    expect(arCount(5, 'دقيقة')).toBe('5 دقايق');
+    expect(arCount(11, 'دقيقة')).toBe('11 دقيقة');
+    expect(arCount(2, 'ساعة')).toBe('2 ساعتان');
+    expect(arCount(3, 'ساعة')).toBe('3 ساعات');
+    expect(arCount(2, 'ثانية')).toBe('2 ثانيتان');
+  });
+  it('arDuration: under a minute, minutes, hours', () => {
+    expect(arDuration(30)).toBe('أقل من دقيقة');
+    expect(arDuration(59)).toBe('أقل من دقيقة');
+    expect(arDuration(60)).toBe('1 دقيقة');
+    expect(arDuration(120)).toBe('2 دقيقتان');
+    expect(arDuration(180)).toBe('3 دقايق');
+    expect(arDuration(660)).toBe('11 دقيقة');
+    expect(arDuration(3600)).toBe('1 ساعة');
+    expect(arDuration(7200)).toBe('2 ساعتان');
+    expect(arDuration(10800)).toBe('3 ساعات');
+  });
+  it('retry label carries the count, empty when nothing failed', () => {
+    expect(ocrRetryLabel(0)).toBe('');
+    expect(ocrRetryLabel(1)).toBe('أعد قراءة 1 صفحة الفاشلة');
+    expect(ocrRetryLabel(3)).toBe('أعد قراءة 3 صفحات الفاشلة');
+    expect(ocrRetryLabel(12)).toBe('أعد قراءة 12 صفحة الفاشلة');
   });
   it('shared Arabic copy exists and mentions the essentials', () => {
     expect(OCR_FAILED_LINE).toBe('تعذّرت قراءة هذه الصفحة.');

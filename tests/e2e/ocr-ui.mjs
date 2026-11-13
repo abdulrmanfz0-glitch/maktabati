@@ -71,6 +71,21 @@ try {
 
   // 3. chip visible while running, library badge while navigating
   row('global chip visible while running', await b.evaluate(`!document.querySelector('#ocrChip').hidden && document.querySelector('#ocrChip').textContent.includes('من')`));
+  const chipGeom = () => b.evaluate(`(() => {
+    const rect = el => { const b = el && el.getBoundingClientRect(); return b && (b.width || b.height) ? { l: b.left, t: b.top, r: b.right, b: b.bottom } : null; };
+    const chip = rect(document.querySelector('#ocrChip'));
+    const sideEl = document.querySelector('#side');
+    const side = rect(sideEl);
+    const sideOn = side && getComputedStyle(sideEl).visibility !== 'hidden' && getComputedStyle(sideEl).display !== 'none';
+    const toastEl = document.querySelector('#toast');
+    const toast = (toastEl && getComputedStyle(toastEl).display !== 'none') ? rect(toastEl) : null;
+    const inside = !!chip && chip.l >= 0 && chip.t >= 0 && chip.r <= innerWidth && chip.b <= innerHeight;
+    const inter = (a, b) => a && b && !(a.r <= b.l || a.l >= b.r || a.b <= b.t || a.t >= b.b);
+    return { inside, sideOverlap: inter(chip, sideOn ? side : null), toastOverlap: inter(chip, toast), toastAbove: !!(toast && chip && toast.b <= chip.t), chip: chip ? [chip.l, chip.t, chip.r, chip.b].map(Math.round).join(',') : null };
+  })()`);
+  const g = await chipGeom();
+  row('chip fully inside the viewport (1280)', g.inside === true, JSON.stringify(g));
+  row('chip not overlapped by sidebar or toast (1280)', g.sideOverlap === false && g.toastOverlap === false && g.toastAbove !== false, JSON.stringify(g));
   await b.evaluate(`location.hash = '#/lib'`); await b.sleep(700);
   const badgeDiag = await b.evaluate(`new Promise(res => { const q = indexedDB.open('maktabati'); q.onsuccess = () => { const r = q.result.transaction('items').objectStore('items').get(${JSON.stringify(bookId)}); r.onsuccess = () => res({ idb: (r.result && r.result.ocr) || null, hash: location.hash, meta: (document.querySelector('#v-lib .card-meta') || {}).textContent || '' }); }; })`);
   row('library badge shows reading progress', await b.evaluate(`document.querySelector('#v-lib').textContent.includes('يُقرأ النص')`), JSON.stringify(badgeDiag).slice(0, 300));
@@ -112,8 +127,9 @@ try {
   row('quote card mentions the page number', await b.evaluate(`document.querySelector('#v-quotes').textContent.includes('صفحة')`));
 
   // 7. book page disclosure + screenshot
-  await b.evaluate(`location.hash = '#/book/' + encodeURIComponent(${JSON.stringify(bookId)})`); await b.sleep(700);
+  await b.evaluate(`location.hash = '#/book/' + encodeURIComponent(${JSON.stringify(bookId)})`); await b.sleep(900);
   row('book page disclosure (OCR + Tesseract)', await b.evaluate(`document.querySelector('#v-book').textContent.includes('مقروء آليًا') && document.querySelector('#v-book').textContent.includes('Tesseract')`));
+  row('retry button hidden when no pages failed', await b.evaluate(`!!document.querySelector('#ocrRetry') && document.querySelector('#ocrRetry').hidden === true`));
   await b.screenshot(path.join(SHOTS, '03-book-disclosure-1280.png'));
 
   // 8. chat with the fake AI from the reader chapter (OCR text is in context)

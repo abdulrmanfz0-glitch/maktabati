@@ -12,7 +12,7 @@ import { findNormalizedRange } from '../core/text.js';
 import { PROMPT_VERSION, CORRECTIVE_MESSAGE, parseGlossary, glossaryHash, glossaryForText, extractChapterUnits, chunkUnits, buildMessages as buildTranslationMessages, parseTranslation, qaSegment, estimateChapter, fingerprint, chapterSourceHash, lastTwoSentences, bookPlan, runConcurrent, hashString, isPeak, isArabicHighlight, isSourceHighlight } from '../core/translate.js';
 import { trGetJob, trPutJob, trListJobs, trGetSegments, trPutSegment, trDeleteJob, trGetGlossary, trPutGlossary, trDeleteBook, trClearAll } from '../core/translate-store.js';
 import { scannedSaveAllowed, scanBookFields, isPendingScan, ensureStores, quotaAllows, saveScannedBook, deleteScannedFile, sweepOrphanFiles, getScannedFile, persistOnce, ocrLockHeld } from '../core/scan-save.js';
-import { ensureOcrPagesStore, makeOcrStore, delOcrPagesForBook, sweepOcrPages, getBook, OCR_FAILED_LINE, OCR_CHAT_LABEL, OCR_BOOK_DISCLOSURE, OCR_EXPORT_NOTICE, OCR_DEFAULT_MS_PER_PAGE, OCR_FIRST_DOWNLOAD_MB, ocrTimeEstimate } from '../core/ocr-store.js';
+import { ensureOcrPagesStore, makeOcrStore, delOcrPagesForBook, sweepOcrPages, getBook, OCR_FAILED_LINE, OCR_CHAT_LABEL, OCR_BOOK_DISCLOSURE, OCR_EXPORT_NOTICE, OCR_DEFAULT_MS_PER_PAGE, OCR_FIRST_DOWNLOAD_MB, ocrTimeEstimate, arCount, ocrRetryLabel } from '../core/ocr-store.js';
 
 (function(){
 'use strict';
@@ -766,7 +766,7 @@ function renderBook(it){
     '<h1 class="bp-h" dir="auto">' + esc(it.title) + '</h1>' + (it.subtitle ? '<p class="bp-sub" dir="auto">' + esc(it.subtitle) + '</p>' : '') + (it.author ? '<p class="bp-au" dir="auto">' + esc(it.author) + '</p>' : '') +
     (it.translator ? '<p class="bp-m"><span>المترجم</span><bdi dir="auto">' + esc(it.translator) + '</bdi></p>' : '') + (it.originalTitle ? '<p class="bp-m"><span>العنوان الأصلي</span><bdi dir="ltr">' + esc(it.originalTitle) + '</bdi></p>' : '') +
     (it.whyRead ? '<div class="bp-why"><b>ليش أقرأه</b><p dir="auto">' + md(it.whyRead) + '</p></div>' : '') +
-    '<div class="bp-act"><button class="pbtn" data-href="' + R + '">' + go + '</button>' + trBookButton(it) + (isScanDone(it) ? '<button class="gbtn" id="ocrRetry">أعد قراءة الصفحات الفاشلة</button>' : '') + '<button class="gbtn" data-bpa="chat">ناقش</button><button class="gbtn" data-bpa="cols">' + tx('المجموعات') + '</button><button class="gbtn" data-bpa="snd"' + (snd ? '' : ' disabled title="يتوفر مع ميزة الأصوات"') + '>أصوات</button><button class="gbtn" data-bpa="more" aria-label="المزيد" style="min-width:44px; padding:0">' + svg('dots') + '</button></div>' +
+    '<div class="bp-act"><button class="pbtn" data-href="' + R + '">' + go + '</button>' + trBookButton(it) + (isScanDone(it) ? '<button class="gbtn" id="ocrRetry" hidden>' + esc(ocrRetryLabel(0)) + '</button>' : '') + '<button class="gbtn" data-bpa="chat">ناقش</button><button class="gbtn" data-bpa="cols">' + tx('المجموعات') + '</button><button class="gbtn" data-bpa="snd"' + (snd ? '' : ' disabled title="يتوفر مع ميزة الأصوات"') + '>أصوات</button><button class="gbtn" data-bpa="more" aria-label="المزيد" style="min-width:44px; padding:0">' + svg('dots') + '</button></div>' +
     ingWarn(it) +
     (isScanDone(it) ? '<p class="hint" style="margin:.4rem 0 0">' + esc(OCR_BOOK_DISCLOSURE) + '</p>' : '') +
     '<div class="stats">' + cnt.map(c => '<div class="stat"><b>' + c[0] + '</b><span>' + c[1] + '</span></div>').join('') + '</div>' +
@@ -783,6 +783,13 @@ function renderBook(it){
       $('#sheet').onclick = ev => { const x = ev.target.closest('[data-bpa]'); if (!x) return; closeSheet(); const y = x.dataset.bpa; if (y === 'cover') pickCover(it); else if (y === 'uncover'){ delete it.cover; put('items', it); toast('انأزل الغلاف'); renderBook(it); } else if (y === 'del') confirmDelete(it); };
     }
   };
+  /* retry button appears only when pages actually failed, labeled with the count */
+  if (isScanDone(it) && idb) makeOcrStore(idb).getAllPages(it.id).then(recs => {
+    const n = recs.filter(r => r.status === 'failed').length;
+    const el = $('#ocrRetry'); if (!el) return;
+    const label = ocrRetryLabel(n);
+    if (label){ el.textContent = label; el.hidden = false; } else el.hidden = true;
+  }).catch(() => {});
   fitSoon($('#v-book'));
 }
 let COVER_FOR = null;
@@ -947,7 +954,7 @@ function doSearch(q){
   const G = { titles:[], text:[], hl:[], notes:[] };
   allItems().forEach(it => {
     if (norm(it.title + ' ' + (it.author || '')).includes(nq)) G.titles.push('<button class="res" data-href="#/read/' + encodeURIComponent(it.id) + '"><div>' + snip(it.title, nq) + '</div><small>' + (TYPES[it.type] || '') + (it.author ? ' · ' + esc(it.author) : '') + '</small></button>');
-    itemBlocks(it).forEach(b => { if (G.text.length < 40 && norm(b.text).includes(nq)) G.text.push('<button class="res" data-href="#/read/' + encodeURIComponent(it.id) + '/' + encodeURIComponent(b.key) + '"><div>' + snip(b.text, nq) + '</div><small>' + srcLine(it) + (b.page ? ' · صفحة ' + b.page : (b.where ? ' · ' + esc(short(b.where, 40)) : '')) + '</small></button>'); });
+    itemBlocks(it).forEach(b => { if (G.text.length < 40 && norm(b.text).includes(nq)) G.text.push('<button class="res" data-href="#/read/' + encodeURIComponent(it.id) + '/' + encodeURIComponent(b.key) + '"><div>' + snip(b.text, nq) + '</div><small>' + srcLine(it) + (b.page ? ' · ' + arCount(b.page, 'صفحة') : (b.where ? ' · ' + esc(short(b.where, 40)) : '')) + '</small></button>'); });
   });
   annosOf('hl').forEach(a => { const it = itemById(a.itemId); if (!it) return; const hay = a.text + ' ' + (a.note || ''); if (norm(hay).includes(nq)) G.hl.push('<button class="res" data-href="#/read/' + encodeURIComponent(it.id) + '/' + encodeURIComponent(a.bk) + '"><div>' + snip(norm(a.text).includes(nq) ? a.text : a.note, nq) + '</div><small>' + srcLine(it) + '</small></button>'); });
   const FL = { predict:'توقّعي', summary:'ملخّصي', open:'أسئلتي المفتوحة', apply:'وش بطبّق' };
@@ -1216,7 +1223,7 @@ function renderReader(it, target, o){
   if (isPendingScan(it) || (it.source === 'scan' && it.ocr && it.ocr.status !== 'done')){
     const ocr = it.ocr || {};
     const st = ocr.status === 'running' ? ' يقرأ الآن…' : ocr.status === 'paused' ? ' — ' + (OCR_STOP_REASON[ocr.reason] || 'متوقف مؤقتًا.') : '';
-    const doneTxt = ocr.done ? 'قرأت ' + ocr.done + ' من ' + (ocr.pages || 0) + ' صفحة' + st : 'بانتظار البدء.';
+    const doneTxt = ocr.done ? 'قرأت ' + ocr.done + ' من ' + arCount(ocr.pages || 0, 'صفحة') + st : 'بانتظار البدء.';
     $('#v-read').innerHTML = '<div class="wrap" style="padding-top:2.5rem; padding-bottom:4rem; text-align:center">' +
       '<span style="font-size:.72rem;color:var(--soft);border:1px solid var(--rule);border-radius:99px;padding:2px 10px">ممسوح ضوئيًا</span>' +
       '<h2 style="margin:1rem 0 .5rem" dir="auto">' + esc(it.title) + '</h2>' +
@@ -1270,7 +1277,7 @@ function ocrChipEl(){
   if (OCR_CHIP) return OCR_CHIP;
   OCR_CHIP = document.createElement('div');
   OCR_CHIP.id = 'ocrChip';
-  OCR_CHIP.style.cssText = 'position:fixed;bottom:14px;inset-inline-start:14px;z-index:60;display:flex;align-items:center;gap:.5rem;background:var(--bg,#fff);color:var(--fg,#222);border:1px solid var(--rule,#ddd);border-radius:12px;padding:.5rem .8rem;box-shadow:0 2px 10px rgba(0,0,0,.14);font-size:.85rem;max-width:min(92vw,440px)';
+  OCR_CHIP.style.cssText = 'position:fixed;bottom:16px;inset-inline-end:16px;z-index:60;display:flex;align-items:center;gap:.5rem;background:var(--bg,#fff);color:var(--fg,#222);border:1px solid var(--rule,#ddd);border-radius:12px;padding:.5rem .8rem;box-shadow:0 2px 10px rgba(0,0,0,.14);font-size:.85rem;max-width:min(92vw,440px)';
   OCR_CHIP.hidden = true;
   OCR_CHIP.onclick = e => { if (e.target.closest('[data-ocrchip="pause"]') && ocrRun) ocrRun.ctrl.abort(); };
   document.body.appendChild(OCR_CHIP);
@@ -1278,11 +1285,12 @@ function ocrChipEl(){
 }
 function updateOcrChip(state){
   const c = ocrChipEl();
-  if (!state || !state.total){ c.hidden = true; return; }
+  if (!state || !state.total){ c.hidden = true; const t = $('#toast'); if (t) t.style.bottom = ''; return; }
   c.hidden = false;
+  const t = $('#toast'); if (t) t.style.bottom = '84px'; // toasts stack above the chip
   const left = Math.max(0, state.total - (state.done || 0));
   const est = left > 0 ? ocrTimeEstimate(left, kv.get('ocrMsAvg', null) || OCR_DEFAULT_MS_PER_PAGE) : '…';
-  c.innerHTML = '<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px"><bdi dir="auto">' + esc(short(state.title || '', 24)) + '</bdi></span><span class="hint" style="white-space:nowrap">' + (state.done || 0) + ' من ' + state.total + (left > 0 ? ' · باقي قرابة ' + est : '') + '</span><button class="gbtn ch-sm" data-ocrchip="pause">إيقاف</button>';
+  c.innerHTML = '<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px"><bdi dir="auto">' + esc(short(state.title || '', 24)) + '</bdi></span><span class="hint" style="white-space:nowrap">' + (state.done || 0) + ' من ' + arCount(state.total, 'صفحة') + (left > 0 ? ' · باقي قرابة ' + est : '') + '</span><button class="gbtn ch-sm" data-ocrchip="pause">إيقاف</button>';
 }
 async function startOcr(it, opts = {}){
   if (!idb){ toast('التخزين غير متاح. ما قدرت أقرأ النص.'); return; }
@@ -1303,7 +1311,7 @@ async function startOcr(it, opts = {}){
       onProgress: p => {
         const memCur = mem.items.get(it.id); // sync mem on every page write: later app puts never carry a stale ocr field
         if (memCur && memCur.ocr){ memCur.ocr.status = 'running'; delete memCur.ocr.reason; if (typeof p.done === 'number') memCur.ocr.done = p.done; }
-        if (prog) prog.textContent = p.finished ? 'انتهت القراءة.' : 'قرأت ' + (p.done || 0) + ' من ' + (p.total || 0) + ' صفحة';
+        if (prog) prog.textContent = p.finished ? 'انتهت القراءة.' : 'قرأت ' + (p.done || 0) + ' من ' + arCount(p.total || 0, 'صفحة');
         updateOcrChip({ bookId: it.id, title: it.title, done: p.done || 0, total: p.total || 0 });
         if (cur.view === 'lib' || cur.view === 'book') refreshView();
       }
@@ -3796,7 +3804,7 @@ function searchHits(q, n){
   const score = t => { t = norm(t); let s = 0; toks.forEach(w => { if (t.includes(w)) s++; }); return s ? s + (s === toks.length ? 1 : 0) : 0; };
   const out = [];
   allItems().forEach(it => {
-    itemBlocks(it).forEach(b => { if (!aheadOk(it, keyCh(b.key))) return; const s = score(b.text); if (s) out.push({ it, key:b.key, text:b.text, s, kind:'text', where:b.page ? 'صفحة ' + b.page : (b.where || '') }); });
+    itemBlocks(it).forEach(b => { if (!aheadOk(it, keyCh(b.key))) return; const s = score(b.text); if (s) out.push({ it, key:b.key, text:b.text, s, kind:'text', where:b.page ? arCount(b.page, 'صفحة') : (b.where || '') }); });
     arr(it.chapters).forEach((c, ci) => { const cc = chCard(it, ci); if (!cc || !aheadOk(it, ci, true)) return; const txt = [plain(c.title)].concat(cc.ideas, cc.terms, cc.topics).join(' — '); const s = score(txt); if (s) out.push({ it, key:'c' + ci, text:txt, s:s + .7, kind:'card' }); });
   });
   if (MEM().hl) annosOf('hl').forEach(a => { const it = itemById(a.itemId); if (!it) return; const txt = a.text + (a.note ? ' [ملاحظتي: ' + a.note + ']' : ''); const s = score(txt); if (s) out.push({ it, key:a.bk, text:txt, s:s + .5, kind:'hl' }); });
@@ -4218,7 +4226,7 @@ function initSide(){
 }
 
 /* ---------- quotes + all highlights ---------- */
-const bkPage = (it, bk) => { const b = itemBlocks(it).find(x => x.key === bk); return b && b.page ? ' · صفحة ' + b.page : ''; };
+const bkPage = (it, bk) => { const b = itemBlocks(it).find(x => x.key === bk); return b && b.page ? ' · ' + arCount(b.page, 'صفحة') : ''; };
 function renderQuotes(){
   const qs = annosOf('quote').filter(a => itemById(a.itemId)).sort((a, b) => (b.t || 0) - (a.t || 0));
   $('#v-quotes').innerHTML = '<div class="wrap" style="padding-top:1.5rem; padding-bottom:4rem"><h1 class="vh">' + tx('اقتباساتي') + '</h1><p class="quiet" style="margin:.25rem 0 .5rem">' + tx('كل اقتباس تحفظه من «اقتباس» في شريط التحديد يطلع هنا.') + '</p>' +
@@ -5012,12 +5020,13 @@ function showPreview(P){
   const firstPage = x => { const c0 = x.chapters[0]; let n = 0; return c0 ? arr(c0.sections).map(s => (n > 1600 ? '' : (s.title ? '<h4>' + md(s.title) + '</h4>' : '') + arr(s.blocks).filter(b => n <= 1600 && ((n += blockText(b).length), true)).map((b, bi) => block(b, 'pv-' + bi)).join(''))).join('') : ''; };
   const chList = x => x.chapters.map(c => '<li>' + esc(c.title || '—') + '</li>').join('');
   const seg = (id, opts, v) => '<div class="seg" id="' + id + '" role="group">' + opts.map(o => '<button type="button" data-v="' + o[0] + '" aria-pressed="' + (o[0] === v) + '">' + o[1] + '</button>').join('') + '</div>';
+  const scanEst = scanOk ? ocrTimeEstimate(rep.pages || 0, kv.get('ocrMsAvg', null) || OCR_DEFAULT_MS_PER_PAGE) : '';
   openModal('<div class="mhead"><h3>' + tx('معاينة قبل الحفظ') + '</h3>' + closeBtn + '</div>' +
-    (rep ? '<div class="msg' + (rec === 'ok' ? ' ok' : '') + '" role="status"><b>' + tx(ING_REC[rec] || ING_REC.review) + '</b>' +
-      (rec === 'vision' ? tx(scanOk ? 'هالكتاب ممسوح ضوئيًا — ما فيه نص جاهز بعد.' : 'نص هالملف ما ينقرأ (غالبًا صفحات ممسوحة كصور)، ويحتاج قراءة الصفحات كصور. هالميزة مو متوفرة بعد، فما راح أحفظه.') : '') +
+    ((rep && !scanOk) ? '<div class="msg' + (rec === 'ok' ? ' ok' : '') + '" role="status"><b>' + tx(ING_REC[rec] || ING_REC.review) + '</b>' +
+      (rec === 'vision' ? tx('نص هالملف ما ينقرأ (غالبًا صفحات ممسوحة كصور)، ويحتاج قراءة الصفحات كصور. هالميزة مو متوفرة بعد، فما راح أحفظه.') : '') +
       (issues.length ? '<ul class="ing-issues" style="margin:.4rem 0 0; padding-inline-start:1.2em">' + issues.map(t => '<li>' + tx(t) + '</li>').join('') + '</ul>' : '') +
       (unread.length ? '<p style="margin:.4rem 0 0"><span>' + tx('صفحات ما قدرت أقرأها:') + '</span> <bdi dir="ltr">' + esc(unread.slice(0, 40).join(', ') + (unread.length > 40 ? ' …' : '')) + '</bdi></p>' : '') + '</div>' : '') +
-    (scanOk ? '<div class="msg" role="note" style="margin:.6rem 0 0"><b>كتاب ممسوح ضوئيًا</b><p style="margin:.35rem 0 0; line-height:1.75">' + (rep.pages || 0) + ' صفحة. قراءة النص محليًا تستغرق قرابة ' + ocrTimeEstimate(rep.pages || 0, kv.get('ocrMsAvg', null) || OCR_DEFAULT_MS_PER_PAGE) + ' (تقدير). أول مرة ينزّل التطبيق قرابة ' + OCR_FIRST_DOWNLOAD_MB + ' ميجا من ملفات التعرف من هالموقع فقط، مرة وحدة. صفحات الكتاب ما تطلع من جهازك، وإذا قفلت التبويب توقف القراءة وتكمل من آخر صفحة بعدين.</p></div>' : '') +
+    (scanOk ? '<div class="msg" role="note" style="margin:.6rem 0 0"><b>كتاب ممسوح ضوئيًا</b><p style="margin:.35rem 0 0; line-height:1.75">' + arCount(rep.pages || 0, 'صفحة') + '. قراءة النص محليًا تاخذ ' + (scanEst.indexOf('أقل') === 0 ? scanEst : 'قرابة ' + scanEst) + ' (تقدير). أول مرة ينزّل التطبيق قرابة ' + OCR_FIRST_DOWNLOAD_MB + ' ميجا من ملفات التعرف من هالموقع فقط، مرة وحدة. صفحات الكتاب ما تطلع من جهازك، وإذا قفلت التبويب توقف القراءة وتكمل من آخر صفحة بعدين.</p></div>' : '') +
     '<p class="flabel">' + tx('النوع') + '</p>' + seg('pvType', Object.keys(TYPES).map(k => [k, TYPES[k]]), it.type) +
     '<label class="flabel" for="pvT">' + tx('العنوان') + '</label><input class="inp" id="pvT" dir="auto" value="' + esc(it.title) + '">' +
     '<label class="flabel" for="pvA">' + tx('المؤلف') + '</label><input class="inp" id="pvA" dir="auto" value="' + esc(it.author || '') + '">' +
