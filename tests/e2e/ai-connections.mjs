@@ -41,6 +41,9 @@ const gkey = 'AQ.fake-gemini-connections-e2e';
 try {
   await b.goto(page);
   await b.waitFor(`!!document.querySelector('#v-lib')`, 20000);
+  await ev(`localStorage.setItem('maktabati:profile', JSON.stringify({ ai:{ autoSearch:false } }))`);
+  await b.reload();
+  await b.waitFor(`!!document.querySelector('#v-lib')`, 20000);
   await ev(`(() => {
     window.__origins = [];
     const map = { ${JSON.stringify(deepseekBase)}: ${JSON.stringify(fake.url + '/deepseek/v1')}, ${JSON.stringify(geminiBase)}: ${JSON.stringify(fake.url + '/gemini/v1')} };

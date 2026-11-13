@@ -67,6 +67,9 @@ async function setChatDefault(connectionId, model) {
 try {
   await b.goto(page);
   await b.waitFor(`!!document.querySelector('#v-lib')`, 20000);
+  await ev(`localStorage.setItem('maktabati:profile', JSON.stringify({ ai:{ autoSearch:false } }))`);
+  await b.reload();
+  await b.waitFor(`!!document.querySelector('#v-lib')`, 20000);
   await mapFor(sandbox);
   await ev(`(() => {
     const orig = window.fetch.bind(window);

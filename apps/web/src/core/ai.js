@@ -374,7 +374,11 @@ export function clipAround(text, focus, maxChars) {
 function assemble(base, parts, history) {
   const refs = parts.filter(p => p.text).map(p => '<' + p.id + '>\n' + (p.label ? p.label + '\n' : '') + p.text + '\n</' + p.id + '>').join('\n\n');
   const system = base + (refs ? '\n\n<reference_material>\n' + refs + '\n</reference_material>' : '');
-  return [{ role:'system', content:system }].concat(history.map(m => ({ role:m.role, content:String(m.content || '') })));
+  return [{ role:'system', content:system }].concat(history.map(m => {
+    const row = { role:m.role, content:String(m.content || '') };
+    if (m.role === 'assistant' && Array.isArray(m.server_tool_calls)) row.server_tool_calls = m.server_tool_calls;
+    return row;
+  }));
 }
 
 /**
@@ -429,9 +433,13 @@ export function parseSSE(buffer) {
       if (j && j.error) events.push({ error: String((j.error.message || j.error) || 'AI error') });
       else {
         const choice = j && j.choices && j.choices[0];
-        const t = choice && choice.delta && choice.delta.content;
-        if (t) events.push({ delta: t });
-        if (choice && choice.finish_reason) events.push({ finish: String(choice.finish_reason) });
+        if (choice && choice.server_tool_event) events.push({ toolEvent:choice.server_tool_event });
+        const delta = choice && choice.delta;
+        const t = delta && delta.content;
+        if (t) events.push({ delta:t });
+        if (delta && Array.isArray(delta.server_tool_calls)) events.push({ serverToolCalls:delta.server_tool_calls });
+        if (delta && Array.isArray(delta.annotations)) events.push({ annotations:delta.annotations });
+        if (choice && choice.finish_reason) events.push({ finish:String(choice.finish_reason) });
       }
     } catch (e) { /* ignore malformed SSE lines */ }
   }

@@ -37,6 +37,7 @@ try {
       cards:{ connectionId:'c1', model:'gemini-3.1-flash-lite' }
     }
   }))`);
+  await ev(`localStorage.setItem('maktabati:profile', JSON.stringify({ ai:{ autoSearch:false } }))`);
   await b.reload();
   await b.waitFor(`!!document.querySelector('#v-lib')`, 20000);
   await ev(`(() => {

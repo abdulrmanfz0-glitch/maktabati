@@ -29,6 +29,8 @@ script against `dist/web` or `dist/single` will fail those assertions by design.
 | `ai-connections.mjs` | yes | Starts its own fake provider; two connections, pinned models, task defaults, chat switcher, reload, export has no key |
 | `ai-connections-screens.mjs` | yes | Writes `docs/screens/ai-connections/` at 1280 and 390; uses fake keys |
 | `ai-gemini-fallback.mjs` | yes | Starts its own fake provider; Gemini 503 fallback note, all-busy message, 404 and model filtering |
+| `ai-web-search.mjs` | yes | Starts its own fake provider; automatic DeepSeek/Gemini search, manual Gemini 2.5 toggle, live status, sources, error classification, no-search retry, cost note |
+| `ai-web-search-screens.mjs` | yes | Writes `docs/screens/web-search/` at 1280 and 390; fake keys only |
 | `upload.mjs` | yes | PDF/EPUB/text/paste; needs local fixtures |
 | `ingest-app.mjs` | yes | PDF/EPUB fixture comparisons |
 | `reader-imported.mjs` | yes | Imported-book reader checks; needs fixtures |
