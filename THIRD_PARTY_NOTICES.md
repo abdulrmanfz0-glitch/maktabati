@@ -39,7 +39,26 @@ or distributed alongside the application. Full license texts are kept in
   for the design reference only. The same dual license applies; this project
   uses the MIT option.
 
-### Development-only packages
+### Tesseract.js 7.0.0 and the Tesseract Arabic language data
+
+- **Files in the app:** the Tesseract.js library is bundled lazily into an
+  on-demand chunk. `worker.min.js`, `tesseract-core-simd-lstm.wasm.js`, and
+  `tesseract-core-lstm.wasm.js` are copied from `node_modules` into
+  `dist/web/ocr/7.0.0/` at build time (`ocrAssetsPlugin` in
+  `apps/web/vite.config.mjs`). `apps/web/public/ocr/7.0.0/ara.traineddata.gz`
+  is the Arabic fast model, served from the same origin. The app never fetches
+  OCR files from a CDN.
+- **Upstream:** Tesseract.js, https://github.com/naptha/tesseract.js (v7.0.0).
+  Its package declares Apache-2.0; the core builds come from the
+  `tesseract.js-core` package (same project).
+- **License:** Apache License, Version 2.0 (same text as the pdf.js entry,
+  `licenses/pdfjs-dist-LICENSE.txt`).
+- **Language data:** `ara.traineddata` (fast) from the Tesseract OCR project,
+  https://github.com/tesseract-ocr/tessdata_fast, retrieved 2026-11-13 from
+  https://tessdata.projectnaptha.com/4.0.0_fast/ara.traineddata.gz
+  (SHA-256 `cfdec92af6c72289984b03dfe5e03d25f7fee591733081aa6f40761f3f5884cf`).
+  License: Apache License, Version 2.0. The file is unmodified.
+
 
 `vite`, `vite-plugin-singlefile`, `vitest`, and their transitive dependencies
 are development tools. They are not part of the application bundle or the
