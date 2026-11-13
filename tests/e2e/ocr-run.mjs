@@ -45,9 +45,10 @@ try {
   await boot();
   await b.evaluate(`location.hash = '#/lib'`); await b.sleep(400);
   await b.setFiles('#upFile', [scanFile]);
-  await b.waitFor(`!!document.querySelector('#pvSave')`, 120000);
-  row('scanned preview savable', await b.evaluate(`!document.querySelector('#pvSave').disabled`));
-  await b.evaluate(`document.querySelector('#pvSave').click()`); await b.sleep(1600);
+  await b.waitFor(`!!document.querySelector('#pvGo')`, 120000);
+  row('scanned preview savable', await b.evaluate(`!document.querySelector('#pvGo').disabled`));
+  row('consent visible with size and estimate', await b.evaluate(`(() => { const t = document.querySelector('#modalBox').textContent; return t.includes('ممسوح ضوئيًا') && t.includes('4.6 ميجا') && t.includes('تقدير'); })()`));
+  await b.evaluate(`document.querySelector('#pvOnly').click()`); await b.sleep(1600);
   const bookId = await b.evaluate(`new Promise(res => { const q = indexedDB.open('maktabati'); q.onsuccess = () => { const r = q.result.transaction('items').objectStore('items').getAll(); r.onsuccess = () => res((r.result.find(i => i.source === 'scan') || {}).id); }; })`);
   row('scanned book saved', !!bookId, bookId);
 

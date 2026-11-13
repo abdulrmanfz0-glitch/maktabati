@@ -157,6 +157,7 @@ export async function startFakeAI() {
         hasCorrective:isCorrective(body)
       };
       stats.lastUserContent = (body.messages || []).filter(m => m && m.role === 'user').map(m => String(m.content || '')).join('\n');
+      stats.lastFull = body; /* complete request body for e2e assertions (labels, placeholders) */
 
       if (u.pathname.startsWith('/gemini/')) {
         if (control.gemini404) {

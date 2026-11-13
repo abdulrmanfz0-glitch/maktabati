@@ -123,48 +123,66 @@ export function createOcrEngine({ createWorkerFn = createWorker, idleMs = DEFAUL
   }
 
   /**
-   * Render one PDF page to a canvas at ~dpi DPI, capped at maxPixels.
-   * Uses the same pdf.js setup as the ingest engine (legacy build + worker URL).
-   * @returns {Promise<{ canvas:HTMLCanvasElement, width:number, height:number, scale:number }>}
+   * Open the PDF once and render any number of pages from the same document.
+   * Release with close() at the end of a run or on abort.
+   * @returns {Promise<{ renderPage:(pageIndex, opts)=>Promise<{canvas,width,height,scale}>, close:()=>Promise<void> }>}
    */
-  async function renderPage(pdfBytes, pageIndex, opts = {}) {
-    const { dpi = DEFAULT_RENDER_DPI, maxPixels = MAX_RENDER_PIXELS, signal } = opts;
-    if (signal && signal.aborted) throw abortError();
+  async function openPdfDoc(pdfBytes) {
     const [{ getDocument, GlobalWorkerOptions }, workerUrl] = await Promise.all([
       import('pdfjs-dist/legacy/build/pdf.mjs'),
       import('pdfjs-dist/legacy/build/pdf.worker.mjs?url').then(m => m.default)
     ]);
     if (!GlobalWorkerOptions.workerSrc) GlobalWorkerOptions.workerSrc = workerUrl;
-    let doc = null, page = null;
-    try {
-      doc = await getDocument({ data: pdfBytes.slice ? pdfBytes.slice() : pdfBytes, isEvalSupported: false, enableXfa: false, disableFontFace: true }).promise;
-      page = await doc.getPage(pageIndex);
-      const v0 = page.getViewport({ scale: 1 });
-      const s = Math.min(dpi / 72, Math.sqrt(maxPixels / Math.max(1, v0.width * v0.height)));
-      const viewport = page.getViewport({ scale: s });
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
-      const ctx = canvas.getContext('2d', { alpha: false });
-      ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-      const task = page.render({ canvasContext: ctx, viewport });
-      if (signal) signal.addEventListener('abort', () => { try { task.cancel(new DOMException('Aborted', 'AbortError')); } catch (e) {} }, { once: true });
-      await task.promise;
+    const doc = await getDocument({ data: pdfBytes.slice ? pdfBytes.slice() : pdfBytes, isEvalSupported: false, enableXfa: false, disableFontFace: true }).promise;
+    let closed = false;
+    const close = async () => { if (closed) return; closed = true; try { await doc.loadingTask.destroy(); } catch (e) {} };
+    async function renderPdfPage(pageIndex, opts = {}) {
+      if (closed) throw new OcrError('engine', 'PDF document already closed');
+      const { dpi = DEFAULT_RENDER_DPI, maxPixels = MAX_RENDER_PIXELS, signal } = opts;
       if (signal && signal.aborted) throw abortError();
-      return { canvas, width: canvas.width, height: canvas.height, scale: s };
-    } catch (e) {
-      if (signal && signal.aborted) throw abortError();
-      if (e && e.name === 'RenderingCancelledException') throw abortError();
-      throw mapError(e);
-    } finally {
-      try { if (page) page.cleanup(); } catch (e) {}
-      try { if (doc && doc.loadingTask) await doc.loadingTask.destroy(); } catch (e) {}
+      let page = null;
+      try {
+        page = await doc.getPage(pageIndex);
+        const v0 = page.getViewport({ scale: 1 });
+        const s = Math.min(dpi / 72, Math.sqrt(maxPixels / Math.max(1, v0.width * v0.height)));
+        const viewport = page.getViewport({ scale: s });
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
+        const ctx = canvas.getContext('2d', { alpha: false });
+        ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        const task = page.render({ canvasContext: ctx, viewport });
+        if (signal) signal.addEventListener('abort', () => { try { task.cancel(new DOMException('Aborted', 'AbortError')); } catch (e) {} }, { once: true });
+        await task.promise;
+        if (signal && signal.aborted) throw abortError();
+        return { canvas, width: canvas.width, height: canvas.height, scale: s };
+      } catch (e) {
+        if (signal && signal.aborted) throw abortError();
+        if (e && e.name === 'RenderingCancelledException') throw abortError();
+        throw mapError(e);
+      } finally {
+        try { if (page) page.cleanup(); } catch (e) {}
+      }
     }
+    return { renderPage: renderPdfPage, close };
   }
 
-  return { ocrPage, renderPage, terminate };
+  /**
+   * One-shot convenience: opens the PDF, renders one page, and closes it.
+   * @returns {Promise<{ canvas:HTMLCanvasElement, width:number, height:number, scale:number }>}
+   */
+  async function renderPage(pdfBytes, pageIndex, opts = {}) {
+    const { dpi = DEFAULT_RENDER_DPI, maxPixels = MAX_RENDER_PIXELS, signal } = opts;
+    if (signal && signal.aborted) throw abortError();
+    const doc = await openPdfDoc(pdfBytes);
+    try { return await doc.renderPage(pageIndex, { dpi, maxPixels, signal }); }
+    finally { await doc.close().catch(() => {}); }
+  }
+
+  return { ocrPage, renderPage, openPdfDoc, terminate };
 }
 
 const defaultEngine = createOcrEngine();
 export const ocrPage = (image, opts) => defaultEngine.ocrPage(image, opts);
 export const renderPage = (pdfBytes, pageIndex, opts) => defaultEngine.renderPage(pdfBytes, pageIndex, opts);
+export const openPdfDoc = (pdfBytes) => defaultEngine.openPdfDoc(pdfBytes);
 export const ocrTerminate = () => defaultEngine.terminate();

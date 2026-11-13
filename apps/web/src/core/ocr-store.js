@@ -7,6 +7,58 @@ import { scanPageId } from './scan-save.js';
 /** Engine tag written on every record (PR3 self-hosted Tesseract, ara fast). */
 export const OCR_ENGINE_TAG = 'tesseract.js-7.0.0/ara-fast';
 
+/** UI copy shared with the app and asserted by tests (Saudi tone, short). */
+export const OCR_FAILED_LINE = 'تعذّرت قراءة هذه الصفحة.';
+export const OCR_CHAT_LABEL = 'نص الكتاب مقروء آليًا من صور الصفحات على جهازك، وقد يحتوي أخطاء خصوصًا في التشكيل.';
+export const OCR_BOOK_DISCLOSURE = 'النص مقروء آليًا من صور الصفحات وقد يحتوي أخطاء، خصوصًا في التشكيل. التعرّف: Tesseract على جهازك.';
+export const OCR_EXPORT_NOTICE = 'ملف الـPDF الأصلي للكتب الممسوحة ما ينضم للتصدير، بس نصها المقروء آليًا ينضم.';
+export const OCR_DEFAULT_MS_PER_PAGE = 400;
+export const OCR_FIRST_DOWNLOAD_MB = 4.6;
+
+/** Arabic count grammar: 1 صفحة، 2 صفحتان، 3–10 صفحات، 11+ صفحة (0 uses the singular too). */
+const AR_UNITS = {
+  صفحة: { dual: 'صفحتان', plural: 'صفحات' },
+  ثانية: { dual: 'ثانيتان', plural: 'ثوانٍ' },
+  دقيقة: { dual: 'دقيقتان', plural: 'دقايق' },
+  ساعة: { dual: 'ساعتان', plural: 'ساعات' }
+};
+export function arCount(n, unit) {
+  const u = AR_UNITS[unit];
+  if (!u) return n + ' ' + unit;
+  n = Math.round(n);
+  if (n === 1) return '1 ' + unit;
+  if (n === 2) return '2 ' + u.dual;
+  if (n >= 3 && n <= 10) return n + ' ' + u.plural;
+  return n + ' ' + unit;
+}
+
+/** Durations: under a minute is «أقل من دقيقة», then minutes, then hours. */
+export function arDuration(seconds) {
+  const s = Math.max(0, Math.round(seconds || 0));
+  if (s < 60) return 'أقل من دقيقة';
+  const m = Math.round(s / 60);
+  if (m < 60) return arCount(m, 'دقيقة');
+  return arCount(Math.round(m / 60), 'ساعة');
+}
+
+/** Honest, approximate time estimate from measured ms/page. */
+export function ocrTimeEstimate(pages, avgMs = OCR_DEFAULT_MS_PER_PAGE) {
+  const total = Math.max(1, Math.round((pages || 0) * (avgMs || OCR_DEFAULT_MS_PER_PAGE) / 1000));
+  return arDuration(total);
+}
+
+/** Retry-button label: empty when nothing failed, with the count in parentheses. */
+export function ocrRetryLabel(n) {
+  if (n <= 0) return '';
+  if (n === 1) return 'أعد قراءة الصفحة الفاشلة';
+  return 'أعد قراءة الصفحات الفاشلة (' + n + ')';
+}
+
+/** «قرابة» is dropped for under-a-minute durations: «أقل من دقيقة» stands alone. */
+export function ocrApproxDuration(est) {
+  return est === 'أقل من دقيقة' ? est : 'قرابة ' + est;
+}
+
 /** Additive upgrade (v2 -> v3): create the store with a bookId index if missing. */
 export function ensureOcrPagesStore(db) {
   if (db.objectStoreNames.contains('ocrPages')) return;
