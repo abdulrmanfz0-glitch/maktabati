@@ -1,6 +1,7 @@
 // Public API of the ingest engine.
 export { toMarkdown } from './render.js';
 export { IngestError } from './model.js';
+export { DETECTION_THRESHOLDS } from './score.js';
 
 /**
  * Detect the input kind from bytes (magic numbers) or an explicit hint.

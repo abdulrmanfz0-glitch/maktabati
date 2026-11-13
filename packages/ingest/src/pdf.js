@@ -5,7 +5,7 @@
 // pdf.js is injected: options.openPdf(bytes) -> PDFDocumentProxy and options.pdfjs (for OPS).
 // When absent and running in Node, the Node adapter is loaded.
 import { IngestError, makeReport } from './model.js';
-import { extractPage, imageCoverage } from './stages/extract.js';
+import { extractPage, imageCoverage, imageUnionCoverage } from './stages/extract.js';
 import { reorderPage } from './stages/reorder.js';
 import { normalizePage, MARK_OPEN, MARK_CLOSE, pairOrderVotes, decidePairOrder, mirrorPairs, lossyEvidence, repairLossy } from './stages/normalize.js';
 import { docStats, layoutPage } from './stages/layout.js';
@@ -13,7 +13,7 @@ import { cleanPages, residualRepeats } from './stages/clean.js';
 import { detectFootnotes, detectEndnotes, alignSequences, detectHeadings, detectChapters } from './stages/structure.js';
 import { on } from './rules.js';
 import { assemble } from './stages/assemble.js';
-import { scorePages, docIssues, route, structuralIssues, textLayerIssues, coverage } from './score.js';
+import { scorePages, docIssues, route, structuralIssues, textLayerIssues, coverage, scannedSummary, DETECTION_THRESHOLDS } from './score.js';
 import { fingerprint, selectProfile, paramsFor } from './profiles.js';
 import { textMetrics } from './text.js';
 import { bracketOrder } from './bidi.js';
@@ -141,7 +141,7 @@ export async function* ingestPdf(bytes, options = {}) {
       const norm = normalizePage(lines, opts);
       if (norm.reversed) reversedPages++;
       lossyRepaired += norm.lossy || 0;
-      pages.push({ index: raw.index, width: raw.width, height: raw.height, lines: norm.lines, images: raw.images, itemCount: raw.items.length, coverage: imageCoverage(raw) });
+      pages.push({ index: raw.index, width: raw.width, height: raw.height, lines: norm.lines, images: raw.images, itemCount: raw.items.length, coverage: imageCoverage(raw), union: imageUnionCoverage(raw) });
       if (!cache) raw.items = null;
     }
     // Lossy mappings, only in a document that shows them (lossy-repair).
@@ -213,7 +213,7 @@ export async function* ingestPdf(bytes, options = {}) {
       page: p.index,
       text: p.lines.filter(l => !l.removed).map(l => l.text.replace(RE_MARK_G, '')).join('\n'),
       noText: p.itemCount === 0,
-      image: p.coverage,
+      image: p.union,
       edge: p.index === 1 || p.index === N,
       unresolvedGlyphs: gl.unresolvedByPage.get(p.index) || 0,
       columnsUnresolved: p.unresolved
@@ -258,7 +258,7 @@ export async function* ingestPdf(bytes, options = {}) {
         return bodyLines >= 12 ? { page, kind: 'dropped', reason: 'pre-chapter-text' } : { page, kind: 'front' };
       }
       if (placed) return { page, kind: first(chapters) !== null && pi >= first(chapters) ? 'chapter' : 'front' };
-      if (p.itemCount === 0) return (p.coverage || 0) >= 0.5 ? { page, kind: 'dropped', reason: 'no-text-layer' } : { page, kind: 'blank' };
+      if (p.itemCount === 0) return (p.union || 0) >= DETECTION_THRESHOLDS.imageCoverage ? { page, kind: 'dropped', reason: 'no-text-layer' } : { page, kind: 'blank' };
       if (!kept.length) return { page, kind: 'blank' };
       // Kept lines that are all consumed as notes of this page still count as placed content.
       if (kept.every(l => l.role === 'note')) return { page, kind: 'chapter' };
@@ -281,6 +281,8 @@ export async function* ingestPdf(bytes, options = {}) {
     report.recommendation = rt.recommendation;
     report.confidence = round(rt.confidence);
     report.visionPages = rt.visionPages;
+    const scanned = scannedSummary(sc.pages);
+    report.scanned = { pages: scanned.pages, share: round(scanned.share, 3) };
     const all = pageTexts.map(p => p.text).join('\n');
     const tm = textMetrics(all);
     const br = all.split('\n').reduce((a, l) => { const b = bracketOrder(l); a.good += b.good; a.bad += b.bad; return a; }, { good: 0, bad: 0 });

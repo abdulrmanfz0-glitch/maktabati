@@ -96,3 +96,6 @@ export async function extractPage(page, OPS, opt = {}) {
 
 /** Share of the page covered by the largest image (used to spot scanned pages). */
 export const imageCoverage = p => p.images.reduce((m, im) => Math.max(m, (im.w * im.h) / (p.width * p.height)), 0);
+
+/** Union (capped sum) of all image areas: catches scans split into strips or tiles. */
+export const imageUnionCoverage = p => Math.min(1, p.images.reduce((s, im) => s + (im.w * im.h) / (p.width * p.height), 0));
