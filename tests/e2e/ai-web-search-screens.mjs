@@ -49,11 +49,19 @@ async function shoot(width, mobile, suffix){
     await b.evaluate(`(() => { const t = document.querySelector('#v-home #chIn'); t.value = 'من مؤلف الكتاب؟'; t.dispatchEvent(new Event('input', { bubbles:true })); document.querySelector('#v-home #chSend').click(); })()`);
     await b.waitFor(`(() => { const a = [...document.querySelectorAll('#v-home .cm-a')]; const l = a[a.length - 1]; return !!l && !!l.querySelector('.cm-search-live'); })()`, 15000);
     await b.screenshot(path.join(SHOTS, 'deepseek-searching-' + suffix + '.png'));
-    await b.waitFor(`(() => { const a = [...document.querySelectorAll('#v-home .cm-a')]; const l = a[a.length - 1]; return !!l && l.textContent.includes('وصلت المعلومة من الويب.') && !!l.querySelector('.cm-web .cm-src a'); })()`, 25000);
+    await b.waitFor(`(() => { const a = [...document.querySelectorAll('#v-home .cm-a')]; const l = a[a.length - 1]; return !!l && l.textContent.includes('من الويب.') && !!l.querySelector('.cm-web .cm-src a'); })()`, 25000);
     await b.evaluate(`const d = document.querySelector('#v-home .cm-src'); if (d) d.open = true;`);
     await b.waitFor(`!document.querySelector('#toast').classList.contains('show')`, 8000);
     await b.sleep(300);
     await b.screenshot(path.join(SHOTS, 'deepseek-answer-' + suffix + '.png'));
+
+    fake.control.deepseekMixed = true;
+    await b.evaluate(`(() => { const t = document.querySelector('#v-home #chIn'); t.value = 'اذكر ناشري الكتاب وترجماته'; t.dispatchEvent(new Event('input', { bubbles:true })); document.querySelector('#v-home #chSend').click(); })()`);
+    await b.waitFor(`(() => { const a = [...document.querySelectorAll('#v-home .cm-a')]; const l = a[a.length - 1]; return !!l && l.textContent.includes('Pantheon Books') && !!l.querySelector('sup.cite a'); })()`, 25000);
+    await b.evaluate(`document.querySelectorAll('#v-home .cm-src').forEach(d => { d.open = true; })`);
+    await b.sleep(300);
+    await b.screenshot(path.join(SHOTS, 'deepseek-markers-' + suffix + '.png'));
+    fake.control.deepseekMixed = false;
 
     await b.evaluate(`location.hash = '#/profile/ai'`); await b.sleep(900);
     await b.waitFor(`!!document.querySelector('[data-tg="ai.autoSearch"]')`, 10000);

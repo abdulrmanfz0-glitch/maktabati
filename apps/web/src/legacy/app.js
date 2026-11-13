@@ -10,6 +10,7 @@ import { AI_DEFAULTS, basePolicy, keylessAllowed, estimateMessagesTokens, fitReq
 import { companionSystem, withoutWebSearchInstruction, WEB_SEARCH_FAILED_NOTE, MODES } from '../core/prompts.js';
 import { geminiNativeEndpoint, buildGeminiSearchRequest, geminiSearchHeaders, parseGeminiSearchSSE, normalizeGroundingMetadata, uniqueCitationSources, searchFailureCode, classifyGeminiSearchError } from '../core/gemini-search.js';
 import { searchPlan, deepSeekSearchFields, deepSeekSearchSources, deepSeekSearchQueries, classifyDeepSeekSearchError, searchErrorText, isSearchErrorKind, historyWithServerToolCalls, toolUnsupportedError, isSearchUnsupported, rememberUnsupported } from '../core/web-search.js';
+import { buildInlineCitations } from '../core/citations.js';
 import {
   AI_TASKS, migrateAiConfig, normalizeAiState, isAiState,
   resolveAiConfig, defaultPinForTask, resolveChatPin, groupedPins, allPinned,
@@ -4162,8 +4163,17 @@ function aiHTML(t){
       return '<button class="ref" data-ref="' + esc(it.id) + '|' + n + '" style="--c:' + c + '" title="' + esc(it.title) + ' · ' + tx('الفصل') + ' ' + n + '"><i class="dot" style="background:' + c + '"></i>' + label + '</button>';
     });
 }
+function aiHTMLWithCitations(t, citation){
+  const built = buildInlineCitations(t, citation);
+  const html = aiHTML(built.text).replace(/\[\[cite:(\d+)\]\]/g, (m, n) => {
+    const source = built.sources[+n - 1];
+    if (!source) return '';
+    return '<sup class="cite"><a href="' + esc(source.url) + '" target="_blank" rel="noopener noreferrer" title="' + esc(source.title || source.domain || source.url) + '">' + n + '</a></sup>';
+  });
+  return { html, sources:built.sources, plain:built.plain };
+}
 function webSourcesHTML(web){
-  const sources = uniqueCitationSources(web && web.sources);
+  const sources = uniqueCitationSources(Array.isArray(web) ? web : (web && web.sources));
   if (!sources.length) return '';
   return '<details class="cm-src"><summary>' + tx('المصادر') + ' (' + sources.length + ')' + svg('chev') + '</summary><ul>' +
     sources.map(s => {
@@ -4186,8 +4196,10 @@ function msgHTML(m, i){
   const cut = m.cut ? '<div class="hint" style="margin:0 0 .35rem">' + esc(tx('انقطع الرد، أرسل رسالة جديدة للمتابعة.')) + '</div>' : '';
   const model = m.model && m.model.label ? '<div class="cm-model" title="' + esc(m.model.connection || '') + '">' + esc(m.model.label) + '</div>' : '';
   const live = m.searchStatus ? '<div class="cm-web-i cm-search-live">' + svg('globe') + esc(m.searchStatus) + '</div>' : '';
-  const web = m.web ? '<div class="cm-web"><div class="cm-web-i">' + svg('globe') + tx('بحث في الإنترنت') + '</div>' + webSourcesHTML(m.web) + '</div>' : '';
-  return '<div class="cm-a md">' + note + cut + live + (m.content ? aiHTML(m.content) : m.streaming ? '<span class="typing" role="status" aria-label="' + tx('يكتب…') + '"><i></i><i></i><i></i></span>' : '') +
+  const cite = m.citations ? aiHTMLWithCitations(m.content, m.citations) : null;
+  const body = m.content ? (cite ? cite.html : aiHTML(m.content)) : (m.streaming ? '<span class="typing" role="status" aria-label="' + tx('يكتب…') + '"><i></i><i></i><i></i></span>' : '');
+  const web = (m.web || cite) ? '<div class="cm-web"><div class="cm-web-i">' + svg('globe') + tx('بحث في الإنترنت') + '</div>' + webSourcesHTML(cite ? cite.sources : m.web) + '</div>' : '';
+  return '<div class="cm-a md">' + note + cut + live + body +
     (cards ? '<div class="bcards">' + cards + '</div>' : '') + web +
     (m.content && !m.streaming ? '<div class="cm-tools"><button class="cm-copy" data-copy="' + i + '" aria-label="' + tx('انسخ') + '" title="' + tx('انسخ') + '">' + svg('copy') + '</button></div>' : '') +
     (m.content ? model : '') + '</div>';
@@ -4315,7 +4327,7 @@ function drawChat(){
     }
     const ns = e.target.closest('[data-nosearch]');
     if (ns){ retryWithoutSearch(C, +ns.dataset.nosearch); return; }
-    const cp = e.target.closest('[data-copy]'); if (cp){ const m = C.conv.msgs[+cp.dataset.copy]; if (m) copyText(m.content, tx('انسخت')); return; }
+    const cp = e.target.closest('[data-copy]'); if (cp){ const m = C.conv.msgs[+cp.dataset.copy]; if (m) copyText(m.citations ? buildInlineCitations(m.content, m.citations).plain : m.content, tx('انسخت')); return; }
     const pr = e.target.closest('[data-para]'); if (pr){ const [b, k] = pr.dataset.para.split('|'); openPara(b, k); return; }
     const sp = e.target.closest('[data-scope]');
     if (sp){ if (sp.dataset.scope === 'lib') C.conv.scope = 'lib'; else delete C.conv.scope; if (C.conv.msgs.length) saveConv(C); drawChat(); return; }
@@ -4482,6 +4494,7 @@ async function runStream(run){
         if (calls.length) am.serverToolCalls = calls;
         const sources = deepSeekSearchSources(calls, annotations);
         const queries = deepSeekSearchQueries(calls);
+        if (annotations.length) am.citations = { kind:'deepseek', items:annotations };
         if (sources.length || queries.length){
           am.web = { sources, queries };
           searchUsed = true;
@@ -4493,6 +4506,7 @@ async function runStream(run){
       onSearch:info => {
         const sources = uniqueCitationSources(info && info.citations);
         const queries = Array.isArray(info && info.queries) ? info.queries.slice(0, 8) : [];
+        if (Array.isArray(info && info.citations) && info.citations.length) am.citations = { kind:'gemini', items:info.citations };
         if (!sources.length && !queries.length) return;
         am.web = { sources, queries };
         searchUsed = true;

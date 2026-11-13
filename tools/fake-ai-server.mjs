@@ -3,7 +3,7 @@ import http from 'node:http';
 
 export async function startFakeAI() {
   const stats = { requests:0, searchRequests:0, closed:0, models:[], last:null, lastSearch:null, modelFetches:[] };
-  const control = { gemini503:false, gemini503Once:false, gemini404:false, search429Once:false, searchSlow:false, searchNoGrounding:false, searchGroundingBlocked:false, searchQuota:false, deepseek402:false, deepseek429:false, deepseekMidError:false, deepseekSlow:false, deepseekSkipOnce:false, deepseekTool400:false, geminiTool400:false };
+  const control = { gemini503:false, gemini503Once:false, gemini404:false, search429Once:false, searchSlow:false, searchNoGrounding:false, searchGroundingBlocked:false, searchQuota:false, deepseek402:false, deepseek429:false, deepseekMidError:false, deepseekSlow:false, deepseekSkipOnce:false, deepseekTool400:false, geminiTool400:false, deepseekMixed:false, geminiArabic:false };
   const modelLists = {
     '/v1/models': ['deepseek-flash', 'deepseek-chat', 'deepseek-v4-pro'],
     '/deepseek/v1/models': ['deepseek-flash', 'deepseek-chat', 'deepseek-v4-pro'],
@@ -202,17 +202,36 @@ export async function startFakeAI() {
           return;
         }
         const sendSearch = obj => { try{ res.write('data: ' + JSON.stringify(obj) + '\n\n'); }catch (e) {} };
+        if (control.geminiArabic) {
+          const text = 'المؤلف هو أندي كلارك ، ونشره Penguin .';
+          const endCp = sub => [...text.slice(0, text.indexOf(sub) + sub.length)].length;
+          const byteEnd = sub => Buffer.byteLength(text.slice(0, endCp(sub)));
+          sendSearch({ candidates:[{ content:{ role:'model', parts:[{ text }] }, groundingMetadata:{
+            webSearchQueries:['المؤلف'],
+            groundingChunks:[
+              { web:{ uri:'https://example.com/one', title:'example.com' } },
+              { web:{ uri:'https://example.org/two', title:'example.org' } }
+            ],
+            groundingSupports:[
+              { segment:{ startIndex:0, endIndex:byteEnd('أندي كلارك') }, groundingChunkIndices:[0] },
+              { segment:{ startIndex:0, endIndex:byteEnd('Penguin') }, groundingChunkIndices:[1] }
+            ]
+          } }] });
+          sendSearch({ candidates:[{ content:{ role:'model', parts:[] }, finishReason:'STOP' }] });
+          res.write('data: [DONE]\n\n'); res.end();
+          return;
+        }
         const chunks = [
           { candidates:[{ content:{ role:'model', parts:[{ text:'وصلت ' }] }, groundingMetadata:{
             webSearchQueries:['سؤال تجريبي'],
             groundingChunks:[{ web:{ uri:'https://example.com/one', title:'example.com' } }],
-            groundingSupports:[{ segment:{ startIndex:0, endIndex:6 }, groundingChunkIndices:[0] }]
+            groundingSupports:[{ segment:{ startIndex:0, endIndex:8 }, groundingChunkIndices:[0] }]
           } }] },
           /* A second event with a new chunk and a global support index. The app must
              accumulate chunks across events, as the Gemini streaming docs require. */
           { candidates:[{ content:{ role:'model', parts:[{ text:'المعلومة من الويب.' }] }, groundingMetadata:{
             groundingChunks:[{ web:{ uri:'https://news.example.org/two', title:'news.example.org' } }],
-            groundingSupports:[{ segment:{ startIndex:7, endIndex:26 }, groundingChunkIndices:[1] }]
+            groundingSupports:[{ segment:{ startIndex:9, endIndex:25 }, groundingChunkIndices:[1] }]
           } }] }
         ];
         res.writeHead(200, { 'Content-Type':'text/event-stream', 'Cache-Control':'no-cache', 'Connection':'keep-alive' });
@@ -331,6 +350,17 @@ export async function startFakeAI() {
         if (control.deepseekSkipOnce){
           control.deepseekSkipOnce = false;
           delta('تم'); res.write('data: [DONE]\n\n'); res.end(); return;
+        }
+        if (control.deepseekMixed){
+          const text = 'نشرت الكتاب عند Pantheon Books ، وترجمته 中信出版集团 .';
+          const endCp = sub => [...text.slice(0, text.indexOf(sub) + sub.length)].length;
+          const serverToolCalls = [{ index:0, reasoning_content:'', calls:[{ index:0, type:'deepseek_web_search', action:{ type:'search', queries:['Pantheon Books'] }, status:'completed', sources:[{ type:'url', url:'https://example.com/one', title:'example.com' }] }] }];
+          const annotations = [
+            { type:'url_citation', url_citation:{ url:'https://example.com/one', title:'中信出版社', start_index:0, end_index:endCp('Books') } },
+            { type:'url_citation', url_citation:{ url:'https://example.org/two', title:'筑摩書房', start_index:0, end_index:endCp('中信出版集团') } }
+          ];
+          send({ choices:[{ delta:{ content:text, server_tool_calls:serverToolCalls, annotations }, finish_reason:'stop' }] });
+          res.write('data: [DONE]\n\n'); res.end(); return;
         }
         const call = {
           index:0, id:'srvtoolu_fake', type:'deepseek_web_search', kind:'search',

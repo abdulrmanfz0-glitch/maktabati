@@ -62,6 +62,13 @@ describe('web search prompt switch', () => {
     expect(prompt).toContain('تقدر تبحث في الإنترنت لما يحتاج السؤال معلومة حديثة أو من خارج الكتاب');
     expect(prompt).toContain('جاوب من الكتاب أولًا');
     expect(prompt).toContain('ولا تزعم إنك بحثت إذا ما بحثت');
+    expect(prompt).toContain('جاوب مباشرة وباختصار');
+    expect(prompt).toContain('تجدر الإشارة');
+    expect(prompt).toContain('بلغة المستخدم');
+    expect(prompt).toContain('ترجم عناوين الكتب');
+    expect(prompt).toContain('صينية أو يابانية أو كورية');
+    expect(prompt).toContain('فضّل المصادر العربية والإنجليزية');
+    expect(prompt).toContain('ما بدأت قراءته بعد');
     expect(prompt).not.toContain('@@SPOIL@@');
     expect(prompt).toContain('فرّق بين المقروء وغير المقروء');
   });

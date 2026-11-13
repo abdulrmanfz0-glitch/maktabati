@@ -112,7 +112,7 @@ try {
   await sendHome('من مؤلف الكتاب؟');
   await b.waitFor(`document.querySelectorAll('#v-home .cm-a').length > ${beforeFirst}`, 8000);
   await waitStatus();
-  await b.waitFor(`(() => { const a = [...document.querySelectorAll('#v-home .cm-a')]; const l = a[a.length - 1]; return !!l && l.textContent.includes('وصلت المعلومة من الويب.'); })()`, 25000);
+  await b.waitFor(`(() => { const a = [...document.querySelectorAll('#v-home .cm-a')]; const l = a[a.length - 1]; return !!l && l.textContent.includes('من الويب.'); })()`, 25000);
   await b.waitFor(`!!document.querySelector('#v-home .cm-web .cm-src a')`, 10000);
   const dsBody = fake.stats.lastFull;
   assert(Array.isArray(dsBody.tools) && dsBody.tools.length === 1 && dsBody.tools[0].type === 'deepseek_web_search', 'DeepSeek did not receive deepseek_web_search');
@@ -126,7 +126,7 @@ try {
   ok('DeepSeek auto search', 'status + sources + server tool, no title/tool_choice');
 
   // 1b) The next turn passes the previous server_tool_calls back unchanged.
-  await sendAndWait('ومن هو؟', 'وصلت المعلومة من الويب.');
+  await sendAndWait('ومن هو؟', 'من الويب.');
   const withCalls = fake.stats.lastFull.messages.some(m => m.role === 'assistant' && Array.isArray(m.server_tool_calls) && m.server_tool_calls[0] && m.server_tool_calls[0].calls[0].id === 'srvtoolu_fake');
   assert(withCalls, 'server_tool_calls were not passed back');
   ok('DeepSeek multi-turn', 'previous server_tool_calls passed back');
@@ -167,11 +167,34 @@ try {
   await choosePin('c2', 'gemini-3.8-flash');
   assert(!(await ev(`!!document.querySelector('#v-home [data-websearch]')`)), 'Gemini 3 auto should not show a toggle');
   const beforeG3 = fake.stats.searchRequests;
-  await sendAndWait('من هو مؤلف الكتاب؟', 'وصلت المعلومة من الويب.');
+  await sendAndWait('من هو مؤلف الكتاب؟', 'من الويب.');
   assert(fake.stats.searchRequests === beforeG3 + 1, 'Gemini 3 did not auto-search');
   assert(fake.stats.lastSearch.tools[0].googleSearch, 'Gemini 3 search tool missing');
   assert((await lastLinks()).length === 2, 'Gemini sources missing');
   ok('Gemini 3 auto', 'googleSearch without a toggle');
+
+  // 3b) Inline markers: DeepSeek annotations and Gemini groundingSupports.
+  fake.control.deepseekMixed = true;
+  await choosePin('c1', 'deepseek-flash');
+  await sendAndWait('سؤال استشهادات مختلط', 'Pantheon Books');
+  const dsMarkers = await ev(`(() => { const a = [...document.querySelectorAll('#v-home .cm-a')]; const l = a[a.length - 1]; return { text:l.textContent, links:[...l.querySelectorAll('sup.cite a')].map(x => ({ href:x.getAttribute('href'), rel:x.getAttribute('rel'), target:x.getAttribute('target'), n:x.textContent })), src:[...l.querySelectorAll('.cm-src a')].map(x => ({ href:x.getAttribute('href'), text:x.textContent })) }; })()`);
+  assert(dsMarkers.text.includes('Pantheon Books،') && !dsMarkers.text.includes('Books ،'), 'DeepSeek stray space before punctuation not cleaned');
+  assert(dsMarkers.links.length === 2, 'DeepSeek markers missing');
+  assert(dsMarkers.links[0].href.startsWith('https://example.com/one') && dsMarkers.links[0].rel.includes('noopener') && dsMarkers.links[0].target === '_blank', 'DeepSeek marker link unsafe');
+  assert(dsMarkers.src.length === 2, 'DeepSeek source list missing');
+  assert(dsMarkers.src.some(x => x.text.includes('中信')) && dsMarkers.src.some(x => x.text.includes('筑摩')), 'foreign-language sources not listed');
+  fake.control.deepseekMixed = false;
+  ok('DeepSeek inline markers', '2 markers, cleaned punctuation, links match');
+
+  fake.control.geminiArabic = true;
+  await choosePin('c2', 'gemini-3.8-flash');
+  await sendAndWait('سؤال استشهادات Gemini', 'Penguin');
+  const gmMarkers = await ev(`(() => { const a = [...document.querySelectorAll('#v-home .cm-a')]; const l = a[a.length - 1]; return { text:l.textContent, links:[...l.querySelectorAll('sup.cite a')].map(x => ({ href:x.getAttribute('href'), n:x.textContent })) }; })()`);
+  assert(gmMarkers.links.length === 2, 'Gemini markers missing');
+  assert(gmMarkers.text.includes('أندي كلارك،') && !gmMarkers.text.includes('كلارك ،'), 'Gemini stray space before punctuation not cleaned');
+  assert(gmMarkers.links[0].href.startsWith('https://example.com/one'), 'Gemini marker link wrong');
+  fake.control.geminiArabic = false;
+  ok('Gemini inline markers', 'byte indices converted, punctuation cleaned');
 
   // 4) Gemini 2.5 manual: toggle appears only here and controls the tool.
   await choosePin('c2', 'gemini-2.5-flash');
@@ -183,7 +206,7 @@ try {
   assert(fake.stats.last.path === '/gemini/v1/chat/completions', 'manual off used the native path');
   await toggleSearch();
   assert((await searchPressed()) === 'true', 'manual search did not turn on');
-  await sendAndWait('سؤال Gemini 2.5 مع البحث', 'وصلت المعلومة من الويب.');
+  await sendAndWait('سؤال Gemini 2.5 مع البحث', 'من الويب.');
   assert(fake.stats.lastSearch.model === 'gemini-2.5-flash', 'Gemini 2.5 manual search used the wrong model');
   await choosePin('c2', 'gemini-3.8-flash');
   assert(!(await ev(`!!document.querySelector('#v-home [data-websearch]')`)), 'toggle stayed visible on Gemini 3 auto');
@@ -203,7 +226,7 @@ try {
   await go('#/lib');
   await settle(2500);
   await go('#/c/' + convId);
-  await b.waitFor(`(() => { const a = [...document.querySelectorAll('#v-home .cm-a')]; const l = a[a.length - 1]; return !!l && l.textContent.includes('وصلت المعلومة من الويب.') && !!l.querySelector('.cm-web .cm-src a'); })()`, 20000);
+  await b.waitFor(`(() => { const a = [...document.querySelectorAll('#v-home .cm-a')]; const l = a[a.length - 1]; return !!l && l.textContent.includes('من الويب.') && !!l.querySelector('.cm-web .cm-src a'); })()`, 20000);
   fake.control.deepseekSlow = false;
   ok('DeepSeek background search', 'status/reply/sources after reopen');
 
@@ -282,6 +305,8 @@ try {
   fake.control.deepseekSkipOnce = false;
   fake.control.deepseekTool400 = false;
   fake.control.geminiTool400 = false;
+  fake.control.deepseekMixed = false;
+  fake.control.geminiArabic = false;
   fake.control.searchGroundingBlocked = false;
   await b.close();
   await fake.close();

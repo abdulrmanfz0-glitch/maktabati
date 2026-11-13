@@ -322,6 +322,8 @@ body{ --tb-h:52px; }
 .cm-src a:hover{ color:var(--accent); }
 .cm-src .dom{ color:var(--accent); font-weight:600; }
 .cm-src .ttl{ opacity:.8; }
+.cm-a sup.cite{ font-size:.72em; line-height:1; margin-inline:1px 2px; white-space:nowrap; }
+.cm-a sup.cite a{ color:var(--accent); text-decoration:none; font-weight:700; }
 .ch-web-row{ display:flex; align-items:center; gap:6px; margin:0 0 8px; padding-inline-start:2px; }
 .ch-web{ min-height:32px; padding:0 10px; font-size:12.5px; background:transparent; }
 .ch-web svg{ width:14px; height:14px; }
