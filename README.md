@@ -66,6 +66,18 @@ The key is stored only in this browser's `localStorage` under
 `maktabati:ai`. It is never included in library exports. See
 [`SECURITY.md`](SECURITY.md).
 
+### Multiple connections and pinned models
+
+You can save more than one AI connection, one per provider or custom endpoint.
+Each connection keeps its own key, base URL, and token limits. A key unlocks all
+of that provider's models, but only the models you pin appear in the chat
+switcher and in the per-task defaults (chat, translation, and chapter cards).
+Pin only what you use. Keys stay in this browser's `localStorage` on this
+device, and a key is sent only to its own connection's base URL — never to
+another provider, and never into a library export. When a conversation switches
+models, only that conversation changes; the task defaults stay where you put
+them.
+
 ## AI providers that work from the browser
 
 The app sends a browser `fetch` request directly to the provider. That means
@@ -236,6 +248,12 @@ Third-party components and assets are listed in
   DeepSeek (`deepseek-flash`)، ويمكن استخدام أي مزوّد متوافق مع OpenAI Chat
   Completions يدعم CORS. Gemini يعمل عبر واجهته المتوافقة مع OpenAI، وClaude
   كذلك مع ترويسة CORS خاصة، وOpenAI الرسمي غير موثق للمتصفح.
+- **عدة اتصالات:** تقدر تحفظ أكثر من اتصال، واحد لكل مزوّد أو نقطة نهاية
+  مخصّصة، ولكل اتصال مفتاحه ورابطه وحدوده. المفتاح يفتح كل موديلات مزوّده،
+  لكن ما يظهر في مفتاح المحادثة وفي افتراضيات المهام (الدردشة والترجمة
+  وبطاقات الفصول) إلا الموديلات اللي تثبّتها بنفسك. المفاتيح تبقى في
+  `localStorage` على جهازك، ولا تُرسل إلا إلى مزوّد الاتصال نفسه، ولا تدخل في
+  «تصدير المكتبة».
 - **الخصوصية:** الكتب والتظليلات في IndexedDB على جهازك، والمفتاح في
   `localStorage`. عند السؤال تُرسل المقاطع ذات الصلة إلى مزوّد الذكاء الذي
   اخترته. التطبيق لا يحمّل أي تحليلات أو أدوات تتبع إطلاقًا، وقراءة نص الكتب

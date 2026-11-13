@@ -25,7 +25,9 @@ script against `dist/web` or `dist/single` will fail those assertions by design.
 | `ai-failure.mjs` | yes | Starts its own fake provider; 429, abort, delete, idle, empty answers, two tabs, IndexedDB failure |
 | `ai-background.mjs` | yes | Starts its own fake provider; reply keeps streaming after the chat closes, toast + unread, stop/delete abort |
 | `ux-polish.mjs` | yes | First-run demo hint, empty-library action, undo for highlight/chat deletion, dialog focus |
-| `ai-providers.mjs` | yes | Starts its own fake provider; key detection, provider switching, picker, /models fallback, custom reload |
+| `ai-providers.mjs` | yes | Starts its own fake provider; key detection, ambiguous sk- choice, provider picker, /models fallback, custom reload |
+| `ai-connections.mjs` | yes | Starts its own fake provider; two connections, pinned models, task defaults, chat switcher, reload, export has no key |
+| `ai-connections-screens.mjs` | yes | Writes `docs/screens/ai-connections/` at 1280 and 390; uses fake keys |
 | `ai-gemini-fallback.mjs` | yes | Starts its own fake provider; Gemini 503 fallback note, all-busy message, 404 and model filtering |
 | `upload.mjs` | yes | PDF/EPUB/text/paste; needs local fixtures |
 | `ingest-app.mjs` | yes | PDF/EPUB fixture comparisons |
