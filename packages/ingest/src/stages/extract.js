@@ -98,4 +98,25 @@ export async function extractPage(page, OPS, opt = {}) {
 export const imageCoverage = p => p.images.reduce((m, im) => Math.max(m, (im.w * im.h) / (p.width * p.height)), 0);
 
 /** Union (capped sum) of all image areas: catches scans split into strips or tiles. */
-export const imageUnionCoverage = p => Math.min(1, p.images.reduce((s, im) => s + (im.w * im.h) / (p.width * p.height), 0));
+export const imageUnionCoverage = p => {
+  const pageArea = p.width * p.height;
+  if (!pageArea || !p.images.length) return 0;
+  const rects = p.images.map(im => ({ x0: im.x, y0: im.y, x1: im.x + im.w, y1: im.y + im.h }));
+  // Sweep line over x boundaries; within each slab merge overlapping y-intervals,
+  // so fully overlapping images count once (no dependency, n is small).
+  const xs = [...new Set(rects.flatMap(r => [r.x0, r.x1]))].sort((a, b) => a - b);
+  let area = 0;
+  for (let i = 0; i < xs.length - 1; i++) {
+    const x0 = xs[i], x1 = xs[i + 1];
+    if (x1 - x0 <= 0) continue;
+    const ys = rects.filter(r => r.x0 <= x0 + 1e-9 && r.x1 >= x1 - 1e-9).map(r => [r.y0, r.y1]).sort((a, b) => a[0] - b[0]);
+    let covered = 0, c0 = 0, c1 = 0;
+    for (const [y0, y1] of ys) {
+      if (y0 > c1) { covered += c1 - c0; c0 = y0; c1 = y1; }
+      else if (y1 > c1) c1 = y1;
+    }
+    covered += c1 - c0;
+    area += (x1 - x0) * covered;
+  }
+  return Math.min(1, area / pageArea);
+};
