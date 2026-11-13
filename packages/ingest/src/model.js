@@ -63,6 +63,7 @@ export function makeReport(kind) {
     recommendation: 'review',
     confidence: 0,
     visionPages: [],
+    scanned: { pages: 0, share: 0 },
     timings: {}
   };
 }

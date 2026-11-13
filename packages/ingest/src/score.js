@@ -7,6 +7,25 @@
 import { textMetrics, matchForm, reverseChars, RE_MARKS_G } from './text.js';
 
 export const THRESHOLDS = { page: 0.5, doc: 0.8, minTokens: 40, fwCorrect: 0.9, fwSwappedMin: 20, dictCoverage: 0.6 };
+
+/**
+ * Scanned-page detection thresholds, exported through the public entry point.
+ * imageCoverage: minimum union image coverage for a page with no text layer to
+ * count as a scanned page (>= comparison). visionShare: minimum share of eligible
+ * pages routed to vision for the 'vision' recommendation (>= comparison).
+ */
+export const DETECTION_THRESHOLDS = Object.freeze({ imageCoverage: 0.5, visionShare: 0.5 });
+
+/**
+ * Pages routed to vision because they have no text layer, and their share of the
+ * eligible (non-blank, non-cover) pages — the same denominator route() uses.
+ * With no eligible pages the share is 0, never NaN.
+ */
+export function scannedSummary(rows) {
+  const eligible = rows.filter(r => r.route !== 'blank' && r.route !== 'cover');
+  const pages = rows.filter(r => (r.issues || []).includes('no-text-layer')).length;
+  return { pages, share: eligible.length ? pages / eligible.length : 0 };
+}
 const clamp = x => Math.max(0, Math.min(1, x));
 
 /** Character trigram model (add-k smoothing) over a reduced alphabet. */
@@ -59,7 +78,7 @@ export function scorePages(pages, opts = {}) {
     if (p.unresolvedGlyphs >= 1) { row.issues.push('unresolved-glyphs'); row.route = 'vision'; }
     if (p.noText) {
       // An image-only first or last page is a cover, not a page that needs vision.
-      row.route = (p.image || 0) >= 0.5 ? (p.edge && opts.rules?.['cover-pages'] !== false ? 'cover' : 'vision') : 'blank';
+      row.route = (p.image || 0) >= DETECTION_THRESHOLDS.imageCoverage ? (p.edge && opts.rules?.['cover-pages'] !== false ? 'cover' : 'vision') : 'blank';
       if (row.route === 'vision') row.issues.push('no-text-layer');
       return row;
     }
@@ -187,7 +206,7 @@ export function route(rows, score, issues, chaptersFound, opts = {}) {
   const coverage = nonBlank.length ? scored / nonBlank.length : 0;
   const major = issues.filter(i => i.severity === 'major');
   if (!scored && rows.some(r => r.latin) && vShare < 0.5) return { recommendation: 'review', confidence: 0.3, visionPages };
-  if (!scored || vShare >= 0.5 || score < T.page) {
+  if (!scored || vShare >= DETECTION_THRESHOLDS.visionShare || score < T.page) {
     return { recommendation: 'vision', confidence: clamp(0.5 + Math.max(vShare - 0.5, T.page - score)), visionPages };
   }
   if (score < T.doc || major.length || chaptersFound < 2 || visionPages.length) {

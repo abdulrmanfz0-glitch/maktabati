@@ -103,3 +103,36 @@ export function makePdf(contents, opt = {}) {
   out += 'trailer\n<< /Size ' + (objs.length + 1) + ' /Root ' + catalog + ' 0 R' + encryptRef + ' /ID [<' + id.toString('hex') + '> <' + id.toString('hex') + '>] >>\nstartxref\n' + xref + '\n%%EOF\n';
   return new Uint8Array(Buffer.from(out, 'latin1'));
 }
+
+// A valid 1x1 white JPEG (any decodable bitmap works; only the placement box matters for coverage).
+const TINY_JPEG = Buffer.from(
+  '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD3+iiigD//2Q==',
+  'base64');
+
+/**
+ * Synthetic scanned PDF: pages with no text layer, only image XObjects.
+ * Each page is a list of placement rects [x, y, w, h] (PDF units, 450x600 MediaBox)
+ * that draw the same tiny bitmap — full-page covers, strips, or tiles.
+ */
+export function scannedPdf(rectsByPage) {
+  const objs = [];
+  const add = s => { objs.push(s); return objs.length; };
+  const catalog = add(null), pagesId = add(null);
+  const img = add('<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ' + TINY_JPEG.length + ' >>\nstream\n' + TINY_JPEG.toString('latin1') + '\nendstream');
+  const kids = [];
+  for (const rects of rectsByPage) {
+    const c = rects.map(([x, y, w, h]) => 'q ' + w + ' 0 0 ' + h + ' ' + x + ' ' + y + ' cm /Im0 Do Q').join('\n');
+    const cs = add('<< /Length ' + Buffer.byteLength(c, 'latin1') + ' >>\nstream\n' + c + '\nendstream');
+    kids.push(add('<< /Type /Page /Parent ' + pagesId + ' 0 R /MediaBox [0 0 450 600] /Resources << /XObject << /Im0 ' + img + ' 0 R >> >> /Contents ' + cs + ' 0 R >>'));
+  }
+  objs[catalog - 1] = '<< /Type /Catalog /Pages ' + pagesId + ' 0 R >>';
+  objs[pagesId - 1] = '<< /Type /Pages /Kids [' + kids.map(k => k + ' 0 R').join(' ') + '] /Count ' + kids.length + ' >>';
+  const id = Buffer.from('0123456789abcdef0123456789abcdef', 'hex');
+  let out = '%PDF-1.4\n%âãÏÓ\n';
+  const offsets = [];
+  objs.forEach((o, i) => { offsets.push(Buffer.byteLength(out, 'latin1')); out += (i + 1) + ' 0 obj\n' + o + '\nendobj\n'; });
+  const xref = Buffer.byteLength(out, 'latin1');
+  out += 'xref\n0 ' + (objs.length + 1) + '\n0000000000 65535 f \n' + offsets.map(o => String(o).padStart(10, '0') + ' 00000 n \n').join('');
+  out += 'trailer\n<< /Size ' + (objs.length + 1) + ' /Root ' + catalog + ' 0 R /ID [<' + id.toString('hex') + '> <' + id.toString('hex') + '>] >>\nstartxref\n' + xref + '\n%%EOF\n';
+  return new Uint8Array(Buffer.from(out, 'latin1'));
+}
