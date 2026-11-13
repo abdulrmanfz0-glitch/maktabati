@@ -205,7 +205,7 @@ export function route(rows, score, issues, chaptersFound, opts = {}) {
   const vShare = nonBlank.length ? visionPages.length / nonBlank.length : 1;
   const coverage = nonBlank.length ? scored / nonBlank.length : 0;
   const major = issues.filter(i => i.severity === 'major');
-  if (!scored && rows.some(r => r.latin) && vShare < 0.5) return { recommendation: 'review', confidence: 0.3, visionPages };
+  if (!scored && rows.some(r => r.latin) && vShare < DETECTION_THRESHOLDS.visionShare) return { recommendation: 'review', confidence: 0.3, visionPages };
   if (!scored || vShare >= DETECTION_THRESHOLDS.visionShare || score < T.page) {
     return { recommendation: 'vision', confidence: clamp(0.5 + Math.max(vShare - 0.5, T.page - score)), visionPages };
   }

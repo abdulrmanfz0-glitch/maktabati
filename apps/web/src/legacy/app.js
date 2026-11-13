@@ -11,6 +11,7 @@ import { SPOIL, NOSPOIL, SYS, MODES } from '../core/prompts.js';
 import { findNormalizedRange } from '../core/text.js';
 import { PROMPT_VERSION, CORRECTIVE_MESSAGE, parseGlossary, glossaryHash, glossaryForText, extractChapterUnits, chunkUnits, buildMessages as buildTranslationMessages, parseTranslation, qaSegment, estimateChapter, fingerprint, chapterSourceHash, lastTwoSentences, bookPlan, runConcurrent, hashString, isPeak, isArabicHighlight, isSourceHighlight } from '../core/translate.js';
 import { trGetJob, trPutJob, trListJobs, trGetSegments, trPutSegment, trDeleteJob, trGetGlossary, trPutGlossary, trDeleteBook, trClearAll } from '../core/translate-store.js';
+import { scannedSaveAllowed, scanBookFields, isPendingScan, ensureStores, quotaAllows, saveScannedBook, deleteScannedFile, sweepOrphanFiles } from '../core/scan-save.js';
 
 (function(){
 'use strict';
@@ -130,8 +131,8 @@ function openDB(){
       idb = null; finish(false);
     }, 2500);
     try{
-      req = indexedDB.open('maktabati', 1);
-      req.onupgradeneeded = () => { const d = req.result; ['items','annos'].forEach(n => d.objectStoreNames.contains(n) || d.createObjectStore(n, { keyPath:'id' })); d.objectStoreNames.contains('kv') || d.createObjectStore('kv', { keyPath:'k' }); };
+      req = indexedDB.open('maktabati', 2);
+      req.onupgradeneeded = () => { ensureStores(req.result, { items:'id', annos:'id', kv:'k', files:'id' }); };
       req.onsuccess = () => {
         if (settled){ try{ req.result.close(); }catch(e){} return; }
         idb = req.result;
@@ -560,8 +561,9 @@ const estText = (n, books, chars) => {
 };
 const inProg = i => i.lastOpened && (i.progress || 0) > .01 && (i.progress || 0) < .98;
 const statusText = it => { const p = Math.round((it.progress || 0) * 100); return p >= 98 ? 'خلّصته' : p ? p + '%' : 'ما بدأته'; };
+const scanBadge = it => isPendingScan(it) ? '<span style="font-size:.68rem;color:var(--soft);border:1px solid var(--rule);border-radius:99px;padding:1px 7px">ممسوح – بانتظار التعرّف على النص</span> ' : '';
 function card(it){
-  return '<div class="card-w"><button class="card lift" data-href="#/book/' + enc(it.id) + '" aria-label="' + esc(it.title) + '">' + bkCover(it) + '<div class="card-meta">' + statusText(it) + ' · ' + (it.lastOpened ? rel(it.lastOpened) : 'ما فتحته بعد') + '</div></button>' + moreBtn(it) + '</div>';
+  return '<div class="card-w"><button class="card lift" data-href="#/book/' + enc(it.id) + '" aria-label="' + esc(it.title) + '">' + bkCover(it) + '<div class="card-meta">' + scanBadge(it) + statusText(it) + ' · ' + (it.lastOpened ? rel(it.lastOpened) : 'ما فتحته بعد') + '</div></button>' + moreBtn(it) + '</div>';
 }
 function contCard(it){
   const chs = arr(it.chapters), n = chs.length, ci = curChap(it), mins = chs.reduce((a, c) => a + (+c.minutes || 0), 0), left = mins ? Math.max(1, Math.round(mins * (1 - (it.progress || 0)))) : 0;
@@ -570,7 +572,7 @@ function contCard(it){
 }
 function lrow(it){
   const rd = readyOf(it);
-  return '<div class="lrow-w"><button class="lrow" data-href="#/book/' + enc(it.id) + '"><span class="lr-cv">' + bkCover(it, { mini:true }) + '</span><span class="lr-b"><b dir="auto">' + esc(it.title) + '</b><small>' + (it.author ? '<bdi dir="auto">' + esc(it.author) + '</bdi> · ' : '') + (TYPES[it.type] || '') + '</small></span><span class="lr-r"><span>' + statusText(it) + '</span>' + (rd.total ? '<span>' + (rd.done >= rd.total ? 'جاهز' : '<bdi dir="ltr">' + rd.done + '/' + rd.total + '</bdi>') + '</span>' : '') + '</span></button>' + moreBtn(it) + '</div>';
+  return '<div class="lrow-w"><button class="lrow" data-href="#/book/' + enc(it.id) + '"><span class="lr-cv">' + bkCover(it, { mini:true }) + '</span><span class="lr-b"><b dir="auto">' + esc(it.title) + '</b><small>' + scanBadge(it) + (it.author ? '<bdi dir="auto">' + esc(it.author) + '</bdi> · ' : '') + (TYPES[it.type] || '') + '</small></span><span class="lr-r"><span>' + statusText(it) + '</span>' + (rd.total ? '<span>' + (rd.done >= rd.total ? 'جاهز' : '<bdi dir="ltr">' + rd.done + '/' + rd.total + '</bdi>') + '</span>' : '') + '</span></button>' + moreBtn(it) + '</div>';
 }
 function renderLib(){
   const items = allItems(), L = prof().lib, byId = new Set(items.map(i => i.id));
@@ -755,7 +757,7 @@ function renderBook(it){
     '<div class="bp-act"><button class="pbtn" data-href="' + R + '">' + go + '</button>' + trBookButton(it) + '<button class="gbtn" data-bpa="chat">ناقش</button><button class="gbtn" data-bpa="cols">' + tx('المجموعات') + '</button><button class="gbtn" data-bpa="snd"' + (snd ? '' : ' disabled title="يتوفر مع ميزة الأصوات"') + '>أصوات</button><button class="gbtn" data-bpa="more" aria-label="المزيد" style="min-width:44px; padding:0">' + svg('dots') + '</button></div>' +
     ingWarn(it) +
     '<div class="stats">' + cnt.map(c => '<div class="stat"><b>' + c[0] + '</b><span>' + c[1] + '</span></div>').join('') + '</div>' +
-    (!n ? '<p class="empty" style="margin:1.25rem 0 0">هذا الكتاب ما فيه فصول محفوظة. جرّب استيراده مرة ثانية أو احذفه من المكتبة.</p>' : '') +
+    (!n ? '<p class="empty" style="margin:1.25rem 0 0">' + (isPendingScan(it) ? 'هالكتاب ممسوح ضوئيًا: نصه غير متاح بعد. الكتاب وملفه الأصلي محفوظان على جهازك، وبمجرد ما نضيف خاصية التعرف على الصور بيتكوّن النص.' : 'هذا الكتاب ما فيه فصول محفوظة. جرّب استيراده مرة ثانية أو احذفه من المكتبة.') + '</p>' : '') +
     (n > 1 ? '<h2 class="bp-h2">الفصول</h2><div>' + chs.map((c, i) => { const raw = st['c' + i] || 'none', s = BK_ST[raw] ? raw : 'none', b = BK_ST[s]; return '<button class="bp-ch" data-href="' + R + '/c' + i + '"><span class="n">' + (i + 1) + '</span><span class="t" dir="auto">' + md(c.title || '') + (c.title ? '' : 'الفصل ' + (i + 1)) + '</span><span class="r"><span class="bp-st" data-s="' + s + '"><i aria-hidden="true" style="font-style:normal">' + b[1] + '</i>' + b[0] + '</span>' + (c.minutes ? '<span>' + esc(c.minutes) + ' دقيقة</span>' : '') + '</span></button>'; }).join('') + '</div>' : '') +
     (n ? readyCard(it) : '') + '</div></div></div>';
   $('#v-book').onclick = e => {
@@ -843,6 +845,7 @@ async function dropLinksTo(ids){
   return updates.length;
 }
 async function purgeBook(id){
+  const src = mem.items.get(id);
   const F = bookFootprint(id), ids = new Set(F.annos.map(a => a.id));
   const cards = Object.assign({}, F.cards); F.cardKeys.forEach(k => delete cards[k]);
   const updates = [];
@@ -854,14 +857,16 @@ async function purgeBook(id){
   });
   mapClean();
   await trDeleteBook(id);
+  if (idb && src && src.source === 'scan') await deleteScannedFile(idb, id);
   const P = prof(); if (P.dismissPrep && P.dismissPrep[id]){ delete P.dismissPrep[id]; profSave(); }
   if (P.tpl && P.tpl.books && P.tpl.books[id]){ delete P.tpl.books[id]; profSave(); }
   return ok;
 }
 /* one-time sweep for records left behind by deletions in earlier versions */
 async function cleanOrphans(){
-  const has = id => mem.items.has(id), n = { annos:0, kv:0, cards:0, links:0, map:0, prefs:0 };
+  const has = id => mem.items.has(id), n = { annos:0, kv:0, cards:0, links:0, map:0, prefs:0, files:0 };
   const delAnnos = [], delKv = [], putAnnos = [];
+  if (idb) n.files = await sweepOrphanFiles(idb, new Set(mem.items.keys()));
   for (const a of mem.annos.values()) if (a.itemId && !has(a.itemId)){ delAnnos.push(a.id); n.annos++; }
   for (const k of mem.kv.keys()){ const b = kvBookOf(k); if (b && !has(b)){ delKv.push(k); n.kv++; } }
   const cards = Object.assign({}, kv.get('cards', {})); Object.keys(cards).forEach(k => { if (!has(k.split('|')[0])){ delete cards[k]; n.cards++; } });
@@ -1194,6 +1199,15 @@ function renderReader(it, target, o){
   it.lastOpened = Date.now(); put('items', it);
   $('#tbTitle').textContent = it.title; document.title = it.title + ' · مكتبتي';
   const bd = bookDir(it); $('#v-read').dir = bd; $('#v-read').lang = bd === 'rtl' ? 'ar' : 'en';
+  if (isPendingScan(it)){
+    $('#v-read').innerHTML = '<div class="wrap" style="padding-top:2.5rem; padding-bottom:4rem; text-align:center">' +
+      '<span style="font-size:.72rem;color:var(--soft);border:1px solid var(--rule);border-radius:99px;padding:2px 10px">ممسوح ضوئيًا</span>' +
+      '<h2 style="margin:1rem 0 .5rem" dir="auto">' + esc(it.title) + '</h2>' +
+      '<p class="quiet" style="max-width:34rem; margin:.4rem auto 0">نص هالكتاب ما انقرأ بعد: صفحاته صور ما لها طبقة نص. خاصية التعرف على الصور جاية قريبًا، ولما تجهز بيتكوّن النص ويشتغل البحث والتظليل والرفيق.</p>' +
+      '<p class="hint" style="max-width:34rem; margin:.4rem auto 0">الكتاب وملفه الأصلي محفوظان على جهازك فقط.</p>' +
+      '<div style="margin-top:1.25rem"><a class="linkbtn" href="#/lib">← ارجع للمكتبة</a></div></div>';
+    drawerNav(it); updateSess(); showBar(); return;
+  }
   $('#v-read').innerHTML = paged ? screenHTML(it, screen) : readerHTML(it);
   if (pref.get('diac', 'show') === 'hide') stripShown($('#v-read'));
   if (tr && screen && screen[0] === 'c') trApply(it, tr, +screen.slice(1));
@@ -3713,6 +3727,7 @@ function currentCi(it){
 }
 function bookContext(it, full){
   if (!it) return { memory:'', chapter:'', label:'' };
+  if (isPendingScan(it)) return { memory:'', chapter:'هالكتاب ممسوح ضوئيًا ونصه غير متاح بعد (بانتظار التعرف على الصور).', label:'كتاب ممسوح ضوئيًا' };
   const chs = arr(it.chapters), ci = currentCi(it);
   const memory = 'بيانات الكتاب (مع بطاقات كل الفصول وتظليلاته وملاحظاته):\n' + bookMemory(it, true);
   if (full) return { memory, chapter:chs.map((c, k) => '### الفصل ' + (k + 1) + ': ' + plain(c.title) + '\n' + chapterText(it, k, Math.floor(80000 / Math.max(1, chs.length)))).join('\n\n'), label:'نص الكتاب كامل (القارئ سمح بذلك)' };
@@ -4599,6 +4614,32 @@ function renderProfile(tab){
 }
 
 /* ---------- import from chat / PDF conversion ---------- */
+/* Scanned books: estimate -> persist (once) -> atomic items+files write. */
+let scanPersistResult = null;
+function scanPersistOnce(){
+  if (scanPersistResult !== null) return;
+  scanPersistResult = false;
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().then(v => { scanPersistResult = !!v; }).catch(() => {}); } catch (e) {}
+}
+async function saveScannedFlow(it, file, stay){
+  if (!idb){ toast('التخزين غير متاح. ما قدرت أحفظ الكتاب مع ملفه.'); return; }
+  let est = null;
+  try { est = navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate() : null; } catch (e) {}
+  if (est && !quotaAllows(est, file.size)){
+    toast('مساحة التخزين ما تكفي لهالملف. صدّر أو احذف كتبًا قديمة أول، أو جرّب ملفًا أصغر.');
+    return;
+  }
+  scanPersistOnce();
+  const r = await saveScannedBook(idb, it, file);
+  if (!r.ok){
+    toast(r.reason === 'space' ? 'ما انحفظ: مساحة التخزين امتلأت أثناء الحفظ. الكتاب وملفه ما انحفظوا معًا.' : 'ما انحفظ الكتاب على هالجهاز.');
+    return;
+  }
+  mem.items.set(it.id, it); notifyChange();
+  closeModal(true); closeChat(); toast('انضاف «' + short(it.title, 30) + '» لمكتبتك — ممسوح ضوئيًا، ونصه يجي بعد ما نضيف خاصية التعرف على الصور.');
+  const h = stay ? '#/lib' : '#/read/' + encodeURIComponent(it.id);
+  if (location.hash === h) route(); else location.hash = h;
+}
 async function saveNew(it, stay){
   const saved = await put('items', it);
   if (!saved) toast('انضاف للجلسة الحالية فقط؛ التخزين غير متاح.');
@@ -4854,13 +4895,14 @@ async function engineImport(file, ctx){
   const it = engineItem(r, name);
   if (junkTitle(it.title)) it.title = (!junkTitle(name) && name) || it.title;
   const chapters = r.report.chapters && r.report.chapters.method !== 'none' ? r.report.chapters.count : 0;
-  it.type = guessType(r.kind, { pages:r.report.pages || 0, chapters, words:itemWords(it) });
+  it.type = scannedSaveAllowed(r.kind, r.report) ? 'book' : guessType(r.kind, { pages:r.report.pages || 0, chapters, words:itemWords(it) });
   it.lang = detectLang(itemSample(it));
-  showPreview({ it, ctx, report:r.report, assets:r.assets });
+  showPreview({ it, ctx, report:r.report, assets:r.assets, src:file });
 }
 /* one preview for every upload: report (engine files), editable type, title, author and language */
 function showPreview(P){
   const it = P.it, rep = P.report, rec = rep ? rep.recommendation : 'ok';
+  const scanOk = scannedSaveAllowed(rep && rep.kind, rep);
   FIG_PREVIEW = new Map(arr(P.assets).map(a => [a.path, new Blob([a.bytes], { type:a.mime })]));
   const issues = rep ? ingIssues(rep.issues) : [], unread = rep ? arr(rep.visionPages) : [];
   const firstPage = x => { const c0 = x.chapters[0]; let n = 0; return c0 ? arr(c0.sections).map(s => (n > 1600 ? '' : (s.title ? '<h4>' + md(s.title) + '</h4>' : '') + arr(s.blocks).filter(b => n <= 1600 && ((n += blockText(b).length), true)).map((b, bi) => block(b, 'pv-' + bi)).join(''))).join('') : ''; };
@@ -4868,7 +4910,7 @@ function showPreview(P){
   const seg = (id, opts, v) => '<div class="seg" id="' + id + '" role="group">' + opts.map(o => '<button type="button" data-v="' + o[0] + '" aria-pressed="' + (o[0] === v) + '">' + o[1] + '</button>').join('') + '</div>';
   openModal('<div class="mhead"><h3>' + tx('معاينة قبل الحفظ') + '</h3>' + closeBtn + '</div>' +
     (rep ? '<div class="msg' + (rec === 'ok' ? ' ok' : '') + '" role="status"><b>' + tx(ING_REC[rec] || ING_REC.review) + '</b>' +
-      (rec === 'vision' ? tx('نص هالملف ما ينقرأ (غالبًا صفحات ممسوحة كصور)، ويحتاج قراءة الصفحات كصور. هالميزة مو متوفرة بعد، فما راح أحفظه.') : '') +
+      (rec === 'vision' ? tx(scanOk ? 'هالكتاب ممسوح ضوئيًا — نصه ما انقرأ بعد. راح أحفظه مع ملفه الأصلي على جهازك، وبمجرد ما نضيف خاصية التعرف على الصور بيتكوّن نصه ويشتغل البحث والتظليل والرفيق.' : 'نص هالملف ما ينقرأ (غالبًا صفحات ممسوحة كصور)، ويحتاج قراءة الصفحات كصور. هالميزة مو متوفرة بعد، فما راح أحفظه.') : '') +
       (issues.length ? '<ul class="ing-issues" style="margin:.4rem 0 0; padding-inline-start:1.2em">' + issues.map(t => '<li>' + tx(t) + '</li>').join('') + '</ul>' : '') +
       (unread.length ? '<p style="margin:.4rem 0 0"><span>' + tx('صفحات ما قدرت أقرأها:') + '</span> <bdi dir="ltr">' + esc(unread.slice(0, 40).join(', ') + (unread.length > 40 ? ' …' : '')) + '</bdi></p>' : '') + '</div>' : '') +
     '<p class="flabel">' + tx('النوع') + '</p>' + seg('pvType', Object.keys(TYPES).map(k => [k, TYPES[k]]), it.type) +
@@ -4877,7 +4919,7 @@ function showPreview(P){
     '<p class="flabel">' + tx('اللغة') + '</p>' + seg('pvLang', [['ar', 'العربية'], ['en', 'English']], it.lang === 'en' ? 'en' : 'ar') +
     '<p class="flabel"><span>' + tx('الفصول') + '</span> <bdi id="pvN">' + it.chapters.length + '</bdi></p><ol id="pvCh" style="margin:0; padding-inline-start:1.3em; font-size:.88rem; line-height:1.7; max-height:8.5rem; overflow-y:auto" dir="auto">' + chList(it) + '</ol>' +
     '<p class="flabel">' + tx('أول صفحة من الفصل الأول') + '</p><div id="pvFirst" data-figitem="#preview" dir="' + langDir(it.lang) + '" style="max-height:38svh; overflow-y:auto; border:1px solid var(--rule); border-radius:8px; padding:.75rem 1rem; background:var(--surface); font-size:.92rem">' + (firstPage(it) || '<p class="empty">' + tx('ما طلع نص.') + '</p>') + '</div>' +
-    '<div class="sh-actions"><button class="pbtn" id="pvSave"' + (rec === 'vision' || !it.chapters.length ? ' disabled' : '') + '>' + tx('احفظ في المكتبة') + '</button><button class="gbtn" data-close>' + tx('إلغاء') + '</button></div>', true);
+    '<div class="sh-actions"><button class="pbtn" id="pvSave"' + ((rec === 'vision' && !scanOk) || (!it.chapters.length && !scanOk) ? ' disabled' : '') + '>' + tx('احفظ في المكتبة') + '</button><button class="gbtn" data-close>' + tx('إلغاء') + '</button></div>', true);
   let cur0 = it;
   const pick = (id, fn) => $('#' + id).addEventListener('click', e => { const b = e.target.closest('[data-v]'); if (!b) return; $$('#' + id + ' button').forEach(x => x.setAttribute('aria-pressed', x === b)); fn(b.dataset.v); });
   pick('pvType', t => {
@@ -4890,7 +4932,9 @@ function showPreview(P){
     const used = new Set(); const walk = bl => arr(bl).forEach(b => { if (b.fig) used.add(b.fig); });
     walk(x.intro && x.intro.blocks); x.chapters.forEach(c => arr(c.sections).forEach(s => walk(s.blocks)));
     FIG_PREVIEW.forEach((b, p) => { if (used.has(p)) kv.set(figKey(x.id, p), b); });
-    previewDone(); saveNew(x, P.ctx.stay);
+    previewDone();
+    if (scanOk && P.src){ Object.assign(x, scanBookFields(P.report.pages)); saveScannedFlow(x, P.src, P.ctx.stay); }
+    else saveNew(x, P.ctx.stay);
   };
 }
 function previewDone(){ FIG_PREVIEW = null; figRelease(); }

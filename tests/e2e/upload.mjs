@@ -10,7 +10,7 @@ import JSZip from 'jszip';
 import { launch, scratchDir } from '../../tools/lib/cdp.mjs';
 import { serve } from '../../tools/lib/static-server.mjs';
 import { listFixtures } from '../../tools/lib/fixtures.mjs';
-import { makePdf, bookPages } from '../helpers/make-pdf.mjs';
+import { makePdf, bookPages, scannedPdf } from '../helpers/make-pdf.mjs';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/(\w:)/, '$1')), '../..');
 const page = process.argv[2] || 'dist/web/index.html';
@@ -42,6 +42,7 @@ async function main() {
   const longPdf = listFixtures().sort((a, b) => b.size - a.size).find(f => f.size < 20e6);
   put('short-article.pdf', makePdf(bookPages({ pages: 6, chapters: 1, toc: false, notes: false })));
   put('scan.pdf', makePdf(Array.from({ length: 12 }, (_, i) => '0.3 g 30 40 390 520 re f 1 g 60 ' + (100 + i * 10) + ' 300 20 re f')));
+  put('scan-full.pdf', scannedPdf([[[0, 0, 450, 600]], [[0, 0, 450, 600]], [[0, 0, 450, 600]], [[0, 0, 450, 600]], [[0, 0, 450, 600]]]));
   await epub('long.epub', 5, 6000);
   await epub('short.epub', 2, 600);
   put('book.md', '# كتاب ماركداون\n\n' + [1, 2, 3, 4].map(i => '## الفصل ' + i + '\n\n' + Array.from({ length: 30 }, () => arPara(60)).join('\n\n')).join('\n\n'));
@@ -58,7 +59,8 @@ async function main() {
   const row = (name, ok, note) => rows.push([ok ? 'PASS' : 'FAIL', name, note || '']);
   const pv = () => ev(`(() => { const p = s => { const e = document.querySelector(s + ' [aria-pressed="true"]'); return e && e.dataset.v; }; const s = document.querySelector('#pvSave'); return s ? { type: p('#pvType'), lang: p('#pvLang'), title: document.querySelector('#pvT').value.length, hasTitle: !!document.querySelector('#pvT').value.trim(), author: !!document.querySelector('#pvA').value.trim(), chapters: +document.querySelector('#pvN').textContent, disabled: s.disabled, rec: (document.querySelector('#modalBox .msg b') || {}).textContent ? 'report' : 'none' } : null; })()`);
   const waitPv = (t = 300000) => b.waitFor(`!!document.querySelector('#pvSave') || !!document.querySelector('#dupOpen') || !!document.querySelector('#libGo') || /ما قدرت|ما أعرف/.test(document.querySelector('#modalBox').textContent + document.querySelector('#toast').textContent)`, t);
-  const items = () => ev(`new Promise(res => { const q = indexedDB.open('maktabati'); q.onsuccess = () => { const r = q.result.transaction('items').objectStore('items').getAll(); r.onsuccess = () => res(r.result.map(i => ({ id: i.id, type: i.type, lang: i.lang || null, hash: i.hash || null, title: i.title, chapters: (i.chapters || []).length, ingest: i.ingest ? i.ingest.rec : null, createdAt: i.createdAt }))); }; })`);
+  const items = () => ev(`new Promise(res => { const q = indexedDB.open('maktabati'); q.onsuccess = () => { const r = q.result.transaction('items').objectStore('items').getAll(); r.onsuccess = () => res(r.result.map(i => ({ id: i.id, type: i.type, lang: i.lang || null, hash: i.hash || null, title: i.title, chapters: (i.chapters || []).length, ingest: i.ingest ? i.ingest.rec : null, source: i.source || null, ocr: i.ocr || null, createdAt: i.createdAt }))); }; })`);
+  const filesStore = () => ev(`new Promise(res => { const q = indexedDB.open('maktabati'); q.onsuccess = () => { const r = q.result.transaction('files').objectStore('files').getAll(); r.onsuccess = () => res(r.result.map(f => f.id)); }; })`);
   const upFile = async f => { await ev(`location.hash = '#/lib'`); await settle(300); await b.setFiles('#upFile', [f]); };
   const close = () => ev(`(document.querySelector('#modal:not([hidden]) [data-close]') || document.body).click()`);
   const saveNew = async () => { const before = (await items()).map(i => i.id); await ev(`document.querySelector('#pvSave').click()`); await settle(1200); return (await items()).find(i => !before.includes(i.id)); };
@@ -84,6 +86,26 @@ async function main() {
     // 3. scanned PDF
     await upFile(files['scan.pdf']); await waitPv();
     p = await pv(); row('PDF without text layer -> vision, not saved', p && p.disabled === true, JSON.stringify(p)); await close(); await settle();
+
+    // 3b. scanned PDF with image pages: saved with bytes, badge and placeholder
+    await upFile(files['scan-full.pdf']); await waitPv();
+    p = await pv(); row('scanned PDF -> savable preview', p && p.disabled === false && p.rec === 'report', JSON.stringify(p));
+    it = await saveNew(); const scanId = it && it.id;
+    row('scanned PDF stored with marker', it && it.type === 'book' && it.ingest === 'vision' && it.source === 'scan' && it.ocr && it.ocr.status === 'pending' && it.ocr.pages === 5 && it.ocr.done === 0, it && JSON.stringify({ ingest: it.ingest, source: it.source, ocr: it.ocr, chapters: it.chapters }));
+    row('PDF bytes kept in files store', (await filesStore()).length === 1 && (await filesStore())[0] === scanId, JSON.stringify(await filesStore()));
+    await ev(`location.hash = '#/read/' + encodeURIComponent(${JSON.stringify(scanId)})`); await settle(700);
+    row('scanned book opens placeholder', await ev(`document.querySelector('#v-read').textContent.includes('نص هالكتاب ما انقرأ بعد')`));
+    await ev(`location.hash = '#/lib'`); await settle(600);
+    row('library shows scanned badge', await ev(`document.querySelector('#v-lib').textContent.includes('ممسوح')`));
+    await b.goto(url); await b.waitFor(`(() => { const v = document.querySelector('main .view:not([hidden])'); return !!(v && v.innerHTML.length); })()`); await settle(1200);
+    await ev(`location.hash = '#/read/' + encodeURIComponent(${JSON.stringify(scanId)})`); await settle(700);
+    row('scanned book survives reload with placeholder', await ev(`document.querySelector('#v-read').textContent.includes('نص هالكتاب ما انقرأ بعد')`));
+    row('bytes survive reload', (await filesStore()).length === 1);
+    await ev(`location.hash = '#/book/' + encodeURIComponent(${JSON.stringify(scanId)})`); await settle(600);
+    await ev(`document.querySelector('#v-book [data-bpa="more"]').click()`); await settle(300);
+    await ev(`[...document.querySelectorAll('#sheet [data-bpa]')].find(b => b.dataset.bpa === 'del').click()`); await settle(300);
+    await ev(`document.querySelector('#cfGo').click()`); await settle(1500);
+    row('scanned book deleted with its bytes', !(await items()).some(i => i.id === scanId) && (await filesStore()).length === 0);
 
     // 4. EPUB long and short
     await upFile(files['long.epub']); await waitPv();

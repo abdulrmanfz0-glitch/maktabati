@@ -36,8 +36,18 @@ describe('image union coverage', () => {
     expect(imageCoverage(p)).toBeCloseTo(0.3);
     expect(imageUnionCoverage(p)).toBeCloseTo(0.6);
   });
-  it('caps the sum at 1 for overlapping tiles', () => {
-    const p = imgPage(450, 600, [[0, 0, 450, 300], [0, 0, 450, 300], [0, 0, 450, 300]]);
+  it('fully overlapping images count once, not twice', () => {
+    const p = imgPage(450, 600, [[0, 0, 450, 300], [0, 0, 450, 300]]);
+    expect(imageCoverage(p)).toBe(0.5);
+    expect(imageUnionCoverage(p)).toBe(0.5);
+  });
+  it('partially overlapping images merge their union', () => {
+    const p = imgPage(450, 600, [[0, 0, 450, 300], [0, 200, 450, 300]]);
+    // y ranges [0,300] and [200,500] merge to [0,500]
+    expect(imageUnionCoverage(p)).toBeCloseTo(450 * 500 / (450 * 600));
+  });
+  it('capped at 1 when images cover the page more than once', () => {
+    const p = imgPage(450, 600, [[0, 0, 450, 600], [0, 0, 450, 600]]);
     expect(imageUnionCoverage(p)).toBe(1);
   });
   it('no images gives 0', () => {
@@ -103,6 +113,12 @@ describe('route vision share (>= boundary unchanged)', () => {
   it('no eligible pages keeps the empty-PDF behavior (vision, share 0)', () => {
     expect(route([], 0, [], 0).recommendation).toBe('vision');
     expect(scannedSummary([]).share).toBe(0);
+  });
+  it('latin-heavy case uses the exported vision share threshold', () => {
+    const latinRows = n => Array.from({ length: n }, (_, i) => ({ page: i + 1, tokens: 100, issues: [], scored: false, score: null, route: 'ok', latin: true }));
+    const vision = (rows, n) => rows.map((r, i) => (i < n ? Object.assign({}, r, { route: 'vision' }) : r));
+    expect(route(vision(latinRows(10), 4), 0, [], 0).recommendation).toBe('review'); // 40% < 50%
+    expect(route(vision(latinRows(10), 5), 0, [], 0).recommendation).toBe('vision'); // 50% >= 50%
   });
 });
 
