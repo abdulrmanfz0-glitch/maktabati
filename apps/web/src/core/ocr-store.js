@@ -7,6 +7,22 @@ import { scanPageId } from './scan-save.js';
 /** Engine tag written on every record (PR3 self-hosted Tesseract, ara fast). */
 export const OCR_ENGINE_TAG = 'tesseract.js-7.0.0/ara-fast';
 
+/** UI copy shared with the app and asserted by tests (Saudi tone, short). */
+export const OCR_FAILED_LINE = 'تعذّرت قراءة هذه الصفحة.';
+export const OCR_CHAT_LABEL = 'نص الكتاب مقروء آليًا من صور الصفحات على جهازك، وقد يحتوي أخطاء خصوصًا في التشكيل.';
+export const OCR_BOOK_DISCLOSURE = 'النص مقروء آليًا من صور الصفحات وقد يحتوي أخطاء، خصوصًا في التشكيل. التعرّف: Tesseract على جهازك.';
+export const OCR_EXPORT_NOTICE = 'ملف الـPDF الأصلي للكتب الممسوحة ما ينضم للتصدير، بس نصها المقروء آليًا ينضم.';
+export const OCR_DEFAULT_MS_PER_PAGE = 400;
+export const OCR_FIRST_DOWNLOAD_MB = 4.6;
+
+/** Honest, approximate time estimate from measured ms/page. */
+export function ocrTimeEstimate(pages, avgMs = OCR_DEFAULT_MS_PER_PAGE) {
+  const total = Math.max(1, Math.round((pages || 0) * (avgMs || OCR_DEFAULT_MS_PER_PAGE) / 1000));
+  if (total < 60) return total + ' ثانية';
+  const m = Math.round(total / 60);
+  return m + (m === 1 ? ' دقيقة' : ' دقايق');
+}
+
 /** Additive upgrade (v2 -> v3): create the store with a bookId index if missing. */
 export function ensureOcrPagesStore(db) {
   if (db.objectStoreNames.contains('ocrPages')) return;

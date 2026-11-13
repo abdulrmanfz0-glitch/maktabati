@@ -58,6 +58,29 @@ export function saveScannedBook(db, item, bytes) {
   });
 }
 
+/** navigator.storage.persist(): ask once per device (kv-remembered), never block. */
+export function persistOnce({ get, set, persist }) {
+  const asked = get();
+  if (asked !== null && asked !== undefined) return Promise.resolve(asked);
+  return Promise.resolve()
+    .then(() => persist())
+    .then(
+      granted => { const v = { granted: !!granted, t: Date.now() }; set(v); return v; },
+      () => { const v = { granted: false, t: Date.now() }; set(v); return v; }
+    );
+}
+
+/** True when another tab currently holds this book's OCR lock. */
+export async function ocrLockHeld(locks, bookId) {
+  try {
+    if (locks && typeof locks.query === 'function') {
+      const h = await locks.query();
+      return (h.held || []).some(l => l.name === 'ocr:' + bookId);
+    }
+  } catch (e) {}
+  return false;
+}
+
 /** Read the source bytes of one book back from the files store (for OCR runs). */
 export function getScannedFile(db, itemId) {
   return new Promise(resolve => {
