@@ -7,6 +7,7 @@ import { defineConfig } from 'vite';
 import { viteSingleFile } from 'vite-plugin-singlefile';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import zlib from 'node:zlib';
 
@@ -34,9 +35,12 @@ function cspPlugin(single) {
       /* Cloudflare Web Analytics (enabled on the hosted Pages project) injects its
          cookieless beacon from this origin; it collects no book data or keys. */
       const CF_BEACON = 'https://static.cloudflareinsights.com';
+      /* Tesseract's core is a .wasm.js wrapper that instantiates embedded WASM;
+         under a CSP that needs script-src 'wasm-unsafe-eval' (not 'unsafe-eval').
+         worker-src 'self' blob: already covers the Tesseract blob worker. */
       const script = single
-        ? "script-src 'self' 'unsafe-inline'"
-        : "script-src 'self' " + CF_BEACON + (hashes.length ? ' ' + [...new Set(hashes)].join(' ') : '');
+        ? "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'"
+        : "script-src 'self' " + CF_BEACON + (hashes.length ? ' ' + [...new Set(hashes)].join(' ') : '') + " 'wasm-unsafe-eval'";
       const csp = [
         "default-src 'self'",
         script,
@@ -70,6 +74,48 @@ function embedWorker() {
   };
 }
 
+// Self-hosted OCR runtime: the Tesseract worker and the two core builds are copied
+// from node_modules into <outDir>/ocr/<version>/ at build time and served from
+// node_modules in dev. The Arabic traineddata lives in public/ocr/<version>/ (the
+// public dir copy is part of the existing build). The app never fetches OCR files
+// from a CDN: workerPath/corePath/langPath all point at our own origin.
+const OCR_VERSION = '7.0.0';
+const require2 = createRequire(import.meta.url);
+const tjsDir = require2('node:path').dirname(require2.resolve('tesseract.js/package.json'));
+const nestedCore = require2('node:path').join(tjsDir, 'node_modules', 'tesseract.js-core');
+const coreDir = fs.existsSync(require2('node:path').join(nestedCore, 'package.json'))
+  ? nestedCore
+  : require2('node:path').dirname(require2.resolve('tesseract.js-core/package.json'));
+const OCR_FILES = [
+  ['worker.min.js', require2('node:path').join(tjsDir, 'dist', 'worker.min.js')],
+  ['tesseract-core-relaxedsimd-lstm.wasm.js', require2('node:path').join(coreDir, 'tesseract-core-relaxedsimd-lstm.wasm.js')],
+  ['tesseract-core-simd-lstm.wasm.js', require2('node:path').join(coreDir, 'tesseract-core-simd-lstm.wasm.js')],
+  ['tesseract-core-lstm.wasm.js', require2('node:path').join(coreDir, 'tesseract-core-lstm.wasm.js')]
+];
+function ocrAssetsPlugin() {
+  let webOut = null;
+  return {
+    name: 'maktabati-ocr-assets',
+    configResolved(cfg) {
+      if (cfg.command === 'build' && cfg.mode !== 'worker' && cfg.mode !== 'single') webOut = require2('node:path').resolve(cfg.build.outDir, 'ocr', OCR_VERSION);
+    },
+    closeBundle() {
+      if (!webOut) return;
+      fs.mkdirSync(webOut, { recursive: true });
+      for (const [name, src] of OCR_FILES) fs.copyFileSync(src, require2('node:path').join(webOut, name));
+    },
+    configureServer(server) {
+      server.middlewares.use('/ocr/' + OCR_VERSION + '/', (req, res, next) => {
+        const name = decodeURIComponent(String(req.url || '').split('?')[0].replace(/^\//, ''));
+        const f = OCR_FILES.find(([n]) => n === name);
+        if (!f) return next();
+        res.setHeader('Content-Type', 'text/javascript');
+        fs.createReadStream(f[1]).pipe(res);
+      });
+    }
+  };
+}
+
 export default defineConfig(({ mode }) => {
   if (mode === 'worker') return {
     root: here('.'),
@@ -86,7 +132,7 @@ export default defineConfig(({ mode }) => {
     base: './',
     // public/ holds the recorded sounds (public/sounds, from tools/sounds/build.mjs); the single file must not carry them
     publicDir: single ? false : here('public'),
-    plugins: [cspPlugin(single)].concat(single ? [embedWorker(), viteSingleFile()] : []),
+    plugins: [cspPlugin(single), ocrAssetsPlugin()].concat(single ? [embedWorker(), viteSingleFile()] : []),
     resolve: {
       alias: [NO_NODE].concat(single ? [{ find: /^\.\/worker-url\.js$/, replacement: here('src/ingest/worker-url.single.js') }] : [])
     },
@@ -95,6 +141,9 @@ export default defineConfig(({ mode }) => {
       outDir: here('../../dist/' + (single ? 'single' : 'web')),
       emptyOutDir: true,
       target: 'es2022',
+      // The web build also emits the dev-only OCR check page (unlinked from the
+      // app). The single-file build stays one page: it cannot serve /ocr files.
+      rollupOptions: { input: single ? here('index.html') : { main: here('index.html'), 'ocr-check': here('ocr-check.html') } },
       // Single file: inline every asset (fonts). Normal web build: always emit fonts as
       // files, even tiny subsets, because the CSP is font-src 'self' and data: fonts
       // would be blocked. Other assets keep the usual 4 KB inline threshold.

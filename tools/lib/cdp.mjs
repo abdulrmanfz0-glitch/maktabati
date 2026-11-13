@@ -85,7 +85,9 @@ async function connect(proc, dir, exited, me, { width, height, mobile }) {
     if (m.id && pending.has(m.id)) { const p = pending.get(m.id); pending.delete(m.id); m.error ? p.rej(new Error(m.error.message)) : p.res(m.result); }
     else if (m.method) listeners.forEach(l => l(m));
   };
-  const send = (method, params = {}) => new Promise((res, rej) => { const id = ++seq; pending.set(id, { res, rej }); ws.send(JSON.stringify({ id, method, params })); });
+  const send = (method, params = {}, sessionId = null) => new Promise((res, rej) => { const id = ++seq; pending.set(id, { res, rej }); ws.send(JSON.stringify(Object.assign({ id, method, params }, sessionId ? { sessionId } : {}))); });
+  // subscribe to any CDP event (returns an unsubscribe function)
+  const on = (method, fn) => { const l = m => { if (m.method === method) fn(m.params); }; listeners.push(l); return () => { const i = listeners.indexOf(l); if (i >= 0) listeners.splice(i, 1); }; };
   const errors = [];
   listeners.push(m => {
     if (m.method === 'Runtime.exceptionThrown') errors.push((m.params.exceptionDetails.exception && m.params.exceptionDetails.exception.description) || m.params.exceptionDetails.text);
@@ -126,5 +128,5 @@ async function connect(proc, dir, exited, me, { width, height, mobile }) {
   };
   // wait for the whole process tree to be gone before deleting the profile (Windows keeps files locked until then)
   const close = async () => { try { ws.close(); } catch {} killTree(proc); await Promise.race([exited, sleep(5000)]); rmDir(dir); LIVE.delete(me); };
-  return { send, evaluate, waitFor, goto, reload, screenshot, close, errors, sleep, setFiles, tap, downloadsTo };
+  return { send, on, evaluate, waitFor, goto, reload, screenshot, close, errors, sleep, setFiles, tap, downloadsTo };
 }
