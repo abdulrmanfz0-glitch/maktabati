@@ -11,7 +11,8 @@ import { SPOIL, NOSPOIL, SYS, MODES } from '../core/prompts.js';
 import { findNormalizedRange } from '../core/text.js';
 import { PROMPT_VERSION, CORRECTIVE_MESSAGE, parseGlossary, glossaryHash, glossaryForText, extractChapterUnits, chunkUnits, buildMessages as buildTranslationMessages, parseTranslation, qaSegment, estimateChapter, fingerprint, chapterSourceHash, lastTwoSentences, bookPlan, runConcurrent, hashString, isPeak, isArabicHighlight, isSourceHighlight } from '../core/translate.js';
 import { trGetJob, trPutJob, trListJobs, trGetSegments, trPutSegment, trDeleteJob, trGetGlossary, trPutGlossary, trDeleteBook, trClearAll } from '../core/translate-store.js';
-import { scannedSaveAllowed, scanBookFields, isPendingScan, ensureStores, quotaAllows, saveScannedBook, deleteScannedFile, sweepOrphanFiles } from '../core/scan-save.js';
+import { scannedSaveAllowed, scanBookFields, isPendingScan, ensureStores, quotaAllows, saveScannedBook, deleteScannedFile, sweepOrphanFiles, getScannedFile } from '../core/scan-save.js';
+import { ensureOcrPagesStore, makeOcrStore, delOcrPagesForBook, sweepOcrPages, getBook } from '../core/ocr-store.js';
 
 (function(){
 'use strict';
@@ -131,8 +132,8 @@ function openDB(){
       idb = null; finish(false);
     }, 2500);
     try{
-      req = indexedDB.open('maktabati', 2);
-      req.onupgradeneeded = () => { ensureStores(req.result, { items:'id', annos:'id', kv:'k', files:'id' }); };
+      req = indexedDB.open('maktabati', 3);
+      req.onupgradeneeded = () => { ensureStores(req.result, { items:'id', annos:'id', kv:'k', files:'id' }); ensureOcrPagesStore(req.result); };
       req.onsuccess = () => {
         if (settled){ try{ req.result.close(); }catch(e){} return; }
         idb = req.result;
@@ -858,6 +859,7 @@ async function purgeBook(id){
   mapClean();
   await trDeleteBook(id);
   if (idb && src && src.source === 'scan') await deleteScannedFile(idb, id);
+  if (idb) await delOcrPagesForBook(idb, id);
   const P = prof(); if (P.dismissPrep && P.dismissPrep[id]){ delete P.dismissPrep[id]; profSave(); }
   if (P.tpl && P.tpl.books && P.tpl.books[id]){ delete P.tpl.books[id]; profSave(); }
   return ok;
@@ -1199,13 +1201,25 @@ function renderReader(it, target, o){
   it.lastOpened = Date.now(); put('items', it);
   $('#tbTitle').textContent = it.title; document.title = it.title + ' · مكتبتي';
   const bd = bookDir(it); $('#v-read').dir = bd; $('#v-read').lang = bd === 'rtl' ? 'ar' : 'en';
-  if (isPendingScan(it)){
+  if (isPendingScan(it) || (it.source === 'scan' && it.ocr && it.ocr.status !== 'done')){
+    const ocr = it.ocr || {};
+    const st = ocr.status === 'running' ? ' يقرأ الآن…' : ocr.status === 'paused' ? (ocr.reason === 'space' ? ' — متوقف: مساحة التخزين ممتلئة.' : ocr.reason === 'assets' ? ' — متوقف: ما قدرت أوصل ملفات التعرّف.' : ' — متوقف مؤقتًا.') : '';
     $('#v-read').innerHTML = '<div class="wrap" style="padding-top:2.5rem; padding-bottom:4rem; text-align:center">' +
       '<span style="font-size:.72rem;color:var(--soft);border:1px solid var(--rule);border-radius:99px;padding:2px 10px">ممسوح ضوئيًا</span>' +
       '<h2 style="margin:1rem 0 .5rem" dir="auto">' + esc(it.title) + '</h2>' +
-      '<p class="quiet" style="max-width:34rem; margin:.4rem auto 0">نص هالكتاب ما انقرأ بعد: صفحاته صور ما لها طبقة نص. خاصية التعرف على الصور جاية قريبًا، ولما تجهز بيتكوّن النص ويشتغل البحث والتظليل والرفيق.</p>' +
-      '<p class="hint" style="max-width:34rem; margin:.4rem auto 0">الكتاب وملفه الأصلي محفوظان على جهازك فقط.</p>' +
-      '<div style="margin-top:1.25rem"><a class="linkbtn" href="#/lib">← ارجع للمكتبة</a></div></div>';
+      '<p class="quiet" style="max-width:34rem; margin:.4rem auto 0">نص هالكتاب ما انقرأ بعد: صفحاته صور ما لها طبقة نص. اضغط الزر تحت عشان أقرأ الصفحات على جهازك وأكوّن النص — الصفحات ما تطلع من جهازك أبدًا.</p>' +
+      '<div style="margin:1.25rem auto; max-width:22rem; display:flex; flex-direction:column; gap:.6rem; align-items:center">' +
+        '<button class="pbtn" id="ocrStart"' + (ocr.status === 'running' ? ' disabled' : '') + '>' + (ocr.status === 'running' ? 'يقرأ…' : (ocr.done ? 'كمّل القراءة' : 'اقرأ النص على جهازي')) + '</button>' +
+        '<button class="gbtn" id="ocrPause"' + (ocr.status !== 'running' ? ' hidden' : '') + '>إيقاف مؤقت</button>' +
+        '<span class="hint" id="ocrProg" role="status">' + (ocr.status === 'running' ? 'قرأت ' + (ocr.done || 0) + ' من ' + (ocr.pages || 0) + ' صفحة' + st : ocr.done ? 'قرأت ' + ocr.done + ' من ' + (ocr.pages || 0) + ' صفحة' + st : 'بانتظار البدء.') + '</span>' +
+      '</div>' +
+      '<p class="hint" style="max-width:34rem; margin:.4rem auto 0">الكتاب وملفه الأصلي محفوظان على جهازك فقط. التعرّف يستمر من آخر صفحة حتى لو أقفلت المتصفح.</p>' +
+      '<div style="margin-top:1rem"><a class="linkbtn" href="#/lib">← ارجع للمكتبة</a></div></div>';
+    $('#v-read').onclick = e => {
+      const pause = e.target.closest('#ocrPause');
+      if (pause){ const c = ocrCtrls.get(it.id); if (c) c.abort(); return; }
+      if (e.target.closest('#ocrStart')) startOcr(it);
+    };
     drawerNav(it); updateSess(); showBar(); return;
   }
   $('#v-read').innerHTML = paged ? screenHTML(it, screen) : readerHTML(it);
@@ -1231,6 +1245,32 @@ function renderReader(it, target, o){
     const pos = kv.get(it.id + ':pos', 0); const d = document.documentElement;
     window.scrollTo(0, pos > .02 ? pos * (d.scrollHeight - d.clientHeight) : 0);
   });
+}
+
+/* ---------- local OCR run (PR4): minimal trigger, polished UI comes in PR5 ---------- */
+const ocrCtrls = new Map(); /* bookId -> AbortController */
+async function startOcr(it){
+  if (!idb){ toast('التخزين غير متاح. ما قدرت أقرأ النص.'); return; }
+  if (ocrCtrls.has(it.id)) return;
+  const bytes = await getScannedFile(idb, it.id);
+  if (!bytes){ toast('ملف الكتاب مو موجود على هالجهاز.'); return; }
+  const ctrl = new AbortController(); ocrCtrls.set(it.id, ctrl);
+  const prog = $('#ocrProg');
+  try {
+    const m = await import('../core/ocr-run.js');
+    await m.runBookOcr({ store: makeOcrStore(idb), locks: (typeof navigator.locks !== 'undefined' && navigator.locks) ? navigator.locks : null }, it.id, bytes, {
+      signal: ctrl.signal,
+      onProgress: p => { if (prog) prog.textContent = p.finished ? 'انتهت القراءة.' : 'قرأت ' + (p.done || 0) + ' من ' + (p.total || 0) + ' صفحة'; }
+    });
+  } catch (e) {
+    const aborted = e && (e.name === 'AbortError' || (e.code && e.code === 'aborted'));
+    if (!aborted) toast(e && e.code === 'busy' ? 'كتاب آخر يعالج الكتاب نفسه الآن.' : 'ما قدرت أقرأ النص: ' + ((e && e.code) || 'خطأ غير معروف.'));
+  } finally {
+    ocrCtrls.delete(it.id);
+    try { const fresh = await getBook(idb, it.id); if (fresh) mem.items.set(it.id, fresh); } catch (e) {}
+    notifyChange(); refreshView();
+    if (RD && RD.it && RD.it.id === it.id) renderReader(mem.items.get(it.id));
+  }
 }
 
 /* ---------- selection tools ---------- */
@@ -5949,6 +5989,20 @@ async function init(){
   if (loaded && !mem.items.size && !kv.get('seeded', false)) await seed();
   if (!kv.get('hlCardsV1', false)){ await schedule(annosOf('hl').filter(a => hkOf(a) === 'imp').map(hlKey)); await kv.set('hlCardsV1', true); }
   if (idb && mem.items.size && !kv.get('orphansV1', false)){ const on = await cleanOrphans(); await kv.set('orphansV1', { t:Date.now(), n:on }); console.info('[maktabati] orphan sweep', JSON.stringify(on)); }
+  /* Every startup (cheap): sweep files/ocrPages orphans and demote books left
+     'running' by a closed tab to 'paused' — a run is never auto-resumed. */
+  if (idb){
+    try { await sweepOrphanFiles(idb, new Set(mem.items.keys())); } catch (e) {}
+    try { await sweepOcrPages(idb, new Set(mem.items.keys())); } catch (e) {}
+    const idbItems = await getAll('items') || [];
+    for (const it of idbItems){
+      if (it.ocr && it.ocr.status === 'running'){
+        it.ocr.status = 'paused'; it.ocr.reason = 'interrupted';
+        await put('items', it);
+        if (mem.items.has(it.id)) mem.items.set(it.id, it);
+      }
+    }
+  }
   await markInterrupted();
 
   applyLang(); initSide(); initCover(); drawChip(); initSnd(); rtInit();

@@ -96,7 +96,18 @@ export function createOcrEngine({ createWorkerFn = createWorker, idleMs = DEFAUL
       if (signal && signal.aborted) throw abortError();
       progressCb = opts.onProgress || null;
       const t0 = performance.now();
-      const { data } = await w.recognize(image);
+      // Race with the abort signal: terminating the worker does not reliably
+      // reject an in-flight recognize() promise, so reject it ourselves.
+      let result;
+      if (signal) {
+        result = await Promise.race([
+          w.recognize(image),
+          new Promise((_, rej) => signal.addEventListener('abort', () => rej(abortError()), { once: true }))
+        ]);
+      } else {
+        result = await w.recognize(image);
+      }
+      const { data } = result;
       const ms = Math.max(1, Math.round(performance.now() - t0));
       return { text: normalizeOcrText(data.text), confidence: Math.round(data.confidence || 0), ms };
     } catch (e) {

@@ -58,6 +58,25 @@ export function saveScannedBook(db, item, bytes) {
   });
 }
 
+/** Read the source bytes of one book back from the files store (for OCR runs). */
+export function getScannedFile(db, itemId) {
+  return new Promise(resolve => {
+    if (!db.objectStoreNames.contains('files')) { resolve(null); return; }
+    let tx;
+    try { tx = db.transaction('files', 'readonly'); } catch (e) { resolve(null); return; }
+    const q = tx.objectStore('files').get(itemId);
+    q.onsuccess = async () => {
+      const b = (q.result && q.result.bytes) || null;
+      try {
+        // The record stores a Blob (PR2); pdf.js needs bytes, so unwrap here.
+        if (b && typeof Blob !== 'undefined' && b instanceof Blob) return resolve(await b.arrayBuffer());
+        resolve(b);
+      } catch (e) { resolve(null); }
+    };
+    q.onerror = () => resolve(null);
+  });
+}
+
 /** Delete the bytes of one book from the files store (tolerates a missing store). */
 export function deleteScannedFile(db, itemId) {
   return new Promise(resolve => {
