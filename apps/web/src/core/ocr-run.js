@@ -107,12 +107,12 @@ export function createOcrRunner({ store, engine = { openPdfDoc, ocrPage, setLang
               ? await doc.renderPage(p, { dpi: dpi * scale, signal })
               : await engine.renderPage(pdfBytes, p, { dpi: dpi * scale, signal });
             const r = await engine.ocrPage(rendered.canvas, { signal });
-            rec = { id, bookId, page: p, text: r.text, confidence: r.confidence, ms: r.ms, engine: ocrEngineTag(lang), status: 'done', at: now() };
+            rec = { id, bookId, page: p, text: r.text, confidence: r.confidence, ms: r.ms, engine: opts.engineTag || ocrEngineTag(lang), status: 'done', at: now() };
           } catch (e) {
             if (signal && signal.aborted) { await pause(bookId, 'cancel'); return { stopped: true, reason: 'cancel', done: doneCount, total }; }
             if (e && e.code === 'assets') { await pause(bookId, 'assets'); return { stopped: true, reason: 'assets', done: doneCount, total }; }
             if (e && e.code === 'oom' && scale === 1) { scale = 0.75; continue; } // retry once at a lower render scale
-            if (attempt === 3) rec = { id, bookId, page: p, text: '', confidence: 0, ms: 0, engine: ocrEngineTag(lang), status: 'failed', error: (e && e.code) || 'engine', at: now() };
+            if (attempt === 3) rec = { id, bookId, page: p, text: '', confidence: 0, ms: 0, engine: opts.engineTag || ocrEngineTag(lang), status: 'failed', error: (e && e.code) || 'engine', at: now() };
           } finally {
             if (rendered && rendered.canvas) { rendered.canvas.width = 0; rendered.canvas.height = 0; } // release the bitmap
           }

@@ -78,6 +78,11 @@ describe('record shape', () => {
     expect(scanBookFields(12)).toEqual({ source: 'scan', ocr: { status: 'pending', pages: 12, done: 0 } });
     expect(scanBookFields(0).ocr.pages).toBe(0);
   });
+  it('scanBookFields records the cloud mode only when requested', () => {
+    expect(scanBookFields(12).ocr.mode).toBeUndefined();
+    expect(scanBookFields(12, 'local').ocr.mode).toBeUndefined();
+    expect(scanBookFields(12, 'cloud').ocr.mode).toBe('cloud');
+  });
   it('isPendingScan detects the marker', () => {
     expect(isPendingScan(Object.assign({ id: 'b1' }, scanBookFields(3)))).toBe(true);
     expect(isPendingScan({ id: 'b2' })).toBe(false);

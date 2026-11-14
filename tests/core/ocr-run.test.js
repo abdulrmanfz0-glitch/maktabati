@@ -204,6 +204,16 @@ describe('runner: language', () => {
     const recs = await getAllPages(db, 'b1');
     expect(recs.map(r => r.engine)).toEqual(['tesseract.js-7.0.0/eng-fast', 'tesseract.js-7.0.0/eng-fast']);
   }, 15000);
+  it('uses a custom engineTag when provided', async () => {
+    const db = fakeDb();
+    ensureStores(db, { items: 'id', files: 'id' });
+    ensureOcrPagesStore(db);
+    await putBook(db, book(1));
+    const engine = fakeEngine();
+    await createOcrRunner(deps(db, engine)).run('b1', new Uint8Array(1), { engineTag: 'cloud' });
+    const rec = await getOcrPage(db, scanPageId('b1', 1));
+    expect(rec.engine).toBe('cloud');
+  }, 15000);
 });
 
 describe('runner: failures and quota', () => {
