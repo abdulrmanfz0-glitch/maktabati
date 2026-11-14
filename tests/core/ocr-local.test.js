@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createOcrEngine, normalizeOcrText, OCR_BASE, OCR_VERSION, DEFAULT_IDLE_MS } from '../../apps/web/src/core/ocr-local.js';
+import { createOcrEngine, normalizeOcrText, blocksToText, OCR_BASE, OCR_VERSION, DEFAULT_IDLE_MS } from '../../apps/web/src/core/ocr-local.js';
 import { createWorker } from 'tesseract.js';
 import { encodePng } from '../../packages/ingest/src/png.js';
 
@@ -146,6 +146,49 @@ describe('language selection (fake worker)', () => {
     await engine.setLang('ara');
     await engine.ocrPage(TINY_JPEG);
     expect(state.created).toEqual(['ara']);
+    await engine.terminate();
+  }, 15000);
+});
+
+describe('blocksToText (reading order)', () => {
+  it('joins lines within a paragraph and separates paragraphs', () => {
+    const blocks = [{ paragraphs: [
+      { lines: [{ text: 'سطر أول' }, { text: 'سطر ثان' }], text: 'سطر أول\nسطر ثان' },
+      { lines: [{ text: 'فقرة ثانية' }], text: 'فقرة ثانية' }
+    ] }];
+    expect(blocksToText(blocks)).toBe('سطر أول\nسطر ثان\n\nفقرة ثانية');
+  });
+  it('returns null for empty or missing blocks', () => {
+    expect(blocksToText([])).toBe(null);
+    expect(blocksToText(null)).toBe(null);
+    expect(blocksToText([{ paragraphs: [] }])).toBe(null);
+  });
+  it('falls back to paragraph.text when lines are missing', () => {
+    expect(blocksToText([{ paragraphs: [{ text: 'نص فقرة' }] }])).toBe('نص فقرة');
+  });
+});
+
+describe('ocrPage uses blocks for paragraph structure (fake worker)', () => {
+  it('returns paragraph-separated text from blocks', async () => {
+    const create = async () => ({
+      setParameters: async () => {},
+      recognize: async () => ({ data: { text: 'raw text', blocks: [{ paragraphs: [{ lines: [{ text: 'a' }, { text: 'b' }], text: 'a\nb' }, { lines: [{ text: 'c' }], text: 'c' }] }] } }),
+      terminate: async () => {}
+    });
+    const engine = createOcrEngine({ createWorkerFn: create });
+    const r = await engine.ocrPage(TINY_JPEG);
+    expect(r.text).toBe('a\nb\n\nc');
+    await engine.terminate();
+  }, 15000);
+  it('falls back to data.text when blocks are absent', async () => {
+    const create = async () => ({
+      setParameters: async () => {},
+      recognize: async () => ({ data: { text: 'plain text' } }),
+      terminate: async () => {}
+    });
+    const engine = createOcrEngine({ createWorkerFn: create });
+    const r = await engine.ocrPage(TINY_JPEG);
+    expect(r.text).toBe('plain text');
     await engine.terminate();
   }, 15000);
 });
