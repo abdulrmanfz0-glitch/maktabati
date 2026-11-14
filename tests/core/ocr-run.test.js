@@ -190,6 +190,20 @@ describe('runner: language', () => {
     const recs = await getAllPages(db, 'b1');
     expect(recs.map(r => r.engine)).toEqual(['tesseract.js-7.0.0/eng-fast', 'tesseract.js-7.0.0/eng-fast']);
   }, 15000);
+  it('autoLang probes page 1 and switches language when the script differs', async () => {
+    const db = fakeDb();
+    ensureStores(db, { items: 'id', files: 'id' });
+    ensureOcrPagesStore(db);
+    await putBook(db, book(2));
+    const engine = fakeEngine();
+    const langs = [];
+    engine.setLang = async l => { langs.push(l); };
+    engine.ocrPage = async () => ({ text: 'This is a full page of English text with enough words to classify the script.', confidence: 80, ms: 5 });
+    await createOcrRunner(deps(db, engine)).run('b1', new Uint8Array(1), { lang: 'ara', autoLang: true });
+    expect(langs).toEqual(['ara', 'eng']); // configured ara, then corrected by the probe
+    const recs = await getAllPages(db, 'b1');
+    expect(recs.map(r => r.engine)).toEqual(['tesseract.js-7.0.0/eng-fast', 'tesseract.js-7.0.0/eng-fast']);
+  }, 15000);
 });
 
 describe('runner: failures and quota', () => {

@@ -3,7 +3,7 @@
 // The merge is a pure function of the ocrPages records, so re-running it always
 // produces identical chapters (highlights never break on identical input).
 import { scanPageId } from './scan-save.js';
-import { ocrEngineTag, OCR_FAILED_LINE } from './ocr-store.js';
+import { ocrEngineTag, OCR_FAILED_LINE, detectTextScript } from './ocr-store.js';
 import { ocrPage, openPdfDoc, setOcrLang } from './ocr-local.js';
 
 export class OcrRunError extends Error {
@@ -55,7 +55,7 @@ export function createOcrRunner({ store, engine = { openPdfDoc, ocrPage, setLang
     const signal = opts.signal || null;
     const onlyFailed = !!opts.onlyFailed;
     const onProgress = opts.onProgress || null;
-    const lang = opts.lang || 'ara';
+    let lang = opts.lang || 'ara';
     if (engine.setLang) await engine.setLang(lang);
     let book = await store.getBook(bookId);
     if (!book || !book.ocr) throw new OcrRunError('no-book', 'الكتاب ليس كتابًا ممسوحًا ضوئيًا.');
@@ -72,6 +72,18 @@ export function createOcrRunner({ store, engine = { openPdfDoc, ocrPage, setLang
       catch (e) { await pause(bookId, 'assets'); throw e; }
     }
     try {
+      // Best-effort script probe on a fresh run: OCR page 1 and, when its script
+      // contradicts the chosen language, switch before processing the rest.
+      if (opts.autoLang && total >= 1 && (book.ocr.done || 0) === 0) {
+        try {
+          const rendered = doc
+            ? await doc.renderPage(1, { dpi, signal })
+            : await engine.renderPage(pdfBytes, 1, { dpi, signal });
+          const guess = detectTextScript((await engine.ocrPage(rendered.canvas, { signal })).text);
+          if (rendered.canvas) { rendered.canvas.width = 0; rendered.canvas.height = 0; }
+          if (guess && guess !== lang) { lang = guess; if (engine.setLang) await engine.setLang(lang); }
+        } catch (e) { /* probe is best-effort: keep the chosen language */ }
+      }
       for (let p = 1; p <= total; p++) {
         if (signal && signal.aborted) { await pause(bookId, 'cancel'); return { stopped: true, reason: 'cancel', done: doneCount, total }; }
         const id = scanPageId(bookId, p);

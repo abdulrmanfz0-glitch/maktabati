@@ -2,7 +2,7 @@
 // mem/IDB sync under stale writes, onlyFailed retries, and single-PDF-open runs.
 import { describe, it, expect } from 'vitest';
 import { persistOnce, ocrLockHeld, scanBookFields } from '../../apps/web/src/core/scan-save.js';
-import { ocrTimeEstimate, arCount, arDuration, ocrRetryLabel, ocrApproxDuration, OCR_DEFAULT_MS_PER_PAGE, OCR_FAILED_LINE, OCR_CHAT_LABEL, OCR_BOOK_DISCLOSURE, OCR_EXPORT_NOTICE, ensureOcrPagesStore, putOcrPageAndBook, getOcrPage, getAllPages, putBook, getBook, ocrLangFor, ocrEngineTag } from '../../apps/web/src/core/ocr-store.js';
+import { ocrTimeEstimate, arCount, arDuration, ocrRetryLabel, ocrApproxDuration, OCR_DEFAULT_MS_PER_PAGE, OCR_FAILED_LINE, OCR_CHAT_LABEL, OCR_BOOK_DISCLOSURE, OCR_EXPORT_NOTICE, ensureOcrPagesStore, putOcrPageAndBook, getOcrPage, getAllPages, putBook, getBook, ocrLangFor, ocrEngineTag, detectTextScript } from '../../apps/web/src/core/ocr-store.js';
 import { createOcrRunner, mergeOcrBook } from '../../apps/web/src/core/ocr-run.js';
 import { scanPageId, ensureStores } from '../../apps/web/src/core/scan-save.js';
 
@@ -16,6 +16,22 @@ describe('ocrLangFor', () => {
   it('ocrEngineTag reflects the language', () => {
     expect(ocrEngineTag('eng')).toBe('tesseract.js-7.0.0/eng-fast');
     expect(ocrEngineTag('ara')).toBe('tesseract.js-7.0.0/ara-fast');
+  });
+});
+
+describe('detectTextScript', () => {
+  it('classifies Arabic and English text', () => {
+    expect(detectTextScript('هذا نص عربي طويل بما يكفي لتصنيفه بشكل صحيح وواضح تماما')).toBe('ara');
+    expect(detectTextScript('This is a long enough English sentence to be classified as Latin script')).toBe('eng');
+  });
+  it('returns null for short or empty text', () => {
+    expect(detectTextScript('short')).toBe(null);
+    expect(detectTextScript('')).toBe(null);
+    expect(detectTextScript(null)).toBe(null);
+  });
+  it('picks the dominant script for mixed text', () => {
+    expect(detectTextScript('This English sentence has many Latin letters and is clearly long enough to classify')).toBe('eng');
+    expect(detectTextScript('هذا نص عربي طويل جدا يحتوي على كلمة English واحدة فقط لا غير')).toBe('ara');
   });
 });
 

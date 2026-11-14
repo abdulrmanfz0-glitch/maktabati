@@ -1322,6 +1322,7 @@ async function startOcr(it, opts = {}){
       signal: ctrl.signal,
       onlyFailed: !!opts.onlyFailed,
       lang: ocrLangFor(it),
+      autoLang: true,
       onProgress: p => {
         const memCur = mem.items.get(it.id); // sync mem on every page write: later app puts never carry a stale ocr field
         if (memCur && memCur.ocr){ memCur.ocr.status = 'running'; delete memCur.ocr.reason; if (typeof p.done === 'number') memCur.ocr.done = p.done; }
