@@ -159,7 +159,7 @@ export function createOcrEngine({ createWorkerFn = createWorker, idleMs = DEFAUL
       import('pdfjs-dist/legacy/build/pdf.worker.mjs?url').then(m => m.default)
     ]);
     if (!GlobalWorkerOptions.workerSrc) GlobalWorkerOptions.workerSrc = workerUrl;
-    const doc = await getDocument({ data: pdfBytes.slice ? pdfBytes.slice() : pdfBytes, isEvalSupported: false, enableXfa: false, disableFontFace: true }).promise;
+    const doc = await getDocument({ data: pdfBytes.slice ? pdfBytes.slice() : pdfBytes, isEvalSupported: false, enableXfa: false, disableFontFace: true, wasmUrl: '/pdfjs-wasm/' }).promise;
     let closed = false;
     const close = async () => { if (closed) return; closed = true; try { await doc.loadingTask.destroy(); } catch (e) {} };
     async function renderPdfPage(pageIndex, opts = {}) {
