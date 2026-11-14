@@ -176,6 +176,22 @@ describe('runner: single runner per book', () => {
   }, 15000);
 });
 
+describe('runner: language', () => {
+  it('threads lang to setLang and tags records per language', async () => {
+    const db = fakeDb();
+    ensureStores(db, { items: 'id', files: 'id' });
+    ensureOcrPagesStore(db);
+    await putBook(db, book(2));
+    const engine = fakeEngine();
+    const langs = [];
+    engine.setLang = async l => { langs.push(l); };
+    await createOcrRunner(deps(db, engine)).run('b1', new Uint8Array(1), { lang: 'eng' });
+    expect(langs).toEqual(['eng']);
+    const recs = await getAllPages(db, 'b1');
+    expect(recs.map(r => r.engine)).toEqual(['tesseract.js-7.0.0/eng-fast', 'tesseract.js-7.0.0/eng-fast']);
+  }, 15000);
+});
+
 describe('runner: failures and quota', () => {
   it('a page failing all attempts is saved failed and the run finishes', async () => {
     const db = fakeDb();

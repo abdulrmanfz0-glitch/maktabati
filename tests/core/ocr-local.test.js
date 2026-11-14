@@ -110,6 +110,46 @@ describe('error mapping (fake worker)', () => {
   }, 15000);
 });
 
+describe('language selection (fake worker)', () => {
+  function langRecordingFactory() {
+    const state = { created: [], terminated: 0 };
+    const create = async lang => {
+      state.created.push(lang);
+      return {
+        setParameters: async () => {},
+        recognize: async () => ({ data: { text: 'نص', confidence: 80 } }),
+        terminate: async () => { state.terminated++; }
+      };
+    };
+    return { state, create };
+  }
+  it('passes the configured lang to createWorkerFn', async () => {
+    const { state, create } = langRecordingFactory();
+    const engine = createOcrEngine({ createWorkerFn: create, lang: 'eng' });
+    await engine.ocrPage(TINY_JPEG);
+    expect(state.created).toEqual(['eng']);
+    await engine.terminate();
+  }, 15000);
+  it('setLang recreates the worker with the new language', async () => {
+    const { state, create } = langRecordingFactory();
+    const engine = createOcrEngine({ createWorkerFn: create }); // default ara
+    await engine.ocrPage(TINY_JPEG);
+    await engine.setLang('eng');
+    await engine.ocrPage(TINY_JPEG);
+    expect(state.created).toEqual(['ara', 'eng']);
+    await engine.terminate();
+  }, 15000);
+  it('setLang to the same language keeps the worker', async () => {
+    const { state, create } = langRecordingFactory();
+    const engine = createOcrEngine({ createWorkerFn: create });
+    await engine.ocrPage(TINY_JPEG);
+    await engine.setLang('ara');
+    await engine.ocrPage(TINY_JPEG);
+    expect(state.created).toEqual(['ara']);
+    await engine.terminate();
+  }, 15000);
+});
+
 describe('real tesseract (Node worker)', () => {
   it('committed ara.traineddata.gz loads and recognizes', async () => {
     const engine = createOcrEngine({ createWorkerFn: createWorker, paths: { workerPath: null, corePath: null, langPath: LANG_DIR, cacheMethod: 'none' } });
@@ -118,6 +158,13 @@ describe('real tesseract (Node worker)', () => {
     expect(typeof r.confidence).toBe('number');
     expect(typeof r.ms).toBe('number');
     expect(r.ms).toBeGreaterThan(0);
+    await engine.terminate();
+  }, 120000);
+  it('committed eng.traineddata.gz loads and recognizes', async () => {
+    const engine = createOcrEngine({ createWorkerFn: createWorker, lang: 'eng', paths: { workerPath: null, corePath: null, langPath: LANG_DIR, cacheMethod: 'none' } });
+    const r = await engine.ocrPage(await whitePng());
+    expect(typeof r.text).toBe('string');
+    expect(typeof r.confidence).toBe('number');
     await engine.terminate();
   }, 120000);
 });

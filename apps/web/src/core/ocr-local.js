@@ -40,8 +40,8 @@ function mapError(e) {
  * `paths` overrides workerPath/corePath/langPath; null means "Tesseract default"
  * (used by the Node tests, which must not point at browser assets).
  */
-export function createOcrEngine({ createWorkerFn = createWorker, idleMs = DEFAULT_IDLE_MS, paths = {} } = {}) {
-  let worker = null, creating = null, busy = 0, idleTimer = null, progressCb = null, generation = 0;
+export function createOcrEngine({ createWorkerFn = createWorker, idleMs = DEFAULT_IDLE_MS, paths = {}, lang = 'ara' } = {}) {
+  let worker = null, creating = null, busy = 0, idleTimer = null, progressCb = null, generation = 0, currentLang = lang;
   const clearIdle = () => { if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; } };
   const armIdle = () => { clearIdle(); idleTimer = setTimeout(() => { if (!busy && worker) terminate(); }, idleMs); };
 
@@ -50,6 +50,13 @@ export function createOcrEngine({ createWorkerFn = createWorker, idleMs = DEFAUL
     generation++; // an in-flight creation below must not resurrect a worker afterwards
     const w = worker; worker = null; creating = null;
     if (w) { try { await w.terminate(); } catch (e) {} }
+  }
+
+  /** Switch the recognition language; the worker is recreated lazily on the next page. */
+  async function setLang(next) {
+    if (next === currentLang) return;
+    currentLang = next;
+    await terminate();
   }
 
   async function ensureWorker() {
@@ -65,7 +72,7 @@ export function createOcrEngine({ createWorkerFn = createWorker, idleMs = DEFAUL
           if (paths.corePath !== null) opts.corePath = paths.corePath || OCR_BASE;
           if (paths.langPath !== null) opts.langPath = paths.langPath || OCR_BASE;
           if (paths.cacheMethod !== null && paths.cacheMethod !== undefined) opts.cacheMethod = paths.cacheMethod;
-          const w = await createWorkerFn('ara', 1, opts);
+          const w = await createWorkerFn(currentLang, 1, opts);
           await w.setParameters({ preserve_interword_spaces: '1' });
           if (gen !== generation) { // aborted while the worker was starting: discard it
             creating = null;
@@ -178,7 +185,7 @@ export function createOcrEngine({ createWorkerFn = createWorker, idleMs = DEFAUL
     finally { await doc.close().catch(() => {}); }
   }
 
-  return { ocrPage, renderPage, openPdfDoc, terminate };
+  return { ocrPage, renderPage, openPdfDoc, terminate, setLang };
 }
 
 const defaultEngine = createOcrEngine();
@@ -186,3 +193,4 @@ export const ocrPage = (image, opts) => defaultEngine.ocrPage(image, opts);
 export const renderPage = (pdfBytes, pageIndex, opts) => defaultEngine.renderPage(pdfBytes, pageIndex, opts);
 export const openPdfDoc = (pdfBytes) => defaultEngine.openPdfDoc(pdfBytes);
 export const ocrTerminate = () => defaultEngine.terminate();
+export const setOcrLang = (lang) => defaultEngine.setLang(lang);

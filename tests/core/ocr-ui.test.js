@@ -2,9 +2,22 @@
 // mem/IDB sync under stale writes, onlyFailed retries, and single-PDF-open runs.
 import { describe, it, expect } from 'vitest';
 import { persistOnce, ocrLockHeld, scanBookFields } from '../../apps/web/src/core/scan-save.js';
-import { ocrTimeEstimate, arCount, arDuration, ocrRetryLabel, ocrApproxDuration, OCR_DEFAULT_MS_PER_PAGE, OCR_FAILED_LINE, OCR_CHAT_LABEL, OCR_BOOK_DISCLOSURE, OCR_EXPORT_NOTICE, ensureOcrPagesStore, putOcrPageAndBook, getOcrPage, getAllPages, putBook, getBook } from '../../apps/web/src/core/ocr-store.js';
+import { ocrTimeEstimate, arCount, arDuration, ocrRetryLabel, ocrApproxDuration, OCR_DEFAULT_MS_PER_PAGE, OCR_FAILED_LINE, OCR_CHAT_LABEL, OCR_BOOK_DISCLOSURE, OCR_EXPORT_NOTICE, ensureOcrPagesStore, putOcrPageAndBook, getOcrPage, getAllPages, putBook, getBook, ocrLangFor, ocrEngineTag } from '../../apps/web/src/core/ocr-store.js';
 import { createOcrRunner, mergeOcrBook } from '../../apps/web/src/core/ocr-run.js';
 import { scanPageId, ensureStores } from '../../apps/web/src/core/scan-save.js';
+
+describe('ocrLangFor', () => {
+  it('maps en -> eng and everything else -> ara', () => {
+    expect(ocrLangFor({ lang: 'en' })).toBe('eng');
+    expect(ocrLangFor({ lang: 'ar' })).toBe('ara');
+    expect(ocrLangFor({})).toBe('ara');
+    expect(ocrLangFor(null)).toBe('ara');
+  });
+  it('ocrEngineTag reflects the language', () => {
+    expect(ocrEngineTag('eng')).toBe('tesseract.js-7.0.0/eng-fast');
+    expect(ocrEngineTag('ara')).toBe('tesseract.js-7.0.0/ara-fast');
+  });
+});
 
 describe('persistOnce', () => {
   it('asks once and remembers the result', async () => {

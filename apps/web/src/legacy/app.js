@@ -24,7 +24,7 @@ import { findNormalizedRange } from '../core/text.js';
 import { PROMPT_VERSION, CORRECTIVE_MESSAGE, parseGlossary, glossaryHash, glossaryForText, extractChapterUnits, chunkUnits, buildMessages as buildTranslationMessages, parseTranslation, qaSegment, estimateChapter, fingerprint, chapterSourceHash, lastTwoSentences, bookPlan, runConcurrent, hashString, isPeak, isArabicHighlight, isSourceHighlight } from '../core/translate.js';
 import { trGetJob, trPutJob, trListJobs, trGetSegments, trPutSegment, trDeleteJob, trGetGlossary, trPutGlossary, trDeleteBook, trClearAll } from '../core/translate-store.js';
 import { scannedSaveAllowed, scanBookFields, isPendingScan, ensureStores, quotaAllows, saveScannedBook, deleteScannedFile, sweepOrphanFiles, getScannedFile, persistOnce, ocrLockHeld } from '../core/scan-save.js';
-import { ensureOcrPagesStore, makeOcrStore, delOcrPagesForBook, sweepOcrPages, getBook, OCR_FAILED_LINE, OCR_CHAT_LABEL, OCR_BOOK_DISCLOSURE, OCR_EXPORT_NOTICE, OCR_DEFAULT_MS_PER_PAGE, OCR_FIRST_DOWNLOAD_MB, ocrTimeEstimate, arCount, ocrRetryLabel, ocrApproxDuration } from '../core/ocr-store.js';
+import { ensureOcrPagesStore, makeOcrStore, delOcrPagesForBook, sweepOcrPages, getBook, OCR_FAILED_LINE, OCR_CHAT_LABEL, OCR_BOOK_DISCLOSURE, OCR_EXPORT_NOTICE, OCR_DEFAULT_MS_PER_PAGE, OCR_FIRST_DOWNLOAD_MB, ocrTimeEstimate, arCount, ocrRetryLabel, ocrApproxDuration, ocrLangFor } from '../core/ocr-store.js';
 
 (function(){
 'use strict';
@@ -1321,6 +1321,7 @@ async function startOcr(it, opts = {}){
     await m.runBookOcr({ store: makeOcrStore(idb), locks: (typeof navigator.locks !== 'undefined' && navigator.locks) ? navigator.locks : null }, it.id, bytes, {
       signal: ctrl.signal,
       onlyFailed: !!opts.onlyFailed,
+      lang: ocrLangFor(it),
       onProgress: p => {
         const memCur = mem.items.get(it.id); // sync mem on every page write: later app puts never carry a stale ocr field
         if (memCur && memCur.ocr){ memCur.ocr.status = 'running'; delete memCur.ocr.reason; if (typeof p.done === 'number') memCur.ocr.done = p.done; }
