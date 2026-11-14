@@ -113,6 +113,38 @@ function ocrAssetsPlugin() {
   };
 }
 
+// pdf.js decodes JBIG2-compressed images (common in scanned books) with a WASM
+// module loaded from `wasmUrl` + 'jbig2.wasm', so both files are served at a
+// stable un-hashed URL in dev and copied into the web build.
+const pdfjsDir = require2('node:path').dirname(require2.resolve('pdfjs-dist/package.json'));
+const PDFJS_WASM_FILES = [
+  ['jbig2.wasm', require2('node:path').join(pdfjsDir, 'wasm', 'jbig2.wasm')],
+  ['jbig2_nowasm_fallback.js', require2('node:path').join(pdfjsDir, 'wasm', 'jbig2_nowasm_fallback.js')]
+];
+function pdfjsWasmPlugin() {
+  let webOut = null;
+  return {
+    name: 'maktabati-pdfjs-wasm',
+    configResolved(cfg) {
+      if (cfg.command === 'build' && cfg.mode !== 'worker' && cfg.mode !== 'single') webOut = require2('node:path').resolve(cfg.build.outDir, 'pdfjs-wasm');
+    },
+    closeBundle() {
+      if (!webOut) return;
+      fs.mkdirSync(webOut, { recursive: true });
+      for (const [name, src] of PDFJS_WASM_FILES) fs.copyFileSync(src, require2('node:path').join(webOut, name));
+    },
+    configureServer(server) {
+      server.middlewares.use('/pdfjs-wasm/', (req, res, next) => {
+        const name = decodeURIComponent(String(req.url || '').split('?')[0].replace(/^\//, ''));
+        const f = PDFJS_WASM_FILES.find(([n]) => n === name);
+        if (!f) return next();
+        res.setHeader('Content-Type', name.endsWith('.wasm') ? 'application/wasm' : 'text/javascript');
+        fs.createReadStream(f[1]).pipe(res);
+      });
+    }
+  };
+}
+
 export default defineConfig(({ mode }) => {
   if (mode === 'worker') return {
     root: here('.'),
@@ -129,7 +161,7 @@ export default defineConfig(({ mode }) => {
     base: './',
     // public/ holds the recorded sounds (public/sounds, from tools/sounds/build.mjs); the single file must not carry them
     publicDir: single ? false : here('public'),
-    plugins: [cspPlugin(single), ocrAssetsPlugin()].concat(single ? [embedWorker(), viteSingleFile()] : []),
+    plugins: [cspPlugin(single), ocrAssetsPlugin(), pdfjsWasmPlugin()].concat(single ? [embedWorker(), viteSingleFile()] : []),
     resolve: {
       alias: [NO_NODE].concat(single ? [{ find: /^\.\/worker-url\.js$/, replacement: here('src/ingest/worker-url.single.js') }] : [])
     },

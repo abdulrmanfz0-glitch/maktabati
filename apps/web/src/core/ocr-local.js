@@ -27,6 +27,24 @@ export function normalizeOcrText(text) {
   return String(text == null ? '' : text).split('\n').map(l => l.trimEnd()).join('\n').trim();
 }
 
+/** Build paragraph-separated text from tesseract's blocks JSON (reading order):
+ *  lines within a paragraph joined with \n, paragraphs with \n\n — the split
+ *  mergeOcrBook expects. Returns null when blocks carry no paragraphs. */
+export function blocksToText(blocks) {
+  if (!Array.isArray(blocks) || !blocks.length) return null;
+  const out = [];
+  for (const b of blocks) {
+    if (!b || !Array.isArray(b.paragraphs)) continue;
+    for (const p of b.paragraphs) {
+      const lines = (Array.isArray(p && p.lines) ? p.lines : [])
+        .map(l => String(l && l.text || '').trim()).filter(Boolean);
+      const t = lines.length ? lines.join('\n') : String(p && p.text || '').trim();
+      if (t) out.push(t);
+    }
+  }
+  return out.length ? normalizeOcrText(out.join('\n\n')) : null;
+}
+
 function mapError(e) {
   const m = String((e && e.message) || e || '');
   if (/failed to fetch|network|ENOENT|traineddata|langPath|worker|failed to load/i.test(m)) return new OcrError('assets', m);
@@ -40,8 +58,8 @@ function mapError(e) {
  * `paths` overrides workerPath/corePath/langPath; null means "Tesseract default"
  * (used by the Node tests, which must not point at browser assets).
  */
-export function createOcrEngine({ createWorkerFn = createWorker, idleMs = DEFAULT_IDLE_MS, paths = {} } = {}) {
-  let worker = null, creating = null, busy = 0, idleTimer = null, progressCb = null, generation = 0;
+export function createOcrEngine({ createWorkerFn = createWorker, idleMs = DEFAULT_IDLE_MS, paths = {}, lang = 'ara' } = {}) {
+  let worker = null, creating = null, busy = 0, idleTimer = null, progressCb = null, generation = 0, currentLang = lang;
   const clearIdle = () => { if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; } };
   const armIdle = () => { clearIdle(); idleTimer = setTimeout(() => { if (!busy && worker) terminate(); }, idleMs); };
 
@@ -50,6 +68,13 @@ export function createOcrEngine({ createWorkerFn = createWorker, idleMs = DEFAUL
     generation++; // an in-flight creation below must not resurrect a worker afterwards
     const w = worker; worker = null; creating = null;
     if (w) { try { await w.terminate(); } catch (e) {} }
+  }
+
+  /** Switch the recognition language; the worker is recreated lazily on the next page. */
+  async function setLang(next) {
+    if (next === currentLang) return;
+    currentLang = next;
+    await terminate();
   }
 
   async function ensureWorker() {
@@ -65,7 +90,7 @@ export function createOcrEngine({ createWorkerFn = createWorker, idleMs = DEFAUL
           if (paths.corePath !== null) opts.corePath = paths.corePath || OCR_BASE;
           if (paths.langPath !== null) opts.langPath = paths.langPath || OCR_BASE;
           if (paths.cacheMethod !== null && paths.cacheMethod !== undefined) opts.cacheMethod = paths.cacheMethod;
-          const w = await createWorkerFn('ara', 1, opts);
+          const w = await createWorkerFn(currentLang, 1, opts);
           await w.setParameters({ preserve_interword_spaces: '1' });
           if (gen !== generation) { // aborted while the worker was starting: discard it
             creating = null;
@@ -101,15 +126,16 @@ export function createOcrEngine({ createWorkerFn = createWorker, idleMs = DEFAUL
       let result;
       if (signal) {
         result = await Promise.race([
-          w.recognize(image),
+          w.recognize(image, {}, { blocks: true }),
           new Promise((_, rej) => signal.addEventListener('abort', () => rej(abortError()), { once: true }))
         ]);
       } else {
-        result = await w.recognize(image);
+        result = await w.recognize(image, {}, { blocks: true });
       }
       const { data } = result;
       const ms = Math.max(1, Math.round(performance.now() - t0));
-      return { text: normalizeOcrText(data.text), confidence: Math.round(data.confidence || 0), ms };
+      const text = blocksToText(data.blocks) || normalizeOcrText(data.text);
+      return { text, confidence: Math.round(data.confidence || 0), ms };
     } catch (e) {
       if (signal && signal.aborted) throw abortError();
       if (e && e.name === 'OcrError') throw e; // already typed (from the worker): keep its message
@@ -133,7 +159,7 @@ export function createOcrEngine({ createWorkerFn = createWorker, idleMs = DEFAUL
       import('pdfjs-dist/legacy/build/pdf.worker.mjs?url').then(m => m.default)
     ]);
     if (!GlobalWorkerOptions.workerSrc) GlobalWorkerOptions.workerSrc = workerUrl;
-    const doc = await getDocument({ data: pdfBytes.slice ? pdfBytes.slice() : pdfBytes, isEvalSupported: false, enableXfa: false, disableFontFace: true }).promise;
+    const doc = await getDocument({ data: pdfBytes.slice ? pdfBytes.slice() : pdfBytes, isEvalSupported: false, enableXfa: false, disableFontFace: true, wasmUrl: '/pdfjs-wasm/' }).promise;
     let closed = false;
     const close = async () => { if (closed) return; closed = true; try { await doc.loadingTask.destroy(); } catch (e) {} };
     async function renderPdfPage(pageIndex, opts = {}) {
@@ -178,7 +204,7 @@ export function createOcrEngine({ createWorkerFn = createWorker, idleMs = DEFAUL
     finally { await doc.close().catch(() => {}); }
   }
 
-  return { ocrPage, renderPage, openPdfDoc, terminate };
+  return { ocrPage, renderPage, openPdfDoc, terminate, setLang };
 }
 
 const defaultEngine = createOcrEngine();
@@ -186,3 +212,4 @@ export const ocrPage = (image, opts) => defaultEngine.ocrPage(image, opts);
 export const renderPage = (pdfBytes, pageIndex, opts) => defaultEngine.renderPage(pdfBytes, pageIndex, opts);
 export const openPdfDoc = (pdfBytes) => defaultEngine.openPdfDoc(pdfBytes);
 export const ocrTerminate = () => defaultEngine.terminate();
+export const setOcrLang = (lang) => defaultEngine.setLang(lang);

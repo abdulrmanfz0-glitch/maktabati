@@ -7,6 +7,23 @@ import { scanPageId } from './scan-save.js';
 /** Engine tag written on every record (PR3 self-hosted Tesseract, ara fast). */
 export const OCR_ENGINE_TAG = 'tesseract.js-7.0.0/ara-fast';
 
+/** Per-language engine tag: tesseract.js 7.0.0 with that language's fast tessdata. */
+export const ocrEngineTag = lang => 'tesseract.js-7.0.0/' + (lang === 'eng' ? 'eng' : 'ara') + '-fast';
+
+/** OCR engine language from the book's language field (ar -> ara, en -> eng). */
+export const ocrLangFor = it => (it && it.lang === 'en') ? 'eng' : 'ara';
+
+/** Classify OCR output by script: 'ara' | 'eng' | null (too short to tell). */
+export function detectTextScript(text) {
+  const s = String(text || '').slice(0, 20000);
+  const a = (s.match(/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/g) || []).length;
+  const l = (s.match(/[A-Za-z]/g) || []).length;
+  if (a + l < 30) return null;
+  if (a === 0) return 'eng';
+  if (l === 0) return 'ara';
+  return a >= l ? 'ara' : 'eng';
+}
+
 /** UI copy shared with the app and asserted by tests (Saudi tone, short). */
 export const OCR_FAILED_LINE = 'تعذّرت قراءة هذه الصفحة.';
 export const OCR_CHAT_LABEL = 'نص الكتاب مقروء آليًا من صور الصفحات على جهازك، وقد يحتوي أخطاء خصوصًا في التشكيل.';

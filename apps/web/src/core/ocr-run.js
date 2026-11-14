@@ -3,8 +3,8 @@
 // The merge is a pure function of the ocrPages records, so re-running it always
 // produces identical chapters (highlights never break on identical input).
 import { scanPageId } from './scan-save.js';
-import { OCR_ENGINE_TAG, OCR_FAILED_LINE } from './ocr-store.js';
-import { ocrPage, openPdfDoc } from './ocr-local.js';
+import { ocrEngineTag, OCR_FAILED_LINE, detectTextScript } from './ocr-store.js';
+import { ocrPage, openPdfDoc, setOcrLang } from './ocr-local.js';
 
 export class OcrRunError extends Error {
   constructor(code, message) { super(message); this.name = 'OcrRunError'; this.code = code; }
@@ -43,7 +43,7 @@ export function mergeOcrBook(book, records) {
  * openPdfDoc (the PDF is opened once per run); the per-page renderPage fallback
  * keeps unit fakes simple.
  */
-export function createOcrRunner({ store, engine = { openPdfDoc, ocrPage }, locks = null, lease = null, now = () => Date.now(), dpi = 300 } = {}) {
+export function createOcrRunner({ store, engine = { openPdfDoc, ocrPage, setLang: setOcrLang }, locks = null, lease = null, now = () => Date.now(), dpi = 300 } = {}) {
   async function pause(bookId, reason) {
     try {
       const book = await store.getBook(bookId);
@@ -55,6 +55,8 @@ export function createOcrRunner({ store, engine = { openPdfDoc, ocrPage }, locks
     const signal = opts.signal || null;
     const onlyFailed = !!opts.onlyFailed;
     const onProgress = opts.onProgress || null;
+    let lang = opts.lang || 'ara';
+    if (engine.setLang) await engine.setLang(lang);
     let book = await store.getBook(bookId);
     if (!book || !book.ocr) throw new OcrRunError('no-book', 'الكتاب ليس كتابًا ممسوحًا ضوئيًا.');
     if (book.ocr.status === 'done' && !onlyFailed) return { stopped: false, done: book.ocr.done, total: book.ocr.pages };
@@ -70,6 +72,18 @@ export function createOcrRunner({ store, engine = { openPdfDoc, ocrPage }, locks
       catch (e) { await pause(bookId, 'assets'); throw e; }
     }
     try {
+      // Best-effort script probe on a fresh run: OCR page 1 and, when its script
+      // contradicts the chosen language, switch before processing the rest.
+      if (opts.autoLang && total >= 1 && (book.ocr.done || 0) === 0) {
+        try {
+          const rendered = doc
+            ? await doc.renderPage(1, { dpi, signal })
+            : await engine.renderPage(pdfBytes, 1, { dpi, signal });
+          const guess = detectTextScript((await engine.ocrPage(rendered.canvas, { signal })).text);
+          if (rendered.canvas) { rendered.canvas.width = 0; rendered.canvas.height = 0; }
+          if (guess && guess !== lang) { lang = guess; if (engine.setLang) await engine.setLang(lang); }
+        } catch (e) { /* probe is best-effort: keep the chosen language */ }
+      }
       for (let p = 1; p <= total; p++) {
         if (signal && signal.aborted) { await pause(bookId, 'cancel'); return { stopped: true, reason: 'cancel', done: doneCount, total }; }
         const id = scanPageId(bookId, p);
@@ -93,12 +107,12 @@ export function createOcrRunner({ store, engine = { openPdfDoc, ocrPage }, locks
               ? await doc.renderPage(p, { dpi: dpi * scale, signal })
               : await engine.renderPage(pdfBytes, p, { dpi: dpi * scale, signal });
             const r = await engine.ocrPage(rendered.canvas, { signal });
-            rec = { id, bookId, page: p, text: r.text, confidence: r.confidence, ms: r.ms, engine: OCR_ENGINE_TAG, status: 'done', at: now() };
+            rec = { id, bookId, page: p, text: r.text, confidence: r.confidence, ms: r.ms, engine: opts.engineTag || ocrEngineTag(lang), status: 'done', at: now() };
           } catch (e) {
             if (signal && signal.aborted) { await pause(bookId, 'cancel'); return { stopped: true, reason: 'cancel', done: doneCount, total }; }
             if (e && e.code === 'assets') { await pause(bookId, 'assets'); return { stopped: true, reason: 'assets', done: doneCount, total }; }
             if (e && e.code === 'oom' && scale === 1) { scale = 0.75; continue; } // retry once at a lower render scale
-            if (attempt === 3) rec = { id, bookId, page: p, text: '', confidence: 0, ms: 0, engine: OCR_ENGINE_TAG, status: 'failed', error: (e && e.code) || 'engine', at: now() };
+            if (attempt === 3) rec = { id, bookId, page: p, text: '', confidence: 0, ms: 0, engine: opts.engineTag || ocrEngineTag(lang), status: 'failed', error: (e && e.code) || 'engine', at: now() };
           } finally {
             if (rendered && rendered.canvas) { rendered.canvas.width = 0; rendered.canvas.height = 0; } // release the bitmap
           }

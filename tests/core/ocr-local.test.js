@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createOcrEngine, normalizeOcrText, OCR_BASE, OCR_VERSION, DEFAULT_IDLE_MS } from '../../apps/web/src/core/ocr-local.js';
+import { createOcrEngine, normalizeOcrText, blocksToText, OCR_BASE, OCR_VERSION, DEFAULT_IDLE_MS } from '../../apps/web/src/core/ocr-local.js';
 import { createWorker } from 'tesseract.js';
 import { encodePng } from '../../packages/ingest/src/png.js';
 
@@ -110,6 +110,89 @@ describe('error mapping (fake worker)', () => {
   }, 15000);
 });
 
+describe('language selection (fake worker)', () => {
+  function langRecordingFactory() {
+    const state = { created: [], terminated: 0 };
+    const create = async lang => {
+      state.created.push(lang);
+      return {
+        setParameters: async () => {},
+        recognize: async () => ({ data: { text: 'نص', confidence: 80 } }),
+        terminate: async () => { state.terminated++; }
+      };
+    };
+    return { state, create };
+  }
+  it('passes the configured lang to createWorkerFn', async () => {
+    const { state, create } = langRecordingFactory();
+    const engine = createOcrEngine({ createWorkerFn: create, lang: 'eng' });
+    await engine.ocrPage(TINY_JPEG);
+    expect(state.created).toEqual(['eng']);
+    await engine.terminate();
+  }, 15000);
+  it('setLang recreates the worker with the new language', async () => {
+    const { state, create } = langRecordingFactory();
+    const engine = createOcrEngine({ createWorkerFn: create }); // default ara
+    await engine.ocrPage(TINY_JPEG);
+    await engine.setLang('eng');
+    await engine.ocrPage(TINY_JPEG);
+    expect(state.created).toEqual(['ara', 'eng']);
+    await engine.terminate();
+  }, 15000);
+  it('setLang to the same language keeps the worker', async () => {
+    const { state, create } = langRecordingFactory();
+    const engine = createOcrEngine({ createWorkerFn: create });
+    await engine.ocrPage(TINY_JPEG);
+    await engine.setLang('ara');
+    await engine.ocrPage(TINY_JPEG);
+    expect(state.created).toEqual(['ara']);
+    await engine.terminate();
+  }, 15000);
+});
+
+describe('blocksToText (reading order)', () => {
+  it('joins lines within a paragraph and separates paragraphs', () => {
+    const blocks = [{ paragraphs: [
+      { lines: [{ text: 'سطر أول' }, { text: 'سطر ثان' }], text: 'سطر أول\nسطر ثان' },
+      { lines: [{ text: 'فقرة ثانية' }], text: 'فقرة ثانية' }
+    ] }];
+    expect(blocksToText(blocks)).toBe('سطر أول\nسطر ثان\n\nفقرة ثانية');
+  });
+  it('returns null for empty or missing blocks', () => {
+    expect(blocksToText([])).toBe(null);
+    expect(blocksToText(null)).toBe(null);
+    expect(blocksToText([{ paragraphs: [] }])).toBe(null);
+  });
+  it('falls back to paragraph.text when lines are missing', () => {
+    expect(blocksToText([{ paragraphs: [{ text: 'نص فقرة' }] }])).toBe('نص فقرة');
+  });
+});
+
+describe('ocrPage uses blocks for paragraph structure (fake worker)', () => {
+  it('returns paragraph-separated text from blocks', async () => {
+    const create = async () => ({
+      setParameters: async () => {},
+      recognize: async () => ({ data: { text: 'raw text', blocks: [{ paragraphs: [{ lines: [{ text: 'a' }, { text: 'b' }], text: 'a\nb' }, { lines: [{ text: 'c' }], text: 'c' }] }] } }),
+      terminate: async () => {}
+    });
+    const engine = createOcrEngine({ createWorkerFn: create });
+    const r = await engine.ocrPage(TINY_JPEG);
+    expect(r.text).toBe('a\nb\n\nc');
+    await engine.terminate();
+  }, 15000);
+  it('falls back to data.text when blocks are absent', async () => {
+    const create = async () => ({
+      setParameters: async () => {},
+      recognize: async () => ({ data: { text: 'plain text' } }),
+      terminate: async () => {}
+    });
+    const engine = createOcrEngine({ createWorkerFn: create });
+    const r = await engine.ocrPage(TINY_JPEG);
+    expect(r.text).toBe('plain text');
+    await engine.terminate();
+  }, 15000);
+});
+
 describe('real tesseract (Node worker)', () => {
   it('committed ara.traineddata.gz loads and recognizes', async () => {
     const engine = createOcrEngine({ createWorkerFn: createWorker, paths: { workerPath: null, corePath: null, langPath: LANG_DIR, cacheMethod: 'none' } });
@@ -118,6 +201,13 @@ describe('real tesseract (Node worker)', () => {
     expect(typeof r.confidence).toBe('number');
     expect(typeof r.ms).toBe('number');
     expect(r.ms).toBeGreaterThan(0);
+    await engine.terminate();
+  }, 120000);
+  it('committed eng.traineddata.gz loads and recognizes', async () => {
+    const engine = createOcrEngine({ createWorkerFn: createWorker, lang: 'eng', paths: { workerPath: null, corePath: null, langPath: LANG_DIR, cacheMethod: 'none' } });
+    const r = await engine.ocrPage(await whitePng());
+    expect(typeof r.text).toBe('string');
+    expect(typeof r.confidence).toBe('number');
     await engine.terminate();
   }, 120000);
 });

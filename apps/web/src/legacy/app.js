@@ -24,7 +24,8 @@ import { findNormalizedRange } from '../core/text.js';
 import { PROMPT_VERSION, CORRECTIVE_MESSAGE, parseGlossary, glossaryHash, glossaryForText, extractChapterUnits, chunkUnits, buildMessages as buildTranslationMessages, parseTranslation, qaSegment, estimateChapter, fingerprint, chapterSourceHash, lastTwoSentences, bookPlan, runConcurrent, hashString, isPeak, isArabicHighlight, isSourceHighlight } from '../core/translate.js';
 import { trGetJob, trPutJob, trListJobs, trGetSegments, trPutSegment, trDeleteJob, trGetGlossary, trPutGlossary, trDeleteBook, trClearAll } from '../core/translate-store.js';
 import { scannedSaveAllowed, scanBookFields, isPendingScan, ensureStores, quotaAllows, saveScannedBook, deleteScannedFile, sweepOrphanFiles, getScannedFile, persistOnce, ocrLockHeld } from '../core/scan-save.js';
-import { ensureOcrPagesStore, makeOcrStore, delOcrPagesForBook, sweepOcrPages, getBook, OCR_FAILED_LINE, OCR_CHAT_LABEL, OCR_BOOK_DISCLOSURE, OCR_EXPORT_NOTICE, OCR_DEFAULT_MS_PER_PAGE, OCR_FIRST_DOWNLOAD_MB, ocrTimeEstimate, arCount, ocrRetryLabel, ocrApproxDuration } from '../core/ocr-store.js';
+import { ensureOcrPagesStore, makeOcrStore, delOcrPagesForBook, sweepOcrPages, getBook, OCR_FAILED_LINE, OCR_CHAT_LABEL, OCR_BOOK_DISCLOSURE, OCR_EXPORT_NOTICE, OCR_DEFAULT_MS_PER_PAGE, OCR_FIRST_DOWNLOAD_MB, ocrTimeEstimate, arCount, ocrRetryLabel, ocrApproxDuration, ocrLangFor } from '../core/ocr-store.js';
+import { estimateCloudBookCost } from '../core/ocr-cloud.js';
 
 (function(){
 'use strict';
@@ -1305,6 +1306,25 @@ function updateOcrChip(state){
   const est = left > 0 ? ocrApproxDuration(ocrTimeEstimate(left, kv.get('ocrMsAvg', null) || OCR_DEFAULT_MS_PER_PAGE)) : '…';
   c.innerHTML = '<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px"><bdi dir="auto">' + esc(short(state.title || '', 24)) + '</bdi></span><span class="hint" style="white-space:nowrap">' + (state.done || 0) + ' من ' + arCount(state.total, 'صفحة') + (left > 0 ? ' · باقي ' + est : '') + '</span><button class="gbtn ch-sm" data-ocrchip="pause">إيقاف</button>';
 }
+/* Cloud OCR engine: render pages locally, transcribe each through the reader's AI model. */
+async function cloudOcrEngine(){
+  const cfg = resolveAiConfig(aiState(), 'chat');
+  if (!cfg) throw { code: 'cloud-config', message: 'ما فيه اتصال ذكاء مهيأ. اضبطه في الإعدادات أول.' };
+  const [{ openPdfDoc }, { ocrPageCloud, canvasToDataURL }] = await Promise.all([
+    import('../core/ocr-local.js'),
+    import('../core/ocr-cloud.js')
+  ]);
+  return {
+    openPdfDoc,
+    async ocrPage(canvas, o = {}) {
+      const t0 = performance.now();
+      const text = await ocrPageCloud(cfg, canvasToDataURL(canvas), { signal: o.signal });
+      return { text, confidence: 100, ms: Math.max(1, Math.round(performance.now() - t0)) };
+    },
+    setLang: async () => {}
+  };
+}
+
 async function startOcr(it, opts = {}){
   if (!idb){ toast('التخزين غير متاح. ما قدرت أقرأ النص.'); return; }
   if (ocrCtrls.has(it.id)) return;
@@ -1318,9 +1338,15 @@ async function startOcr(it, opts = {}){
   const prog = $('#ocrProg');
   try {
     const m = await import('../core/ocr-run.js');
-    await m.runBookOcr({ store: makeOcrStore(idb), locks: (typeof navigator.locks !== 'undefined' && navigator.locks) ? navigator.locks : null }, it.id, bytes, {
+    const isCloud = !!(it.ocr && it.ocr.mode === 'cloud');
+    const deps = { store: makeOcrStore(idb), locks: (typeof navigator.locks !== 'undefined' && navigator.locks) ? navigator.locks : null };
+    if (isCloud) deps.engine = await cloudOcrEngine();
+    await m.runBookOcr(deps, it.id, bytes, {
       signal: ctrl.signal,
       onlyFailed: !!opts.onlyFailed,
+      lang: ocrLangFor(it),
+      autoLang: !isCloud,
+      engineTag: isCloud ? 'cloud' : undefined,
       onProgress: p => {
         const memCur = mem.items.get(it.id); // sync mem on every page write: later app puts never carry a stale ocr field
         if (memCur && memCur.ocr){ memCur.ocr.status = 'running'; delete memCur.ocr.reason; if (typeof p.done === 'number') memCur.ocr.done = p.done; }
@@ -5405,6 +5431,14 @@ function showPreview(P){
   const chList = x => x.chapters.map(c => '<li>' + esc(c.title || '—') + '</li>').join('');
   const seg = (id, opts, v) => '<div class="seg" id="' + id + '" role="group">' + opts.map(o => '<button type="button" data-v="' + o[0] + '" aria-pressed="' + (o[0] === v) + '">' + o[1] + '</button>').join('') + '</div>';
   const scanEst = scanOk ? ocrTimeEstimate(rep.pages || 0, kv.get('ocrMsAvg', null) || OCR_DEFAULT_MS_PER_PAGE) : '';
+  const cloudNote = () => {
+    const cfg = resolveAiConfig(aiState(), 'chat');
+    if (!cfg) return '<p class="hint" style="margin:.35rem 0 0">ما فيه اتصال ذكاء مهيأ. اضبطه في الإعدادات أول، أو اختر «محلي مجاني».</p>';
+    let cost = 0;
+    try { cost = estimateCloudBookCost(cfg.provider, rep.pages || 0, 1240, 1754); } catch (e) {}
+    const costTxt = cost < 0.005 ? 'أقل من سنت' : 'قرابة $' + cost.toFixed(2);
+    return '<p class="hint" style="margin:.35rem 0 0">' + esc('ستُرسل صور صفحات الكتاب إلى ' + (cfg.providerLabel || cfg.provider) + ' لتحويلها إلى نص فقط؛ لا تُخزَّن لدينا. التكلفة التقديرية ' + costTxt + ' لكامل الكتاب.') + '</p>';
+  };
   openModal('<div class="mhead"><h3>' + tx('معاينة قبل الحفظ') + '</h3>' + closeBtn + '</div>' +
     ((rep && !scanOk) ? '<div class="msg' + (rec === 'ok' ? ' ok' : '') + '" role="status"><b>' + tx(ING_REC[rec] || ING_REC.review) + '</b>' +
       (rec === 'vision' ? tx('نص هالملف ما ينقرأ (غالبًا صفحات ممسوحة كصور)، ويحتاج قراءة الصفحات كصور. هالميزة مو متوفرة بعد، فما راح أحفظه.') : '') +
@@ -5415,6 +5449,7 @@ function showPreview(P){
     '<label class="flabel" for="pvT">' + tx('العنوان') + '</label><input class="inp" id="pvT" dir="auto" value="' + esc(it.title) + '">' +
     '<label class="flabel" for="pvA">' + tx('المؤلف') + '</label><input class="inp" id="pvA" dir="auto" value="' + esc(it.author || '') + '">' +
     '<p class="flabel">' + tx('اللغة') + '</p>' + seg('pvLang', [['ar', 'العربية'], ['en', 'English']], it.lang === 'en' ? 'en' : 'ar') +
+    (scanOk ? '<p class="flabel">' + tx('طريقة قراءة النص') + '</p>' + seg('pvOcr', [['local', 'محلي مجاني (أسرع)'], ['cloud', 'بالذكاء (أعلى جودة، بمفتاحك)']], P.ocrMode || 'local') + '<div id="pvCloudNote" role="note" hidden></div>' : '') +
     '<p class="flabel"><span>' + tx('الفصول') + '</span> <bdi id="pvN">' + it.chapters.length + '</bdi></p><ol id="pvCh" style="margin:0; padding-inline-start:1.3em; font-size:.88rem; line-height:1.7; max-height:8.5rem; overflow-y:auto" dir="auto">' + chList(it) + '</ol>' +
     '<p class="flabel">' + tx('أول صفحة من الفصل الأول') + '</p><div id="pvFirst" data-figitem="#preview" dir="' + langDir(it.lang) + '" style="max-height:38svh; overflow-y:auto; border:1px solid var(--rule); border-radius:8px; padding:.75rem 1rem; background:var(--surface); font-size:.92rem">' + (firstPage(it) || '<p class="empty">' + tx('ما طلع نص.') + '</p>') + '</div>' +
     (scanOk
@@ -5427,15 +5462,23 @@ function showPreview(P){
     cur0.type = t;
   });
   pick('pvLang', l => { cur0.lang = l; $('#pvFirst').dir = langDir(l); });
+  if (scanOk) pick('pvOcr', t => {
+    P.ocrMode = t;
+    const note = $('#pvCloudNote');
+    if (!note) return;
+    note.hidden = t !== 'cloud';
+    if (t === 'cloud') note.innerHTML = cloudNote();
+  });
   if (scanOk){ $('#pvGo').onclick = () => doSave(true); $('#pvOnly').onclick = () => doSave(false); }
   else { $('#pvSave').onclick = () => doSave(false); }
   function doSave(start){
     const x = cur0; x.title = $('#pvT').value.trim() || x.title; x.author = $('#pvA').value.trim(); if (P.ctx.hash) x.hash = P.ctx.hash;
+    if (scanOk && P.ocrMode === 'cloud' && !resolveAiConfig(aiState(), 'chat')){ toast('ما فيه اتصال ذكاء مهيأ للقراءة بالصور. اضبطه في الإعدادات أول أو اختر «محلي مجاني».'); return; }
     const used = new Set(); const walk = bl => arr(bl).forEach(b => { if (b.fig) used.add(b.fig); });
     walk(x.intro && x.intro.blocks); x.chapters.forEach(c => arr(c.sections).forEach(s => walk(s.blocks)));
     FIG_PREVIEW.forEach((b, p) => { if (used.has(p)) kv.set(figKey(x.id, p), b); });
     previewDone();
-    if (scanOk && P.src){ Object.assign(x, scanBookFields(P.report.pages)); saveScannedFlow(x, P.src, P.ctx.stay, start); }
+    if (scanOk && P.src){ Object.assign(x, scanBookFields(P.report.pages, P.ocrMode)); saveScannedFlow(x, P.src, P.ctx.stay, start); }
     else saveNew(x, P.ctx.stay);
   }
 }

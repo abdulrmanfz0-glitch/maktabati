@@ -176,6 +176,46 @@ describe('runner: single runner per book', () => {
   }, 15000);
 });
 
+describe('runner: language', () => {
+  it('threads lang to setLang and tags records per language', async () => {
+    const db = fakeDb();
+    ensureStores(db, { items: 'id', files: 'id' });
+    ensureOcrPagesStore(db);
+    await putBook(db, book(2));
+    const engine = fakeEngine();
+    const langs = [];
+    engine.setLang = async l => { langs.push(l); };
+    await createOcrRunner(deps(db, engine)).run('b1', new Uint8Array(1), { lang: 'eng' });
+    expect(langs).toEqual(['eng']);
+    const recs = await getAllPages(db, 'b1');
+    expect(recs.map(r => r.engine)).toEqual(['tesseract.js-7.0.0/eng-fast', 'tesseract.js-7.0.0/eng-fast']);
+  }, 15000);
+  it('autoLang probes page 1 and switches language when the script differs', async () => {
+    const db = fakeDb();
+    ensureStores(db, { items: 'id', files: 'id' });
+    ensureOcrPagesStore(db);
+    await putBook(db, book(2));
+    const engine = fakeEngine();
+    const langs = [];
+    engine.setLang = async l => { langs.push(l); };
+    engine.ocrPage = async () => ({ text: 'This is a full page of English text with enough words to classify the script.', confidence: 80, ms: 5 });
+    await createOcrRunner(deps(db, engine)).run('b1', new Uint8Array(1), { lang: 'ara', autoLang: true });
+    expect(langs).toEqual(['ara', 'eng']); // configured ara, then corrected by the probe
+    const recs = await getAllPages(db, 'b1');
+    expect(recs.map(r => r.engine)).toEqual(['tesseract.js-7.0.0/eng-fast', 'tesseract.js-7.0.0/eng-fast']);
+  }, 15000);
+  it('uses a custom engineTag when provided', async () => {
+    const db = fakeDb();
+    ensureStores(db, { items: 'id', files: 'id' });
+    ensureOcrPagesStore(db);
+    await putBook(db, book(1));
+    const engine = fakeEngine();
+    await createOcrRunner(deps(db, engine)).run('b1', new Uint8Array(1), { engineTag: 'cloud' });
+    const rec = await getOcrPage(db, scanPageId('b1', 1));
+    expect(rec.engine).toBe('cloud');
+  }, 15000);
+});
+
 describe('runner: failures and quota', () => {
   it('a page failing all attempts is saved failed and the run finishes', async () => {
     const db = fakeDb();

@@ -10,9 +10,11 @@ export function scannedSaveAllowed(kind, report) {
   return kind === 'pdf' && !!report && !!report.scanned && report.scanned.share >= DETECTION_THRESHOLDS.visionShare;
 }
 
-/** Marker written on the book record (no OCR text yet). */
-export function scanBookFields(pages) {
-  return { source: 'scan', ocr: { status: 'pending', pages: Number(pages) || 0, done: 0 } };
+/** Marker written on the book record (no OCR text yet). mode 'cloud' → AI quality boost. */
+export function scanBookFields(pages, mode) {
+  const ocr = { status: 'pending', pages: Number(pages) || 0, done: 0 };
+  if (mode === 'cloud') ocr.mode = 'cloud';
+  return { source: 'scan', ocr };
 }
 
 /** True while the book is a saved scan whose text has not been produced yet. */
