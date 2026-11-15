@@ -26,6 +26,7 @@ import { trGetJob, trPutJob, trListJobs, trGetSegments, trPutSegment, trDeleteJo
 import { scannedSaveAllowed, scanBookFields, isPendingScan, ensureStores, quotaAllows, saveScannedBook, deleteScannedFile, sweepOrphanFiles, getScannedFile, persistOnce, ocrLockHeld } from '../core/scan-save.js';
 import { ensureOcrPagesStore, makeOcrStore, delOcrPagesForBook, sweepOcrPages, getBook, OCR_FAILED_LINE, OCR_CHAT_LABEL, OCR_BOOK_DISCLOSURE, OCR_EXPORT_NOTICE, OCR_DEFAULT_MS_PER_PAGE, OCR_FIRST_DOWNLOAD_MB, ocrTimeEstimate, arCount, ocrRetryLabel, ocrApproxDuration, ocrLangFor } from '../core/ocr-store.js';
 import { estimateCloudBookCost } from '../core/ocr-cloud.js';
+import { EN_UI, AR_RE, TR_SKIP, translateText as trStr } from '../core/i18n.js';
 
 (function(){
 'use strict';
@@ -430,15 +431,16 @@ function toast(t, action){
     /* longer messages need longer to read; keep it snappy */
     toastT = setTimeout(() => el.classList.remove('show'), Math.min(5000, 2200 + String(t).length * 25));
   }
+  if (LANG === 'en') trNode(el);
   el.classList.add('show');
 }
 let modalLock = false;
 let focusBack = null; /* element to return focus to when a dialog closes */
 function takeFocus(){ focusBack = document.activeElement instanceof HTMLElement ? document.activeElement : null; }
 function refocus(){ if (focusBack && focusBack.isConnected && focusBack.offsetParent !== null && focusBack !== document.activeElement){ try{ focusBack.focus({ preventScroll:true }); }catch(e){} } focusBack = null; }
-function openModal(html, lock){ closeSheet(); $('#modalBox').innerHTML = html; $('#modal').hidden = false; modalLock = !!lock; takeFocus(); const f = $('#modalBox').querySelector('input:not([type=file]),textarea,button'); if (f) setTimeout(() => f.focus(), 30); }
+function openModal(html, lock){ closeSheet(); $('#modalBox').innerHTML = html; if (LANG === 'en') trNode($('#modalBox')); $('#modal').hidden = false; modalLock = !!lock; takeFocus(); const f = $('#modalBox').querySelector('input:not([type=file]),textarea,button'); if (f) setTimeout(() => f.focus(), 30); }
 function closeModal(force){ if (modalLock && !force) return; $('#modal').hidden = true; $('#modalBox').innerHTML = ''; modalLock = false; if (FIG_PREVIEW) previewDone(); refocus(); }
-function openSheet(html){ hideSel(); const s = $('#sheet'); s.innerHTML = '<div class="sheet-in">' + html + '</div>'; s.classList.remove('qe-on'); s.classList.add('open'); $('#sheetScrim').style.display = 'block'; takeFocus(); const b = s.querySelector('button'); if (b) b.focus({ preventScroll:true }); }
+function openSheet(html){ hideSel(); const s = $('#sheet'); s.innerHTML = '<div class="sheet-in">' + html + '</div>'; if (LANG === 'en') trNode(s); s.classList.remove('qe-on'); s.classList.add('open'); $('#sheetScrim').style.display = 'block'; takeFocus(); const b = s.querySelector('button'); if (b) b.focus({ preventScroll:true }); }
 function closeSheet(){ const was = $('#sheet').classList.contains('open'); $('#sheet').classList.remove('open', 'qe-on'); $('#sheetScrim').style.display = 'none'; if (was && RT && RT.paged){ if (RT.glInline) rtReflowSoon(); else rtChrome(); } refocus(); }
 let quietUntil = 0;
 function go(target, o){
@@ -494,7 +496,7 @@ function route(){
     const it = itemById(r.id); if (!it){ location.hash = '#/'; return; }
     renderReader(it, r.target);
   } else {
-    RD = null; document.title = 'مكتبتي';
+    RD = null; document.title = tx('مكتبتي');
     if (r.view === 'profile' && /^#\/settings/.test(location.hash)) history.replaceState(null, '', '#/profile/ai');
     if (r.view === 'home') mountHome(r.conv, r.book, r.fresh); else if (r.view === 'quotes') renderQuotes(); else if (r.view === 'hlall') renderHlAll(); else if (r.view === 'hls'){ const it = itemById(r.id); if (!it){ location.hash = '#/'; return; } renderHls(it); } else if (r.view === 'book'){ const it = itemById(r.id); if (!it){ location.hash = '#/lib'; return; } renderBook(it); } else if (r.view === 'profile') renderProfile(r.tab); else if (r.view === 'map') renderMap(); else if (r.view === 'glossary') renderGlossary(); else if (r.view === 'review') renderReview(); else if (r.view === 'tpl') renderTpl(); else renderLib();
     if (!(prev.view === r.view)) window.scrollTo(0, 0);
@@ -584,9 +586,9 @@ const scanBadge = it => {
   const o = it.ocr, st = o.status;
   const style = 'font-size:.68rem;color:var(--soft);border:1px solid var(--rule);border-radius:99px;padding:1px 7px';
   if (st === 'done') return '';
-  if (st === 'running') return '<span style="' + style + '">يُقرأ النص… ' + Math.round(((o.done || 0) / Math.max(1, o.pages || 1)) * 100) + '%</span> ';
-  if (st === 'paused') return '<span style="' + style + '">ممسوح — ' + (OCR_STOP_REASON[o.reason] || 'متوقف مؤقتًا') + '</span> ';
-  return '<span style="' + style + '">ممسوح — بانتظار قراءة النص</span> ';
+  if (st === 'running') return '<span style="' + style + '">' + tx('يُقرأ النص…') + ' ' + Math.round(((o.done || 0) / Math.max(1, o.pages || 1)) * 100) + '%</span> ';
+  if (st === 'paused') return '<span style="' + style + '">' + tx('ممسوح —') + ' ' + tx(OCR_STOP_REASON[o.reason] || 'متوقف مؤقتًا') + '</span> ';
+  return '<span style="' + style + '">' + tx('ممسوح — بانتظار قراءة النص') + '</span> ';
 };
 function card(it){
   return '<div class="card-w"><button class="card lift" data-href="#/book/' + enc(it.id) + '" aria-label="' + esc(it.title) + '">' + bkCover(it) + '<div class="card-meta">' + scanBadge(it) + statusText(it) + ' · ' + (it.lastOpened ? rel(it.lastOpened) : 'ما فتحته بعد') + '</div></button>' + moreBtn(it) + '</div>';
@@ -594,7 +596,7 @@ function card(it){
 function contCard(it){
   const chs = arr(it.chapters), n = chs.length, ci = curChap(it), mins = chs.reduce((a, c) => a + (+c.minutes || 0), 0), left = mins ? Math.max(1, Math.round(mins * (1 - (it.progress || 0)))) : 0;
   const st = [n > 1 ? 'الفصل ' + (Math.max(0, ci) + 1) : '', left ? 'باقي ' + left + ' دقيقة' : ''].filter(Boolean).join(' · ');
-  return '<article class="cc lift"><button class="card" data-href="#/book/' + enc(it.id) + '" aria-label="' + esc(it.title) + '">' + bkCover(it) + '</button><div class="cc-b"><b dir="auto">' + esc(it.title) + '</b>' + (it.author ? '<small dir="auto">' + esc(it.author) + '</small>' : '') + (st ? '<p class="cc-s">' + st + '</p>' : '') + '<button class="pbtn cc-go" data-href="#/read/' + enc(it.id) + '">أكمل</button></div>' + moreBtn(it) + '</article>';
+  return '<article class="cc lift"><button class="card" data-href="#/book/' + enc(it.id) + '" aria-label="' + esc(it.title) + '">' + bkCover(it) + '</button><div class="cc-b"><b dir="auto" data-no-tr>' + esc(it.title) + '</b>' + (it.author ? '<small dir="auto" data-no-tr>' + esc(it.author) + '</small>' : '') + (st ? '<p class="cc-s">' + st + '</p>' : '') + '<button class="pbtn cc-go" data-href="#/read/' + enc(it.id) + '">أكمل</button></div>' + moreBtn(it) + '</article>';
 }
 function lrow(it){
   const rd = readyOf(it);
@@ -770,7 +772,7 @@ function readyCard(it){
     (all ? '' : '<p>' + estText(need.length, 1, chars) + '</p><button class="' + (ok ? 'pbtn' : 'gbtn') + '" data-prep="' + esc(it.id) + '"' + (ok ? '' : ' style="margin-top:14px; min-height:44px; border-radius:999px"') + '>' + (ok ? 'جهّز الكتاب' : 'اضبط الاتصال أولاً') + '</button>') + '</section>';
 }
 function renderBook(it){
-  document.title = it.title + ' · مكتبتي'; $('#pageTitle').textContent = it.title;
+  document.title = it.title + ' · ' + tx('مكتبتي'); $('#pageTitle').textContent = it.title;
   const chs = arr(it.chapters).filter(c => c && typeof c === 'object'), n = chs.length, ci = curChap(it), st = kv.get(it.id + ':status', {}), started = (it.progress || 0) > .01 || ci >= 0;
   const R = '#/read/' + enc(it.id), due = dueCards().filter(c => c.it.id === it.id).length;
   const cnt = [[annosOf('hl', it.id).length, 'تظليلات'], [noteCount(it), 'ملاحظات'], [annosOf('quote', it.id).length, 'اقتباسات'], [due, 'مراجعات مستحقة']];
@@ -987,7 +989,7 @@ function doSearch(q){
 /* ---------- reader ---------- */
 let RD = null;
 const field = (key, ph) => '<textarea class="field" data-store="' + esc(key) + '" placeholder="' + esc(ph) + '"></textarea>';
-const qa = (q, a, tag) => '<div class="qa"><div class="qa-body"><p class="q">' + md(q) + (tag ? '<span class="tag">' + tag + '</span>' : '') + '</p></div><details><summary>' + svg('chev') + 'اضغط لترى الجواب</summary><p class="ans">' + md(a) + '</p></details></div>';
+const qa = (q, a, tag) => '<div class="qa"><div class="qa-body"><p class="q">' + '<span data-no-tr>' + md(q) + '</span>' + (tag ? '<span class="tag">' + tag + '</span>' : '') + '</p></div><details><summary>' + svg('chev') + 'اضغط لترى الجواب</summary><p class="ans">' + '<span data-no-tr>' + md(a) + '</span>' + '</p></details></div>';
 const leadify = h => h.replace(/^(\s*<p>\s*)([^\s<]+)/, '$1<span class="lead">$2</span>');
 const leadable = b => !b.type || b.type === 'p' || (b.type === 'html' && /^\s*<p>/.test(b.html));
 function figureHTML(src, alt){
@@ -999,22 +1001,22 @@ function figureHTML(src, alt){
 function block(b, key, lead){
   let h, cls = 'bk';
   switch(b.type){
-    case 'h4': h = '<h4>' + md(b.text) + '</h4>'; break;
-    case 'list': h = '<ul>' + arr(b.items).map(x => '<li>' + md(x) + '</li>').join('') + '</ul>'; break;
+    case 'h4': h = '<h4 data-no-tr>' + md(b.text) + '</h4>'; break;
+    case 'list': h = '<ul>' + arr(b.items).map(x => '<li data-no-tr>' + md(x) + '</li>').join('') + '</ul>'; break;
     case 'box': {
       const k = BOX[b.kind] ? b.kind : 'key';
-      h = '<aside class="box ' + k + '"><div class="box-head">' + svg(k) + BOX[k] + '</div>' +
-        (b.title ? '<p class="box-title">' + md(b.title) + (b.en ? ' <bdi dir="ltr">' + esc(b.en) + '</bdi>' : '') + '</p>' : '') +
-        (b.html ? safeHtml(b.html) : arr(b.text).map(t => '<p>' + md(t) + '</p>').join('')) + '</aside>';
+      h = '<aside class="box ' + k + '"><div class="box-head">' + svg(k) + tx(BOX[k]) + '</div>' +
+        (b.title ? '<p class="box-title"><span data-no-tr>' + md(b.title) + '</span>' + (b.en ? ' <bdi dir="ltr">' + esc(b.en) + '</bdi>' : '') + '</p>' : '') +
+        (b.html ? '<div data-no-tr>' + safeHtml(b.html) + '</div>' : arr(b.text).map(t => '<p data-no-tr>' + md(t) + '</p>').join('')) + '</aside>';
       cls += ' md'; break;
     }
     case 'figure':
-      h = '<figure><div class="fig-frame">' + (b.src ? figureHTML(b.src, b.alt) : b.fig ? '<img data-fig="' + esc(b.fig) + '" alt="' + esc(b.alt || '') + '">' : '<div class="fig-ph">' + esc(b.alt || 'مكان الشكل') + '</div>') + '</div>' + (b.caption ? '<figcaption>' + md(b.caption) + '</figcaption>' : '') + '</figure>'; break;
+      h = '<figure><div class="fig-frame">' + (b.src ? figureHTML(b.src, b.alt) : b.fig ? '<img data-fig="' + esc(b.fig) + '" alt="' + esc(b.alt || '') + '">' : '<div class="fig-ph">' + esc(b.alt || tx('مكان الشكل')) + '</div>') + '</div>' + (b.caption ? '<figcaption data-no-tr>' + md(b.caption) + '</figcaption>' : '') + '</figure>'; break;
     case 'diagram':
-      h = '<figure><div class="flow">' + arr(b.steps).map((s, i) => (i ? '<span class="arrow" aria-hidden="true">←</span>' : '') + '<span class="step">' + md(s) + '</span>').join('') +
-        (b.loop ? '<span class="arrow" aria-hidden="true">←</span><span class="loop">↺ من جديد</span>' : '') + '</div>' + (b.caption ? '<figcaption>' + md(b.caption) + '</figcaption>' : '') + '</figure>'; break;
-    case 'html': h = safeHtml(b.html); cls += ' md'; break;
-    default: h = arr(b.text).map(t => '<p>' + md(t) + '</p>').join('');
+      h = '<figure><div class="flow">' + arr(b.steps).map((s, i) => (i ? '<span class="arrow" aria-hidden="true">←</span>' : '') + '<span class="step" data-no-tr>' + md(s) + '</span>').join('') +
+        (b.loop ? '<span class="arrow" aria-hidden="true">←</span><span class="loop">↺ ' + tx('من جديد') + '</span>' : '') + '</div>' + (b.caption ? '<figcaption data-no-tr>' + md(b.caption) + '</figcaption>' : '') + '</figure>'; break;
+    case 'html': h = '<div data-no-tr>' + safeHtml(b.html) + '</div>'; cls += ' md'; break;
+    default: h = arr(b.text).map(t => '<p data-no-tr>' + md(t) + '</p>').join('');
   }
   if (lead) h = leadify(h);
   if (b.by === 'ai') cls += ' ai';
@@ -1031,26 +1033,26 @@ function chapterHTML(it, c, ci, solo){
   let h = '';
   if (!(solo && !c.title)){
     h += '<section class="divider" id="' + cid + '" data-ch="' + cid + '"><div class="wrap"><p class="kicker">الفصل</p><div class="num">' + String(ci + 1).padStart(2, '0') + '</div>' +
-      '<h2>' + md(c.title) + '</h2>' + (c.question ? '<p class="q">«' + md(c.question) + '»</p>' : '') +
+      '<h2 data-no-tr>' + md(c.title) + '</h2>' + (c.question ? '<p class="q" data-no-tr>«' + md(c.question) + '»</p>' : '') +
       (c.minutes ? '<p class="meta">قراءة تقريبًا ' + esc(c.minutes) + ' دقيقة</p>' : '') + '</div></section>';
   }
   h += '<div class="wrap"' + (solo && !c.title ? ' id="' + cid + '"' : '') + '>' + trBar;
   if (tools) h += '<section class="block" style="padding-bottom:0"><p class="label">' + svg('pen', ' width="18" height="18"') + 'توقّعي قبل القراءة</p><p class="hint">وش تتوقّع ' + (solo ? 'يقول هالنص' : 'يقول هالفصل') + '؟ جملة أو جملتين تكفي.</p>' + field(F + 'predict', 'أتوقّع أنّ…') + '</section>';
-  if (arr(c.overview).length) h += '<section class="block" style="padding-bottom:0"><p class="label">خريطة الفصل</p><ol class="overview">' + arr(c.overview).map((o, i) => '<li><span>' + (i + 1) + '</span><div>' + md(o) + '</div></li>').join('') + '</ol></section>';
+  if (arr(c.overview).length) h += '<section class="block" style="padding-bottom:0"><p class="label">خريطة الفصل</p><ol class="overview">' + arr(c.overview).map((o, i) => '<li><span>' + (i + 1) + '</span><div data-no-tr>' + md(o) + '</div></li>').join('') + '</ol></section>';
   let leadDone = false;
   h += arr(c.sections).map((s, si) => {
     const num = (ci + 1) + '.' + (si + 1);
     const blocks = fnHTML(arr(s.blocks).map((b, bi) => { const lead = !leadDone && leadable(b); if (lead) leadDone = true; return block(b, ci + '-' + si + '-' + bi, lead); }).join(''), c, ci);
     return (si ? '<div class="orn" aria-hidden="true"><i></i></div>' : '') +
       '<section class="section" id="s-' + ci + '-' + si + '" data-ch="' + cid + '" data-card="' + (s.recall ? it.id + '|' + ci + '|r' + si : '') + '">' +
-      (s.title ? '<p class="sec-num">' + num + '</p><h3>' + md(s.title) + '</h3>' : '') + blocks +
+      (s.title ? '<p class="sec-num">' + num + '</p><h3 data-no-tr>' + md(s.title) + '</h3>' : '') + blocks +
       (s.recall ? '<div class="recall"><p class="label">' + svg('recall', ' width="18" height="18"') + 'وقفة استرجاع</p><p class="hint">حاول تتذكّر قبل ما تشوف الجواب.</p>' + qa(s.recall.q, s.recall.a) + '</div>' : '') + '</section>';
   }).join('');
   if (tools){
     h += '<section class="end" id="' + cid + '-end" data-ci="' + ci + '"><p class="label">' + (solo ? 'نهاية النص' : 'نهاية الفصل ' + (ci + 1)) + '</p><h3>ثبّت ما قرأت</h3>';
     h += '<h4>ملخّصي بكلامي</h4><p class="hint">بدون ما ترجع للنص.</p>' + field(F + 'summary', 'الفكرة الأساسية هنا إنّ…');
     if (arr(c.review).length) h += '<h4>أسئلة المراجعة</h4>' + arr(c.review).map(r => qa(r.q, r.a, r.applied ? 'تطبيق' : '')).join('');
-    if (arr(c.terms).length) h += '<h4>مصطلحات الفصل</h4><table class="terms"><thead><tr><th>المصطلح</th><th>التعريف</th></tr></thead><tbody>' + arr(c.terms).map(t => '<tr><td>' + md(t.ar) + (t.en ? ' <bdi class="en" dir="ltr">' + esc(t.en) + '</bdi>' : '') + '</td><td>' + md(t.def) + '</td></tr>').join('') + '</tbody></table>';
+    if (arr(c.terms).length) h += '<h4>مصطلحات الفصل</h4><table class="terms"><thead><tr><th>المصطلح</th><th>التعريف</th></tr></thead><tbody>' + arr(c.terms).map(t => '<tr><td data-no-tr>' + md(t.ar) + (t.en ? ' <bdi class="en" dir="ltr">' + esc(t.en) + '</bdi>' : '') + '</td><td data-no-tr>' + md(t.def) + '</td></tr>').join('') + '</tbody></table>';
     h += '<h4>جدول المراجعة</h4><p class="hint">ارجع للأسئلة وعلّم بعد كل مراجعة.</p><div class="checks">' + [['day','بعد يوم'],['week','بعد أسبوع'],['month','بعد شهر']].map(x => '<label class="chk"><input type="checkbox" data-store="' + F + 'rev:' + x[0] + '">' + x[1] + '</label>').join('') + '</div>';
     h += '<h4>أسئلتي المفتوحة</h4><p class="hint">أسئلة طلعت لك وأنت تقرأ وما انجابت.</p>' + field(F + 'open', '—');
     if (!solo) h += '<button class="done-btn no-print" data-done="' + cid + '" aria-pressed="false"></button>';
@@ -1061,30 +1063,30 @@ function chapterHTML(it, c, ci, solo){
 function coverHTML(it){
   const c = colorOf(it.id), chs = arr(it.chapters).filter(x => x && typeof x === 'object'), solo = chs.length === 1;
   const total = chs.reduce((a, x) => a + (+x.minutes || 0), 0);
-  return '<section class="cover" id="top" style="background:' + c.bg + '; min-height:' + (it.type === 'book' ? '100svh' : '64svh') + '"><p class="eyebrow">' + (TYPES[it.type] || '') + '</p><h1>' + md(it.title) + '</h1>' +
-    (it.subtitle ? '<p class="sub">' + md(it.subtitle) + '</p>' : '') + (it.author ? '<p class="author">' + md(it.author) + '</p>' : '') +
-    (it.originalTitle ? '<p class="orig"><bdi dir="ltr">' + esc(it.originalTitle) + '</bdi></p>' : '') +
-    (it.whyRead ? '<p class="why"><b>ليش أقرأه</b>' + md(it.whyRead) + '</p>' : '') +
+  return '<section class="cover" id="top" style="background:' + c.bg + '; min-height:' + (it.type === 'book' ? '100svh' : '64svh') + '"><p class="eyebrow">' + (TYPES[it.type] || '') + '</p><h1 data-no-tr>' + md(it.title) + '</h1>' +
+    (it.subtitle ? '<p class="sub" data-no-tr>' + md(it.subtitle) + '</p>' : '') + (it.author ? '<p class="author" data-no-tr>' + md(it.author) + '</p>' : '') +
+    (it.originalTitle ? '<p class="orig" data-no-tr><bdi dir="ltr">' + esc(it.originalTitle) + '</bdi></p>' : '') +
+    (it.whyRead ? '<div class="why"><b>ليش أقرأه</b><div data-no-tr>' + md(it.whyRead) + '</div></div>' : '') +
     (it.type === 'book' ? '<div class="tr-cover-act">' + trBookButton(it, 'pbtn') + '</div>' : '') +
     (solo && total ? '<p class="orig" style="margin-top:1.5rem">قراءة تقريبًا ' + total + ' دقيقة</p>' : '') +
     (!chs.length ? '<p class="empty" style="margin-top:2rem">هذا الكتاب ما فيه فصول محفوظة. جرّب استيراده مرة ثانية أو احذفه من المكتبة.</p>' : '') + '</section>';
 }
 function introHTML(it){
   if (!it.intro) return '';
-  return '<div class="wrap"><section class="block" id="intro"><p class="label">المقدّمة</p>' + (it.intro.opening ? '<p class="opening">' + md(it.intro.opening) + '</p>' : '') +
-    arr(it.intro.body).map(p => '<p>' + md(p) + '</p>').join('') + arr(it.intro.blocks).map((b, bi) => block(b, 'i-' + bi)).join('') + '</section></div>';
+  return '<div class="wrap"><section class="block" id="intro"><p class="label">المقدّمة</p>' + (it.intro.opening ? '<p class="opening" data-no-tr>' + md(it.intro.opening) + '</p>' : '') +
+    arr(it.intro.body).map(p => '<p data-no-tr>' + md(p) + '</p>').join('') + arr(it.intro.blocks).map((b, bi) => block(b, 'i-' + bi)).join('') + '</section></div>';
 }
 function mapHTML(it, pt){
   const chs = arr(it.chapters).filter(x => x && typeof x === 'object'), total = chs.reduce((a, x) => a + (+x.minutes || 0), 0);
   return '<div class="wrap"><section class="block" id="map" style="padding-top:' + pt + '"><p class="label">خريطة ' + (it.type === 'book' ? 'الكتاب' : 'النص') + '</p><h2 class="title">الفصول</h2><div class="map">' +
-    chs.map((x, ci) => '<button class="map-row" data-go="c' + ci + '"><span class="map-num">' + (ci + 1) + '</span><span class="map-t">' + md(x.title || 'فصل ' + (ci + 1)) + (x.minutes ? '<span class="map-m">' + esc(x.minutes) + ' دقيقة</span>' : '') + '</span>' + stHTML(it, 'c' + ci) + '</button>').join('') +
+    chs.map((x, ci) => '<button class="map-row" data-go="c' + ci + '"><span class="map-num">' + (ci + 1) + '</span><span class="map-t"><span data-no-tr>' + md(x.title || 'فصل ' + (ci + 1)) + '</span>' + (x.minutes ? '<span class="map-m">' + esc(x.minutes) + ' دقيقة</span>' : '') + '</span>' + stHTML(it, 'c' + ci) + '</button>').join('') +
     '</div>' + (total ? '<p class="map-total">المجموع: قرابة ' + total + ' دقيقة قراءة.</p>' : '') + '</section></div>';
 }
 function conclusionHTML(it){
   const C = it.conclusion; if (!C) return '';
   return '<div class="wrap"><section class="block conclusion" id="conclusion" style="border-top:1px solid var(--rule)"><p class="label">الخاتمة</p><h2>ما يبقى من الكتاب</h2>' +
-    (arr(C.ideas).length ? '<h4 style="margin:0 0 .5rem; font-size:1.15rem">أهم ٣ أفكار</h4><ol class="ideas">' + arr(C.ideas).map((x, i) => '<li><span>' + (i + 1) + '</span><div>' + md(x) + '</div></li>').join('') + '</ol>' : '') +
-    '<h4 style="margin:0 0 .5rem; font-size:1.15rem">وش بطبّق منه</h4>' + (C.applyPrompt ? '<p class="hint">' + md(C.applyPrompt) + '</p>' : '') + field(it.id + ':apply', 'بطبّق…') + '</section></div>';
+    (arr(C.ideas).length ? '<h4 style="margin:0 0 .5rem; font-size:1.15rem">أهم ٣ أفكار</h4><ol class="ideas">' + arr(C.ideas).map((x, i) => '<li><span>' + (i + 1) + '</span><div data-no-tr>' + md(x) + '</div></li>').join('') + '</ol>' : '') +
+    '<h4 style="margin:0 0 .5rem; font-size:1.15rem">وش بطبّق منه</h4>' + (C.applyPrompt ? '<p class="hint" data-no-tr>' + md(C.applyPrompt) + '</p>' : '') + field(it.id + ':apply', 'بطبّق…') + '</section></div>';
 }
 function readerHTML(it){
   const chs = arr(it.chapters).filter(x => x && typeof x === 'object'), solo = chs.length === 1;
@@ -1112,12 +1114,12 @@ function screenName(it, s){
 function screenHTML(it, sc){
   const chs = arr(it.chapters), solo = chs.length === 1, list = screensOf(it), i = list.indexOf(sc), prev = list[i - 1], next = list[i + 1];
   let h = '';
-  if (prev) h += '<div class="wrap pager-top no-print"><button class="pager prev" data-screen="' + prev + '"><span>→ السابق</span><b>' + md(screenName(it, prev)) + '</b></button></div>';
+  if (prev) h += '<div class="wrap pager-top no-print"><button class="pager prev" data-screen="' + prev + '"><span>→ السابق</span><b' + (prev[0] === 'c' ? ' data-no-tr' : '') + '>' + md(screenName(it, prev)) + '</b></button></div>';
   if (sc === 'cover') h += coverHTML(it) + (solo ? '' : mapHTML(it, '3rem'));
   else if (sc === 'intro') h += introHTML(it);
   else if (sc === 'end') h += conclusionHTML(it);
   else { const ci = +sc.slice(1); h += chapterHTML(it, chs[ci], ci, solo); }
-  if (next) h += '<div class="wrap no-print" style="padding:1.5rem 20px 4rem"><button class="pager next" data-screen="' + next + '"><span>' + (next[0] === 'c' && sc[0] === 'c' ? 'الفصل التالي' : 'التالي') + ' ←</span><b>' + md(screenName(it, next)) + '</b></button></div>';
+  if (next) h += '<div class="wrap no-print" style="padding:1.5rem 20px 4rem"><button class="pager next" data-screen="' + next + '"><span>' + (next[0] === 'c' && sc[0] === 'c' ? 'الفصل التالي' : 'التالي') + ' ←</span><b' + (next[0] === 'c' ? ' data-no-tr' : '') + '>' + md(screenName(it, next)) + '</b></button></div>';
   else h += '<footer class="no-print"><button class="top-btn" data-go="top">↑ ارجع للبداية</button></footer>';
   return h;
 }
@@ -1128,20 +1130,20 @@ function drawerNav(it){
   let n = '<button class="nav plain" data-href="#/hls/' + encodeURIComponent(it.id) + '"><span>تظليلاتي' + (hn ? ' <span class="count">' + hn + '</span>' : '') + '</span></button>' + (it.intro ? '<button class="nav plain" data-go="intro">المقدّمة</button>' : '') + (!solo ? '<button class="nav plain" data-go="map">خريطة ' + (it.type === 'book' ? 'الكتاب' : 'النص') + '</button>' : '');
   chs.forEach((c, ci) => {
     const ct = tr && ci === curCi && tr.chapter ? tr.chapter : c.title;
-    n += '<div class="dr-sec">' + (solo ? '' : '<button class="nav" data-go="c' + ci + '"><span class="n">' + (ci + 1) + '</span><span style="font-weight:600">' + md(ct || 'فصل ' + (ci + 1)) + '</span>' + trTocBadge(it.id, ci) + stHTML(it, 'c' + ci) + '</button>') +
+    n += '<div class="dr-sec">' + (solo ? '' : '<button class="nav" data-go="c' + ci + '"><span class="n">' + (ci + 1) + '</span><span style="font-weight:600"><span data-no-tr>' + md(ct || 'فصل ' + (ci + 1)) + '</span></span>' + trTocBadge(it.id, ci) + stHTML(it, 'c' + ci) + '</button>') +
       arr(c.sections).map((s, si) => {
         const st = tr && ci === curCi && tr.sections && tr.sections[si] ? tr.sections[si] : s.title;
-        return st ? '<button class="nav sub" data-go="s-' + ci + '-' + si + '"><span class="n">' + (ci + 1) + '.' + (si + 1) + '</span><span>' + md(st) + '</span></button>' : '';
+        return st ? '<button class="nav sub" data-go="s-' + ci + '-' + si + '"><span class="n">' + (ci + 1) + '.' + (si + 1) + '</span><span data-no-tr>' + md(st) + '</span></button>' : '';
       }).join('') + '</div>';
   });
   if (it.conclusion) n += '<div class="dr-sec"><button class="nav plain" data-go="conclusion">الخاتمة</button></div>';
   const bms = annosOf('bm', it.id);
   if (bms.length){
     const bt = new Map(itemBlocks(it).map(b => [b.key, b.text]));
-    n += '<div class="dr-sec"><p class="dr-label">علاماتي</p>' + bms.map(b => '<button class="nav sub" data-gobm="' + esc(b.id) + '"><span class="n">' + svg('term', ' width="14" height="14"') + '</span><span>' + esc(short(b.ex || bt.get(b.bk) || '—', 60)) + (b.t ? ' <small class="bm-t">' + rel(b.t) + '</small>' : '') + '</span></button>').join('') + '</div>';
+    n += '<div class="dr-sec"><p class="dr-label">علاماتي</p>' + bms.map(b => '<button class="nav sub" data-gobm="' + esc(b.id) + '"><span class="n">' + svg('term', ' width="14" height="14"') + '</span><span data-no-tr>' + esc(short(b.ex || bt.get(b.bk) || '—', 60)) + '</span>' + (b.t ? ' <small class="bm-t">' + rel(b.t) + '</small>' : '') + '</button>').join('') + '</div>';
   }
   const ss = arr(kv.get(it.id + ':sessions', []));
-  if (ss.length) n += '<div class="dr-sec"><p class="dr-label">أهم أفكار جلساتي</p>' + ss.slice(-5).reverse().map(s => '<p style="margin:0; padding:.4rem .4rem .6rem; font-size:.88rem; line-height:1.7">' + esc(s.text) + '<br><span style="color:var(--soft); font-size:.78rem">' + rel(s.t) + ' · ' + s.m + ' دقيقة</span></p>').join('') + '</div>';
+  if (ss.length) n += '<div class="dr-sec"><p class="dr-label">أهم أفكار جلساتي</p>' + ss.slice(-5).reverse().map(s => '<p style="margin:0; padding:.4rem .4rem .6rem; font-size:.88rem; line-height:1.7"><span data-no-tr>' + esc(s.text) + '</span><br><span style="color:var(--soft); font-size:.78rem">' + rel(s.t) + ' · ' + s.m + ' دقيقة</span></p>').join('') + '</div>';
   n += '<div class="dr-sec"><button class="nav plain danger" id="delItem">احذف من المكتبة</button></div>';
   $('#navList').innerHTML = n;
   $('#delItem').addEventListener('click', () => confirmDelete(it));
@@ -1198,7 +1200,7 @@ function setStatus(it, cid, s){
   if (s){ if (!STATUS[s]) s = 'none'; all[cid] = s; kv.set(it.id + ':status', all); } else s = all[cid] || 'none';
   if (!STATUS[s]) s = 'none';
   $$('[data-status-for="' + cid + '"]').forEach(el => { el.dataset.s = s; el.innerHTML = '<i aria-hidden="true">' + STATUS[s][1] + '</i>' + STATUS[s][0]; });
-  $$('[data-done="' + cid + '"]').forEach(b => { const d = s === 'done'; b.setAttribute('aria-pressed', d); b.innerHTML = d ? svg('check', ' width="18" height="18"') + 'خلّصت هالفصل' : 'علّم الفصل: خلّصته'; });
+  $$('[data-done="' + cid + '"]').forEach(b => { const d = s === 'done'; b.setAttribute('aria-pressed', d); b.innerHTML = d ? svg('check', ' width="18" height="18"') + tx('خلّصت هالفصل') : tx('علّم الفصل: خلّصته'); });
 }
 function schedule(ids){
   const cards = kv.get('cards', {}); let ch = false;
@@ -1232,20 +1234,22 @@ function renderReader(it, target, o){
   RD = { it, paged, screen, list, q };
   if (!tr && TR_VIEW && !TR_VIEW.whole && screen && screen[0] === 'c' && TR_VIEW.ci === +screen.slice(1)) TR_VIEW = null;
   it.lastOpened = Date.now(); put('items', it);
-  $('#tbTitle').textContent = it.title; document.title = it.title + ' · مكتبتي';
+  $('#tbTitle').textContent = it.title; document.title = it.title + ' · ' + tx('مكتبتي');
   const bd = bookDir(it); $('#v-read').dir = bd; $('#v-read').lang = bd === 'rtl' ? 'ar' : 'en';
   if (isPendingScan(it) || (it.source === 'scan' && it.ocr && it.ocr.status !== 'done')){
     const ocr = it.ocr || {};
-    const st = ocr.status === 'running' ? ' يقرأ الآن…' : ocr.status === 'paused' ? ' — ' + (OCR_STOP_REASON[ocr.reason] || 'متوقف مؤقتًا.') : '';
-    const doneTxt = ocr.done ? 'قرأت ' + ocr.done + ' من ' + arCount(ocr.pages || 0, 'صفحة') + st : 'بانتظار البدء.';
+    const st = ocr.status === 'running' ? ' ' + tx('يقرأ الآن…') : ocr.status === 'paused' ? ' — ' + tx(OCR_STOP_REASON[ocr.reason] || 'متوقف مؤقتًا') : '';
+    const doneTxt = ocr.done
+      ? (LANG === 'en' ? 'Read ' + ocr.done + ' of ' + (ocr.pages || 0) + ' pages' + st : 'قرأت ' + ocr.done + ' من ' + arCount(ocr.pages || 0, 'صفحة') + st)
+      : tx('بانتظار البدء.');
     $('#v-read').innerHTML = '<div class="wrap" style="padding-top:2.5rem; padding-bottom:4rem; text-align:center">' +
       '<span style="font-size:.72rem;color:var(--soft);border:1px solid var(--rule);border-radius:99px;padding:2px 10px">ممسوح ضوئيًا</span>' +
-      '<h2 style="margin:1rem 0 .5rem" dir="auto">' + esc(it.title) + '</h2>' +
+      '<h2 style="margin:1rem 0 .5rem" dir="auto" data-no-tr>' + esc(it.title) + '</h2>' +
       '<p class="quiet" style="max-width:34rem; margin:.4rem auto 0">نص هالكتاب ما انقرأ بعد: صفحاته صور ما لها طبقة نص. اضغط الزر تحت عشان أقرأ الصفحات على جهازك وأكوّن النص — الصفحات ما تطلع من جهازك أبدًا.</p>' +
       (IS_SINGLE ? '<p class="hint" style="max-width:34rem; margin:.4rem auto 0">قراءة النص محليًا ما تتوفر في نسخة الملف الواحد. استخدم النسخة المستضافة.</p>' : '') +
       '<div style="margin:1.25rem auto; max-width:22rem; display:flex; flex-direction:column; gap:.6rem; align-items:center">' +
         (IS_SINGLE ? '' :
-        '<button class="pbtn" id="ocrStart"' + (ocr.status === 'running' ? ' disabled' : '') + '>' + (ocr.status === 'running' ? 'يقرأ…' : (ocr.done ? 'كمّل القراءة' : 'اقرأ النص على جهازي')) + '</button>' +
+        '<button class="pbtn" id="ocrStart"' + (ocr.status === 'running' ? ' disabled' : '') + '>' + (ocr.status === 'running' ? tx('يقرأ…') : tx(ocr.done ? 'كمّل القراءة' : 'اقرأ النص على جهازي')) + '</button>' +
         '<button class="gbtn" id="ocrPause"' + (ocr.status !== 'running' ? ' hidden' : '') + '>إيقاف مؤقت</button>') +
         '<span class="hint" id="ocrProg" role="status">' + doneTxt + '</span>' +
       '</div>' +
@@ -1256,13 +1260,15 @@ function renderReader(it, target, o){
       if (pause){ const c = ocrCtrls.get(it.id); if (c) c.abort(); return; }
       if (e.target.closest('#ocrStart')) startOcr(it);
     };
-    drawerNav(it); updateSess(); showBar(); return;
+    if (LANG === 'en') trNode($('#v-read'));
+    drawerNav(it); if (LANG === 'en') trNode($('#navList')); updateSess(); showBar(); return;
   }
   $('#v-read').innerHTML = paged ? screenHTML(it, screen) : readerHTML(it);
   if (pref.get('diac', 'show') === 'hide') stripShown($('#v-read'));
   if (tr && screen && screen[0] === 'c') trApply(it, tr, +screen.slice(1));
   else { applyAnnos(it); document.body.classList.remove('tr-view'); }
-  bindFields(it); drawerNav(it); updateSess();
+  if (LANG === 'en') trNode($('#v-read'));
+  bindFields(it); drawerNav(it); if (LANG === 'en') trNode($('#navList')); updateSess();
   trRefreshButton();
   observe(it); showBar(); quietUntil = Date.now() + 600;
   rtMount(it, target, o, loc);
@@ -1442,7 +1448,7 @@ async function selAction(kind){
 function termModal(pre, it, bk){
   openModal('<div class="mhead"><h3>أضف مصطلح</h3>' + closeBtn + '</div>' +
     '<label class="flabel" for="tAr">المصطلح</label><input class="inp" id="tAr" value="' + esc(pre.ar) + '">' +
-    '<label class="flabel" for="tEn">بالإنجليزي (اختياري)</label><input class="inp" id="tEn" dir="ltr" style="text-align:right">' +
+    '<label class="flabel" for="tEn">بالإنجليزي (اختياري)</label><input class="inp" id="tEn" dir="ltr" style="text-align:start">' +
     '<label class="flabel" for="tDef">تعريف بسطر</label><textarea class="inp" id="tDef" rows="2"></textarea>' +
     '<div class="sh-actions"><button class="pbtn" id="tSave">احفظ في قاموسي</button></div>');
   $('#tSave').addEventListener('click', async () => {
@@ -1533,27 +1539,8 @@ function termSheet(key){
 }
 
 /* ---------- quote card ---------- */
-const QE_EN = {
-  'بطاقة اقتباس':'Quote card','الاقتباس':'Quote','ملاحظتي':'My note','سطر منك تحت الاقتباس (اختياري)':'A line of your own under the quote (optional)',
-  'المقاس':'Size','القالب':'Template','الخط':'Font','ورقي':'Paper','داكن':'Dark','ذهبي على داكن':'Gold on dark','أبيض بسيط':'Minimal white',
-  'نسخ':'Naskh','أميري':'Amiri','رقعة':'Ruqaa','التشكيل':'Diacritics','علامة «مكتبتي»':'“مكتبتي” watermark',
-  'الكتاب فيه ملاحظة حقوق، فالعلامة مطفية افتراضيًا.':'This book has a rights note, so the watermark is off by default.',
-  'النص المرافق':'Caption','وسوم (اختياري)':'Hashtags (optional)','مثال: قراءة كتب':'e.g. reading books','أعد التوليد':'Regenerate',
-  'شارك':'Share','تيك توك':'TikTok','حمّل الصورة':'Download image','انسخ النص':'Copy caption',
-  'في 9:16 نترك أعلى 12٪ وأسفل 20٪ فاضية لواجهة المنصة (المنطقة المخططة).':'In 9:16 the top 12% and bottom 20% stay empty for platform UI (hatched area).',
-  'الاقتباس أطول من 280 حرف تقريبًا، فالخط بيصغر. الأفضل تقصّه.':'The quote is over ~280 characters, so the text shrinks. Consider trimming it.',
-  'يتجاوز حدّ X (280).':'Over the X limit (280).',
-  'نزّلت الصورة، ارفقها في X':'Image downloaded. Attach it in X.','لو ما انفتح X اضغط «افتح X».':'If X did not open, tap “Open X”.',
-  'النص أطول من 280، قصّه قبل النشر.':'The text is over 280. Trim it before posting.',
-  'افتح X':'Open X','تم':'Done','نزّلت الصورة':'Image downloaded','نسخت النص':'Caption copied','تعذّر النسخ':'Could not copy',
-  'المشاركة بالصورة غير متاحة هنا. نزّلت الصورة ونسخت النص.':'Sharing with an image is not available here. Image downloaded and caption copied.',
-  'المشاركة بالصورة غير متاحة هنا. نزّلت الصورة، والنص انسخه بزر «انسخ النص».':'Sharing with an image is not available here. Image downloaded; copy the caption with “Copy caption”.',
-  'نزّل الصورة وارفعها من':'Download the image and upload it at','لا يوجد نص للاقتباس':'The quote is empty',
-  'شرح من مكتبتي عن':'Explanation from My Library on','المصدر:':'Source:','نص المؤلف':"Author's text",'شرح من مكتبتي':'My Library explanation','كلامك أنت':'Your own words',
-  'النص يختلف عن الأصل، فينسب لك لا للمؤلف.':'The text differs from the original, so it is attributed to you, not the author.',
-  'الصورة':'Image','بطاقة اقتباس من كتاب':'Quote card from a book'
-};
-const qt = s => LANG === 'en' ? (QE_EN[s] || EN_UI[s] || s) : s;
+
+const qt = s => LANG === 'en' ? (EN_UI[s] || s) : s;
 const QLIM = 280;
 const QFMT = { '1:1':[1080, 1080], '4:5':[1080, 1350], '9:16':[1080, 1920] };
 const QTPL = {
@@ -1580,7 +1567,7 @@ function qSrc(a, it, text){
   if (b.by === 'ai' || /^demo-/.test(String(it.id)) || (b.type === 'box' && b.kind === 'explain')) return 'app';
   return 'author';
 }
-const qLx = (s, dir) => dir === 'ltr' ? (QE_EN[s] || s) : s;
+const qLx = (s, dir) => dir === 'ltr' ? (EN_UI[s] || s) : s;
 function qAttr(src, it, dir){
   it = it || {};
   if (src === 'author') return [it.author, it.title, it.translator ? (dir === 'rtl' ? 'ترجمة ' : 'Trans. ') + it.translator : ''].filter(Boolean).join(' · ');
@@ -2076,7 +2063,7 @@ function renderMap(){
   const box0 = nodes.length ? (
     '<canvas id="mapcv" tabindex="0" role="application" aria-label="خريطة أفكاري" aria-describedby="mpHint"></canvas>' +
     '<div class="mp-chips" role="group" aria-label="تصفية الخريطة">' +
-      hubs.map(h => '<button class="mp-chip" data-cb="' + esc(h.itemId) + '" aria-pressed="true"><i class="mp-dot" style="background:' + h.color + '"></i><span class="mp-ct" dir="auto">' + esc(short(h.full, 22)) + '</span><b>' + cnt(h.itemId) + '</b></button>').join('') +
+      hubs.map(h => '<button class="mp-chip" data-cb="' + esc(h.itemId) + '" aria-pressed="true"><i class="mp-dot" style="background:' + h.color + '"></i><span class="mp-ct" dir="auto" data-no-tr>' + esc(short(h.full, 22)) + '</span><b>' + cnt(h.itemId) + '</b></button>').join('') +
       '<span class="mp-sep" aria-hidden="true"></span>' +
       ['imp', 'unc', 'q', 'term'].filter(k => kcnt(k)).map(k => '<button class="mp-chip" data-ck="' + k + '" aria-pressed="true">' + mapGly(k, 'currentColor') + '<span class="mp-ct">' + T[k] + '</span><b>' + kcnt(k) + '</b></button>').join('') +
     '</div>' +
@@ -2497,7 +2484,7 @@ function explainCopy(S, it){
 
 /* ---------- my highlights page ---------- */
 function renderHls(it){
-  document.title = 'تظليلاتي · ' + it.title;
+  document.title = tx('تظليلاتي') + ' · ' + it.title;
   const hs = annosOf('hl', it.id).sort(byPos), chs = arr(it.chapters);
   const FL = [['predict', 'توقّعي قبل القراءة'], ['summary', 'ملخّصي'], ['open', 'أسئلتي المفتوحة']];
   const val = k => String(kv.get('f:' + k, '') || '').trim();
@@ -2511,10 +2498,10 @@ function renderHls(it){
   const unc = hs.filter(a => hkOf(a) === 'unc');
   const R = '#/read/' + encodeURIComponent(it.id);
   let h = '<div class="wrap" style="padding-top:.75rem; padding-bottom:4rem"><button class="linkbtn" data-href="' + R + '">→ ارجع للكتاب</button>' +
-    '<h1 class="vh" style="margin-top:.75rem">تظليلاتي</h1><p class="quiet" style="margin:.25rem 0 0">' + esc(it.title) + ' · ' + hs.length + ' تظليل</p>';
+    '<h1 class="vh" style="margin-top:.75rem">تظليلاتي</h1><p class="quiet" style="margin:.25rem 0 0"><bdi dir="auto" data-no-tr>' + esc(it.title) + '</bdi> · ' + hs.length + ' تظليل</p>';
   if (G.length){
     h += '<div class="sh-actions" style="margin-top:1.25rem"><button class="pbtn" id="cpAll">انسخها كلها</button><button class="gbtn" id="cpUnc"' + (unc.length ? '' : ' disabled') + '>اشرح لي اللي ما فهمته' + (unc.length ? ' (' + unc.length + ')' : '') + '</button></div>';
-    h += G.map(g => '<h2 class="shelf-h">' + md(g.name) + '</h2>' +
+    h += G.map(g => '<h2 class="shelf-h" data-no-tr>' + md(g.name) + '</h2>' +
       HKS.map(k => g.k[k].length ? '<p class="label" style="margin:1.25rem 0 .25rem"><i class="sw" style="background:' + HK[k].sw + '"></i>' + HK[k].l + ' <span class="count">' + g.k[k].length + '</span></p>' +
         g.k[k].map(a => '<button class="res" data-href="' + R + '/' + encodeURIComponent(a.bk) + '"><div><span class="hlq" data-hk="' + k + '">' + esc(a.text) + '</span></div>' + (a.note ? '<small>ملاحظتي: ' + esc(a.note) + '</small>' : '') + '</button>').join('') : '').join('') +
       (g.notes.length ? '<p class="label" style="margin:1.25rem 0 .25rem">ملاحظاتي</p>' + g.notes.map(n => '<button class="res" data-href="' + R + '/' + encodeURIComponent(n[2]) + '"><small>' + n[0] + '</small><div style="white-space:pre-line">' + esc(n[1]) + '</div></button>').join('') : '')).join('');
@@ -2555,7 +2542,7 @@ function bookSearch(){
 
 /* ---------- display panel ---------- */
 function setFs(d){ const v = Math.max(-3, Math.min(5, d)); document.documentElement.style.setProperty('--fs-delta', v); pref.set('fs', v); $$('textarea.field').forEach(autosize); if (RT) rtReflowSoon(); return v; }
-const fsLabel = v => v === 0 ? 'عادي' : (v > 0 ? '+' : '−') + Math.abs(v);
+const fsLabel = v => v === 0 ? tx('عادي') : (v > 0 ? '+' : '−') + Math.abs(v);
 function stripShown(root){ const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); let n; while ((n = w.nextNode())){ const v = n.nodeValue, x = stripD(v); if (x !== v) n.nodeValue = x; } }
 const topBlock = () => RT && RT.paged ? rtTopEl() : $$('#v-read [data-bk]').find(e => e.getBoundingClientRect().bottom > 80);
 function rerender(){ if (!RD) return; const el = topBlock(); renderReader(RD.it, el ? el.dataset.bk : null, { screen:RD.screen, noFlash:true }); }
@@ -2576,7 +2563,7 @@ function displaySheet(){
     (RT ? '<p class="flabel" style="margin-top:0">القالب</p>' + seg('tpl', tplOn().map(t => [t.id, t.name])) + (RT.T.paged === 'choice' ? '<p class="flabel">طريقة القراءة</p>' + seg('rtmode', [['scroll', 'تمرير'], ['paged', 'صفحات']]) : '') + (RT.id === 'modern' ? '<p class="flabel">إخفاء الأدوات أثناء التمرير</p>' + seg('rthide', [['off', 'لا'], ['on', 'نعم']]) : '') : '') +
     '<p class="flabel"' + (RT ? '' : ' style="margin-top:0"') + '>الوضع</p>' + seg('theme', [['light', sw('#F6F1E7') + 'فاتح'], ['sepia', sw('#F1E3C6') + 'ورقي'], ['dark', sw('#1D1812') + 'ليلي']]) +
     '<p class="flabel">الخط</p>' + seg('font', [['naskh', 'النسخ', "font-family:'Noto Naskh Arabic',serif"], ['amiri', 'الأميري', "font-family:'Amiri',serif"]]) +
-    '<p class="flabel">حجم الخط</p><div class="seg"><button data-fs="-1" aria-label="تصغير الخط"><span style="font-size:.85rem">أ</span>−</button><span class="fs-val" id="fsVal">' + fsLabel(+pref.get('fs', 0) || 0) + '</span><button data-fs="1" aria-label="تكبير الخط"><span style="font-size:1.1rem">أ</span>+</button></div>' +
+    '<p class="flabel">حجم الخط</p><div class="seg"><button data-fs="-1" aria-label="تصغير الخط"><span style="font-size:.85rem">' + (LANG === 'en' ? 'A' : 'أ') + '</span>−</button><span class="fs-val" id="fsVal">' + fsLabel(+pref.get('fs', 0) || 0) + '</span><button data-fs="1" aria-label="تكبير الخط"><span style="font-size:1.1rem">' + (LANG === 'en' ? 'A' : 'أ') + '</span>+</button></div>' +
     '<p class="flabel">تباعد الأسطر</p>' + seg('lh', [['normal', 'عادي'], ['wide', 'واسع']]) +
     '<p class="flabel">عرض النص</p>' + seg('width', [['narrow', 'ضيق'], ['normal', 'عادي']]) +
     '<p class="flabel">التشكيل</p>' + seg('diac', [['show', 'ظاهر'], ['hide', 'مخفي']]));
@@ -2689,6 +2676,7 @@ const SERVE_CMD = 'python3 -m http.server 8000';
 const errDetail = e => redactKeys(e && e.detail ? String(e.detail) : '');
 function aiErr(e){
   const who = e && e.connectionLabel ? '«' + e.connectionLabel + '»' : '';
+  if (LANG === 'en') return aiErrEn(e, who);
   if (e && e.name === 'AbortError') return 'انوقف.';
   if (e && e.geminiBusy) return e.message || GEMINI_BUSY_MESSAGE;
   if (e && e.modelGone) return 'الموديل المختار ما عاد متاحًا' + (who ? ' لدى ' + who : '') + '. اختر موديلًا آخر.';
@@ -2710,6 +2698,30 @@ function aiErr(e){
     return (who ? 'مزوّد ' + who + ' ردّ' : 'الخدمة ردّت') + ' بخطأ ' + e.status + (d ? ': ' + d : '') + (e.status === 404 ? ' — تأكد من الرابط واسم النموذج.' : '');
   }
   return 'ما وصل الطلب للخدمة' + (location.protocol === 'file:' ? '، لأن الصفحة مفتوحة كملف محلي والمتصفح يمنع الطلب (CORS).' : '، غالباً بسبب CORS أو الاتصال.') + ' افتح الصفحة من سيرفر محلي أو استضافة، أو استخدم وسيط.';
+}
+function aiErrEn(e, who){
+  const w = who || '';
+  if (e && e.name === 'AbortError') return 'Stopped.';
+  if (e && e.geminiBusy) return e.message || 'Gemini servers are busy right now. Try again shortly or use another provider.';
+  if (e && e.modelGone) return 'The selected model is no longer available' + (w ? ' on ' + w : '') + '. Choose another model.';
+  if (e && e.empty) return e.message || 'The provider returned an empty reply with no text. Try again or change the model.';
+  if (e && e.card) return 'The provider did not return a valid JSON chapter card after two attempts. Try another chapter or retry later.';
+  if (e && e.timeout) return 'The AI provider timed out' + (w ? ' (' + w + ')' : '') + ' and no reply arrived in time. Try again.';
+  if (e && e.context) return 'The content is longer than the model window even after trimming. Shorten the chapter or the sent text, or raise the context window in Settings.';
+  if (e && e.insecure) return 'I will not send the key to an unencrypted URL. Use https, or localhost for a local server.';
+  if (e && e.network) return 'The request did not reach the service' + (w ? ' at ' + w : '') + ', most likely because of CORS or the connection. Use a provider that allows browser requests (DeepSeek, OpenRouter, or any OpenAI-compatible service with CORS), or check the URL.';
+  if (e && e.cfg) return (w ? 'Could not use ' + w + ': ' : '') + 'the key is not set or no model is selected. Add the key from Settings or choose another model.';
+  if (e && (e.status === 401 || e.status === 403)){
+    const d = errDetail(e);
+    return (w ? 'The key for ' + w + ' is invalid or not authorized.' : 'The key is invalid or not authorized.') + (d ? ' ' + d : '') + ' Check the key and its permissions.';
+  }
+  if (e && (e.status === 402 || /insufficient|balance|credit|quota/i.test(String(e.detail || '')))) return 'The provider balance is insufficient. Check the account balance or use another key.';
+  if (e && e.status === 429) return 'The provider is rate limiting requests (429). Wait a moment and try again.';
+  if (e && e.status){
+    const d = errDetail(e);
+    return 'The service replied with error ' + e.status + (d ? ': ' + d : '') + (e.status === 404 ? ' — check the URL and model name.' : '') + '.';
+  }
+  return 'The request did not reach the service' + (location.protocol === 'file:' ? ', because the page is open as a local file and the browser blocks the request (CORS).' : ', most likely because of CORS or the connection.') + ' Open the page from a local server or a host, or use a proxy.';
 }
 const errHTML = e => esc(aiErr(e)).replace(SERVE_CMD, '<code>' + SERVE_CMD + '</code>').replace('http://localhost:8000', '<code>http://localhost:8000</code>');
 const endpoint = b => { b = String(b || '').trim().replace(/\/+$/, ''); return /\/chat\/completions$/.test(b) ? b : b + '/chat/completions'; };
@@ -3080,7 +3092,7 @@ const trBookIsEnglish = it => {
 };
 function trBookButton(it, cls){
   if (!it || it.type !== 'book' || !trBookIsEnglish(it)) return '';
-  return '<button type="button" class="' + (cls || 'gbtn') + ' tr-book-btn" data-tr-book="' + esc(it.id) + '">ترجمة الكتاب</button>';
+  return '<button type="button" class="' + (cls || 'gbtn') + ' tr-book-btn" data-tr-book="' + esc(it.id) + '">' + tx('ترجمة الكتاب') + '</button>';
 }
 const trAckKey = 'maktabati:trAck';
 function trAcked(bookId){
@@ -3104,10 +3116,10 @@ function trRefreshButton(){
   if (!cur) return;
   const ar = trIsArabic(cur.it, cur.ci);
   $$('#v-read [data-tr-open]').forEach(b => {
-    b.textContent = ar ? 'الأصل' : 'ترجمة الفصل';
+    b.textContent = ar ? tx('الأصل') : tx('ترجمة الفصل');
     b.setAttribute('aria-pressed', ar ? 'true' : 'false');
-    b.setAttribute('aria-label', ar ? 'ارجع إلى النص الأصلي' : 'ترجمة هذا الفصل إلى العربية');
-    b.title = ar ? 'ارجع إلى النص الأصلي' : 'ترجمة هذا الفصل إلى العربية';
+    b.setAttribute('aria-label', ar ? tx('ارجع إلى النص الأصلي') : tx('ترجمة هذا الفصل إلى العربية'));
+    b.title = ar ? tx('ارجع إلى النص الأصلي') : tx('ترجمة هذا الفصل إلى العربية');
   });
 }
 
@@ -4690,7 +4702,7 @@ function tabRead(){
     pfield('القالب الافتراضي', pseg('tpl.def', tplOn().map(t => [t.id, t.name]), rtP().def), 'للكتب اللي تفتحها أول مرة. تقدر تغيّر قالب أي كتاب من «العرض» وأنت تقرأ.') +
     pfield('الوضع', pseg('read.theme', [['light', 'فاتح'], ['sepia', 'ورقي'], ['dark', 'ليلي'], ['auto', 'يتبع الجهاز']], R.theme === 'auto' ? 'auto' : th)) +
     pfield('الخط', pseg('read.font', [['naskh', 'النسخ', "font-family:'Noto Naskh Arabic',serif"], ['amiri', 'الأميري', "font-family:'Amiri',serif"]], pref.get('font', 'naskh'))) +
-    pfield('حجم الخط', '<div class="rng"><span aria-hidden="true" style="font-size:.85rem">أ</span><input type="range" min="-3" max="5" step="1" value="' + fs + '" data-rng="read.fs" aria-label="حجم الخط" aria-valuetext="' + fsLabel(fs) + '"><span aria-hidden="true" style="font-size:1.2rem">أ</span><output id="fsO">' + fsLabel(fs) + '</output></div>') +
+    pfield('حجم الخط', '<div class="rng"><span aria-hidden="true" style="font-size:.85rem">' + (LANG === 'en' ? 'A' : 'أ') + '</span><input type="range" min="-3" max="5" step="1" value="' + fs + '" data-rng="read.fs" aria-label="حجم الخط" aria-valuetext="' + fsLabel(fs) + '"><span aria-hidden="true" style="font-size:1.2rem">' + (LANG === 'en' ? 'A' : 'أ') + '</span><output id="fsO">' + fsLabel(fs) + '</output></div>') +
     pfield('تباعد الأسطر', pseg('read.lh', [['normal', 'عادي'], ['wide', 'واسع']], pref.get('lh', 'normal'))) +
     pfield('عرض النص', pseg('read.width', [['narrow', 'ضيق'], ['normal', 'عادي']], pref.get('width', 'normal'))) +
     pfield('التشكيل', pseg('read.diac', [['show', 'ظاهر'], ['hide', 'مخفي']], diac)) +
@@ -4706,13 +4718,14 @@ function aiArList(list){
   const a = (list || []).filter(Boolean);
   if (!a.length) return '';
   if (a.length === 1) return a[0];
-  return a.slice(0, -1).join('، ') + ' و' + a[a.length - 1];
+  return LANG === 'en' ? a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1] : a.slice(0, -1).join('، ') + ' و' + a[a.length - 1];
 }
 function aiFallbackToast(state, fallbacks){
   const names = [...new Set((fallbacks || []).map(f => taskLabel(f.task)))];
   if (!names.length) return '';
   const first = (fallbacks || [])[0];
   const target = first && first.to ? aiPinLabel(state, first.to) : '';
+  if (LANG === 'en') return ' ' + aiArList(names) + ' fell back' + (target ? ' to “' + target + '”' : ' with no model') + '.';
   return ' ' + aiArList(names) + ' رجعت' + (target ? ' إلى «' + target + '»' : ' بلا موديل') + '.';
 }
 function aiConnectionCards(S){
@@ -4874,7 +4887,7 @@ function aiAddModal(){
       if (!key){ setMsg('الصق مفتاح ' + providerLabel(provider) + ' أول.'); return; }
     }
     setStatus('أتحقق من الموديلات…');
-    let list = [], note = '';
+    let list = [], note = '', noteEn = '';
     try{ list = await aiFetchModels(base, key); }
     catch(e){
       if (e && (e.status === 401 || e.status === 403)){
@@ -4884,6 +4897,7 @@ function aiAddModal(){
         return;
       }
       note = 'تعذّر جلب /models (' + esc(aiWhy(e)) + '). ';
+      noteEn = 'Could not fetch /models (' + esc(aiWhy(e)) + '). ';
     }
     let model = provider === 'custom' ? $('#aiModel').value.trim() : '';
     if (!model) model = defaultModelFor(provider, list);
@@ -4901,16 +4915,17 @@ function aiAddModal(){
     closeModal(true);
     renderProfile('ai');
     const finalLabel = (findConnection(aiState(), id) || {}).label || providerLabel(provider);
-    toast(note + 'أضفت «' + finalLabel + '» بموديل ' + shortModelLabel(provider, model) + '.');
+    toast(LANG === 'en' ? noteEn + 'Added “' + finalLabel + '” with model ' + shortModelLabel(provider, model) + '.' : note + 'أضفت «' + finalLabel + '» بموديل ' + shortModelLabel(provider, model) + '.');
   };
 }
 
 function aiChooseModelsModal(connectionId){
   const S = aiState(), conn = findConnection(S, connectionId);
   if (!conn) return;
+  const heading = LANG === 'en' ? 'Models — “' + conn.label + '”' : 'موديلات «' + conn.label + '»';
   const chosen = new Set(pinsForConnection(S, connectionId).map(p => p.model));
   let ids = [], fetched = new Set(), manual = new Set(), loadOk = false;
-  openModal('<div class="mhead"><h3>موديلات «' + esc(conn.label) + '»</h3>' + closeBtn + '</div>' +
+  openModal('<div class="mhead"><h3>' + esc(heading) + '</h3>' + closeBtn + '</div>' +
     '<p class="hint" style="margin:0 0 .5rem">نختار من <bdi dir="ltr">/models</bdi> مرة وحدة. المثبت فقط يظهر في مفتاح المحادثة وفي افتراضيات المهام.</p>' +
     '<input class="inp" id="aiModelSearch" type="search" placeholder="ابحث عن موديل…" aria-label="ابحث عن موديل">' +
     '<div class="ai-models" id="aiModelList"><p class="hint">أجيب الموديلات…</p></div>' +
@@ -4949,18 +4964,20 @@ function aiChooseModelsModal(connectionId){
     renderProfile('ai');
     const names = [...new Set(r.fallbacks.map(f => taskLabel(f.task)))];
     const target = r.fallbacks[0] && r.fallbacks[0].to ? aiPinLabel(r.state, r.fallbacks[0].to) : '';
-    toast('انحفظت موديلات «' + conn.label + '».' + (names.length ? ' ' + aiArList(names) + ' رجعت' + (target ? ' إلى «' + target + '»' : ' بلا موديل') + '.' : ''));
+    toast(LANG === 'en'
+      ? 'Saved models for “' + conn.label + '”.' + (names.length ? ' ' + aiArList(names) + ' fell back' + (target ? ' to “' + target + '”' : ' with no model') + '.' : '')
+      : 'انحفظت موديلات «' + conn.label + '».' + (names.length ? ' ' + aiArList(names) + ' رجعت' + (target ? ' إلى «' + target + '»' : ' بلا موديل') + '.' : ''));
   };
   aiFetchModels(conn.base, conn.key).then(list => {
     ids = modelChoicesFor(conn.provider, list);
     fetched = new Set(ids);
     loadOk = true;
-    noteEl.textContent = list.length ? 'اختر الموديلات اللي تبيها. المثبت فقط يظهر في المحادثة.' : 'المزوّد ما رجّع قائمة موديلات. المثبت الحالي يبقى، وتقدر تضيف اسم موديل يدويًا.';
+    noteEl.textContent = list.length ? tx('اختر الموديلات اللي تبيها. المثبت فقط يظهر في المحادثة.') : tx('المزوّد ما رجّع قائمة موديلات. المثبت الحالي يبقى، وتقدر تضيف اسم موديل يدويًا.');
     saveEl.disabled = false;
     render();
   }).catch(e => {
     loadOk = false;
-    noteEl.innerHTML = 'تعذّر جلب قائمة الموديلات من «' + esc(conn.label) + '» (' + esc(aiWhy(e)) + '). المثبت الحالي يبقى، وتقدر تضيف اسم موديل يدويًا.';
+    noteEl.innerHTML = (LANG === 'en' ? 'Could not load the model list from “' : 'تعذّر جلب قائمة الموديلات من «') + esc(conn.label) + '» (' + esc(aiWhy(e)) + (LANG === 'en' ? '). Your current pins are kept; you can add a model name manually.' : '). المثبت الحالي يبقى، وتقدر تضيف اسم موديل يدويًا.');
     saveEl.disabled = false;
     render();
   });
@@ -4988,16 +5005,18 @@ function aiRemoveConnection(connectionId){
     const pin = defaultPinForTask(S, t.id);
     return pin && pin.connectionId === connectionId;
   }).map(t => t.label);
+  const en = LANG === 'en';
+  const affectedTx = affected.map(t => tx(t)).join(en ? ', ' : '، ');
   confirmBox({
-    title:'احذف الاتصال',
-    text:'يحذف «' + esc(c.label) + '» ومفتاحه وموديلاته المثبتة من هالجهاز.' +
-      (affected.length ? ' <br><b>' + esc(aiArList(affected)) + '</b> تستخدمه، وسترجع لافتراضي الدردشة.' : ''),
-    ok:'احذف',
+    title: en ? 'Delete connection' : 'احذف الاتصال',
+    text: (en ? 'Deletes “' : 'يحذف «') + esc(c.label) + (en ? '”, its key and pinned models from this device.' : '» ومفتاحه وموديلاته المثبتة من هالجهاز.') +
+      (affected.length ? ' <br><b>' + esc(affectedTx) + '</b> ' + (en ? 'use it and will fall back to the chat default.' : 'تستخدمه، وسترجع لافتراضي الدردشة.') : ''),
+    ok: en ? 'Delete' : 'احذف',
     run:() => {
       const r = removeConnection(aiState(), connectionId);
       aiStateSave(r.state);
       renderProfile('ai');
-      toast('انحذف «' + c.label + '».' + aiFallbackToast(r.state, r.fallbacks));
+      toast((en ? 'Deleted “' : 'انحذف «') + c.label + (en ? '”.' : '».') + aiFallbackToast(r.state, r.fallbacks));
     }
   });
 }
@@ -5041,12 +5060,12 @@ function tabPrivacy(){
 function tabLook(){
   const dark = document.documentElement.dataset.theme === 'dark';
   return '<h2 class="pf-h">المظهر واللغة</h2>' +
-    pfield('لغة الواجهة', '<div class="seg" data-seg="ui.lang"><button data-v="ar" aria-pressed="' + (LANG === 'ar') + '" lang="ar">العربية</button><button data-v="en" aria-pressed="' + (LANG === 'en') + '" lang="en">English</button></div>', 'محتوى الكتب ما يتأثر، وكل كتاب ياخذ اتجاهه من لغته.') +
+    pfield('لغة الواجهة', '<div class="seg" data-seg="ui.lang"><button data-v="ar" aria-pressed="' + (LANG === 'ar') + '" lang="ar">' + (LANG === 'en' ? 'Arabic' : 'العربية') + '</button><button data-v="en" aria-pressed="' + (LANG === 'en') + '" lang="en">English</button></div>', 'محتوى الكتب ما يتأثر، وكل كتاب ياخذ اتجاهه من لغته.') +
     pfield('مظهر الواجهة', pseg('ui.theme', [['light', 'فاتح'], ['dark', 'ليلي']], dark ? 'dark' : 'light'), 'الورقي ويتبع الجهاز من تبويب «القراءة».');
 }
 const SND_CREDITS = [['مطر', 'jmbphilmes', 200273], ['نار حطب', 'samarobryn', 414767], ['ريح', 'sleepCircle', 22331], ['أمواج', 'Noted451', 531015], ['ريح صحراء', 'kyles', 454361], ['رعد', 'BlueDelta', 367222]];
 const tabAbout = () => '<h2 class="pf-h">مكتبتي</h2>' + prow('الإصدار', '<span class="pv">' + APP_VER + '</span>') + '<p style="margin:14px 0 6px">قارئ عربي على جهازك: كتبك وتظليلاتك تبقى عندك.</p><p class="ph">الخطوط: IBM Plex Sans Arabic وNoto Naskh Arabic وAmiri وAref Ruqaa، برخصة SIL Open Font License.</p>' +
-  (SND_FILES ? '<p class="ph"><span>الأصوات الطبيعية تسجيلات من Freesound برخصة CC0، لا تشترط ذكر أصحابها ونذكرهم شكرًا:</span> ' + SND_CREDITS.map(([n, u, id]) => '<span>' + n + '</span>: <a href="https://freesound.org/people/' + u + '/sounds/' + id + '/" target="_blank" rel="noopener" dir="ltr">' + u + '</a>').join('، ') + '.</p>' : '') +
+  (SND_FILES ? '<p class="ph"><span>الأصوات الطبيعية تسجيلات من Freesound برخصة CC0، لا تشترط ذكر أصحابها ونذكرهم شكرًا:</span> ' + SND_CREDITS.map(([n, u, id]) => '<span>' + (LANG === 'en' ? EN_UI[n] || n : n) + '</span>: <a href="https://freesound.org/people/' + u + '/sounds/' + id + '/" target="_blank" rel="noopener" dir="ltr">' + u + '</a>').join(LANG === 'en' ? ', ' : '، ') + '.</p>' : '') +
   '<p class="ph"><span>قائمة الكلمات العربية في محوّل الملفات:</span> <a href="https://github.com/hermitdave/FrequencyWords" target="_blank" rel="noopener">FrequencyWords</a> <span>من Hermit Dave، مبنية من OpenSubtitles 2018. حوّلناها إلى جدول بحث. الرخصة:</span> <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener" dir="ltr">CC BY-SA 4.0</a></p>';
 function backupDue(){
   const items = allItems(); if (!items.length) return false;
@@ -5080,7 +5099,7 @@ function applySeg(path, v){
 }
 function renderProfile(tab){
   tab = PTABS.includes(tab) ? tab : 'profile';
-  document.title = tx(PTAB_L[tab]) + ' · مكتبتي';
+  document.title = tx(PTAB_L[tab]) + ' · ' + tx('مكتبتي');
   $('#v-profile').innerHTML = '<div class="pf"><nav class="ptabs" aria-label="أقسام الملف">' + PTABS.map(t => '<a class="ptab nu" href="#/profile/' + t + '"' + (t === tab ? ' aria-current="page"' : '') + '>' + PTAB_L[t] + '</a>').join('') + '</nav><div class="pf-body" id="pfBody">' + ({ profile:tabProfile, read:tabRead, ai:tabAi, privacy:tabPrivacy, look:tabLook, about:tabAbout }[tab])() + '</div></div>';
   const body = $('#pfBody');
   body.onclick = e => {
@@ -5401,7 +5420,7 @@ async function engineImport(file, ctx){
   $('#ingStop').onclick = () => { ctrl.abort(); closeModal(true); };
   const onProgress = ev => {
     const m = $('#ingMsg'), b = $('#ingBar'); if (!m) return;
-    if (ev.stage === 'extract' && ev.pages){ m.textContent = 'أقرأ الصفحات… ' + ev.page + ' من ' + ev.pages; if (b) b.style.width = Math.round(ev.page / ev.pages * 80) + '%'; }
+    if (ev.stage === 'extract' && ev.pages){ m.textContent = LANG === 'en' ? 'Reading pages… ' + ev.page + ' of ' + ev.pages : 'أقرأ الصفحات… ' + ev.page + ' من ' + ev.pages; if (b) b.style.width = Math.round(ev.page / ev.pages * 80) + '%'; }
     else if (ev.stage !== 'open'){ m.textContent = tx('أرتّب الفصول والحواشي…'); if (b) b.style.width = '90%'; }
   };
   let r;
@@ -5430,25 +5449,29 @@ function showPreview(P){
   const firstPage = x => { const c0 = x.chapters[0]; let n = 0; return c0 ? arr(c0.sections).map(s => (n > 1600 ? '' : (s.title ? '<h4>' + md(s.title) + '</h4>' : '') + arr(s.blocks).filter(b => n <= 1600 && ((n += blockText(b).length), true)).map((b, bi) => block(b, 'pv-' + bi)).join(''))).join('') : ''; };
   const chList = x => x.chapters.map(c => '<li>' + esc(c.title || '—') + '</li>').join('');
   const seg = (id, opts, v) => '<div class="seg" id="' + id + '" role="group">' + opts.map(o => '<button type="button" data-v="' + o[0] + '" aria-pressed="' + (o[0] === v) + '">' + o[1] + '</button>').join('') + '</div>';
+  const scanMs = scanOk ? (rep.pages || 0) * (kv.get('ocrMsAvg', null) || OCR_DEFAULT_MS_PER_PAGE) : 0;
   const scanEst = scanOk ? ocrTimeEstimate(rep.pages || 0, kv.get('ocrMsAvg', null) || OCR_DEFAULT_MS_PER_PAGE) : '';
+  const scanEstEn = scanMs < 60000 ? 'less than a minute' : Math.max(1, Math.round(scanMs / 60000)) + ' min';
   const cloudNote = () => {
     const cfg = resolveAiConfig(aiState(), 'chat');
-    if (!cfg) return '<p class="hint" style="margin:.35rem 0 0">ما فيه اتصال ذكاء مهيأ. اضبطه في الإعدادات أول، أو اختر «محلي مجاني».</p>';
+    if (!cfg) return '<p class="hint" style="margin:.35rem 0 0">' + tx('ما فيه اتصال ذكاء مهيأ. اضبطه في الإعدادات أول، أو اختر «محلي مجاني».') + '</p>';
     let cost = 0;
     try { cost = estimateCloudBookCost(cfg.provider, rep.pages || 0, 1240, 1754); } catch (e) {}
-    const costTxt = cost < 0.005 ? 'أقل من سنت' : 'قرابة $' + cost.toFixed(2);
-    return '<p class="hint" style="margin:.35rem 0 0">' + esc('ستُرسل صور صفحات الكتاب إلى ' + (cfg.providerLabel || cfg.provider) + ' لتحويلها إلى نص فقط؛ لا تُخزَّن لدينا. التكلفة التقديرية ' + costTxt + ' لكامل الكتاب.') + '</p>';
+    const costTxt = cost < 0.005 ? tx('أقل من سنت') : tx('قرابة $') + cost.toFixed(2);
+    return '<p class="hint" style="margin:.35rem 0 0">' + esc((LANG === 'en' ? 'The book page images will be sent to ' : 'ستُرسل صور صفحات الكتاب إلى ') + (cfg.providerLabel || cfg.provider) + (LANG === 'en' ? ' only to convert them to text; they are not stored by us. Estimated cost ' : ' لتحويلها إلى نص فقط؛ لا تُخزَّن لدينا. التكلفة التقديرية ') + costTxt + (LANG === 'en' ? ' for the whole book.' : ' لكامل الكتاب.')) + '</p>';
   };
   openModal('<div class="mhead"><h3>' + tx('معاينة قبل الحفظ') + '</h3>' + closeBtn + '</div>' +
     ((rep && !scanOk) ? '<div class="msg' + (rec === 'ok' ? ' ok' : '') + '" role="status"><b>' + tx(ING_REC[rec] || ING_REC.review) + '</b>' +
       (rec === 'vision' ? tx('نص هالملف ما ينقرأ (غالبًا صفحات ممسوحة كصور)، ويحتاج قراءة الصفحات كصور. هالميزة مو متوفرة بعد، فما راح أحفظه.') : '') +
       (issues.length ? '<ul class="ing-issues" style="margin:.4rem 0 0; padding-inline-start:1.2em">' + issues.map(t => '<li>' + tx(t) + '</li>').join('') + '</ul>' : '') +
       (unread.length ? '<p style="margin:.4rem 0 0"><span>' + tx('صفحات ما قدرت أقرأها:') + '</span> <bdi dir="ltr">' + esc(unread.slice(0, 40).join(', ') + (unread.length > 40 ? ' …' : '')) + '</bdi></p>' : '') + '</div>' : '') +
-    (scanOk ? '<div class="msg" role="note" style="margin:.6rem 0 0"><b>كتاب ممسوح ضوئيًا</b><p style="margin:.35rem 0 0; line-height:1.75">' + arCount(rep.pages || 0, 'صفحة') + '. قراءة النص محليًا تاخذ ' + ocrApproxDuration(scanEst) + ' (تقدير). أول مرة ينزّل التطبيق قرابة ' + OCR_FIRST_DOWNLOAD_MB + ' ميجا من ملفات التعرف من هالموقع فقط، مرة وحدة. صفحات الكتاب ما تطلع من جهازك، وإذا قفلت التبويب توقف القراءة وتكمل من آخر صفحة بعدين.</p></div>' : '') +
+    (scanOk ? '<div class="msg" role="note" style="margin:.6rem 0 0"><b>' + tx('كتاب ممسوح ضوئيًا') + '</b><p style="margin:.35rem 0 0; line-height:1.75">' + (LANG === 'en'
+      ? (rep.pages || 0) + ' pages. Local text recognition takes ' + scanEstEn + ' (estimate). On first use the app downloads about ' + OCR_FIRST_DOWNLOAD_MB + ' MB of recognition files from this site only, once. Book pages never leave your device; if you close the tab, recognition stops and continues from the last page later.'
+      : arCount(rep.pages || 0, 'صفحة') + '. قراءة النص محليًا تاخذ ' + ocrApproxDuration(scanEst) + ' (تقدير). أول مرة ينزّل التطبيق قرابة ' + OCR_FIRST_DOWNLOAD_MB + ' ميجا من ملفات التعرف من هالموقع فقط، مرة وحدة. صفحات الكتاب ما تطلع من جهازك، وإذا قفلت التبويب توقف القراءة وتكمل من آخر صفحة بعدين.') + '</p></div>' : '') +
     '<p class="flabel">' + tx('النوع') + '</p>' + seg('pvType', Object.keys(TYPES).map(k => [k, TYPES[k]]), it.type) +
     '<label class="flabel" for="pvT">' + tx('العنوان') + '</label><input class="inp" id="pvT" dir="auto" value="' + esc(it.title) + '">' +
     '<label class="flabel" for="pvA">' + tx('المؤلف') + '</label><input class="inp" id="pvA" dir="auto" value="' + esc(it.author || '') + '">' +
-    '<p class="flabel">' + tx('اللغة') + '</p>' + seg('pvLang', [['ar', 'العربية'], ['en', 'English']], it.lang === 'en' ? 'en' : 'ar') +
+    '<p class="flabel">' + tx('اللغة') + '</p>' + seg('pvLang', [['ar', LANG === 'en' ? 'Arabic' : 'العربية'], ['en', 'English']], it.lang === 'en' ? 'en' : 'ar') +
     (scanOk ? '<p class="flabel">' + tx('طريقة قراءة النص') + '</p>' + seg('pvOcr', [['local', 'محلي مجاني (أسرع)'], ['cloud', 'بالذكاء (أعلى جودة، بمفتاحك)']], P.ocrMode || 'local') + '<div id="pvCloudNote" role="note" hidden></div>' : '') +
     '<p class="flabel"><span>' + tx('الفصول') + '</span> <bdi id="pvN">' + it.chapters.length + '</bdi></p><ol id="pvCh" style="margin:0; padding-inline-start:1.3em; font-size:.88rem; line-height:1.7; max-height:8.5rem; overflow-y:auto" dir="auto">' + chList(it) + '</ol>' +
     '<p class="flabel">' + tx('أول صفحة من الفصل الأول') + '</p><div id="pvFirst" data-figitem="#preview" dir="' + langDir(it.lang) + '" style="max-height:38svh; overflow-y:auto; border:1px solid var(--rule); border-radius:8px; padding:.75rem 1rem; background:var(--surface); font-size:.92rem">' + (firstPage(it) || '<p class="empty">' + tx('ما طلع نص.') + '</p>') + '</div>' +
@@ -5790,7 +5813,7 @@ function rtP(){
 let RT = null, RT_TRY = null, RT_END = false, RT_NOFS = false, rtRzT = 0;
 function rtTplOf(it){ const P = rtP(); if (RT_TRY && RT_TRY.book === it.id && tplGet(RT_TRY.id)) return RT_TRY.id; return tplGet(P.books[it.id]) ? P.books[it.id] : P.def; }
 const rtFlow = () => $('#v-read .rt-flow');
-const rtNum = n => RT && RT.rtl ? arD(n) : String(n);
+const rtNum = n => RT && RT.rtl && LANG !== 'en' ? arD(n) : String(n);
 const rtBusy = () => $('#sheet').classList.contains('open') || !$('#modal').hidden || !!CH || document.body.classList.contains('menu-open') || sndOpenP || !!$('#rtPick');
 const rtMenuOpen = () => { const m = $('#rtTools'); return !!(m && !m.hidden); };
 const rtIOS = () => /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -5847,7 +5870,7 @@ function rtAnyKey(){ if (RT && RT.paged) return rtCurKey(); const el = $$('#v-re
 function rtReflow(){ if (!RT) return; if (RT.paged) rtLayout(rtCurKey(), false, null); rtPlaceAff(); }
 function rtReflowSoon(){ clearTimeout(rtRzT); rtRzT = setTimeout(rtReflow, 140); }
 function rtDecorate(){
-  const v = $('#v-read'), id = RT.id, ind = RT.rtl && id !== 'modern';
+  const v = $('#v-read'), id = RT.id, ind = RT.rtl && LANG !== 'en' && id !== 'modern';
   v.querySelectorAll('.divider[id] .kicker').forEach(k => { if (!k.querySelector('.rt-cn')){ const n = +k.closest('.divider').id.slice(1) + 1; k.insertAdjacentHTML('beforeend', ' <span class="rt-cn">' + (ind ? arD(n) : n) + '</span>'); } });
   if (ind){ v.querySelectorAll('sup.fn button[data-fn]').forEach(b => { b.textContent = arD(b.dataset.fn.split('|')[1]); }); v.querySelectorAll('.sec-num').forEach(s => { s.textContent = arD(s.textContent); }); }
   if (id === 'manu') v.querySelectorAll('.section').forEach(s => { const p = s.querySelector('.bk p'); if (p && !p.querySelector('.lead, .rt-rub')) rtRubric(p); });
@@ -6163,7 +6186,7 @@ function rtHint(){
   if (!P.seen[RT.id]) msg = RT.T.hint;
   else if (RT_NOFS && rtIOS() && !P.ios && !rtStandalone()){ msg = 'لتجربة ملء الشاشة الكاملة على الآيفون: اضغط «مشاركة» ثم «أضف إلى الشاشة الرئيسية».'; key = 'ios'; }
   if (!msg) return;
-  h.dataset.key = key; h.innerHTML = '<p>' + msg + '</p><button type="button" data-rthint>فهمت</button>'; h.hidden = false;
+  h.dataset.key = key; h.innerHTML = '<p>' + msg + '</p><button type="button" data-rthint>فهمت</button>'; if (LANG === 'en') trNode(h); h.hidden = false;
   const a = key === 'ios' ? null : $('#rtUI .rt-rib, #rtUI .rt-pen, #rtUI .rt-fab'), hw = h.offsetWidth, hh = h.offsetHeight;
   let top = innerHeight * .4, left = (innerWidth - hw) / 2;
   if (a){ const r = a.getBoundingClientRect(); top = r.top + r.height / 2 < innerHeight / 2 ? r.bottom + 10 : r.top - hh - 10; left = r.left + r.width / 2 - hw / 2; }
@@ -6201,7 +6224,7 @@ function rtPick(id){
 
 /* ----- gallery screen ----- */
 function renderTpl(){
-  document.title = tx('معرض القوالب') + ' · مكتبتي';
+  document.title = tx('معرض القوالب') + ' · ' + tx('مكتبتي');
   const bk = itemById('demo-experience') || allItems().find(i => i.type === 'book') || allItems()[0];
   const bl = bk ? itemBlocks(bk) : [], b = bl.find(x => (x.text || '').length > 140) || bl[0], par = esc(short(plain(b ? b.text : ''), 230)), dir = bk ? bdir(bk) : 'rtl', def = rtP().def;
   $('#v-tpl').innerHTML = '<div class="tg-wrap"><h1 class="vh">معرض القوالب</h1><p class="tg-intro">ثلاثة قوالب للقراءة. كل كتاب يتذكّر قالبه، والافتراضي للكتب الجديدة من «الملف» ← «القراءة».</p>' +
@@ -6306,156 +6329,9 @@ function rtInit(){
 
 /* ---------- i18n: one dictionary (ar is the key, en is the value) ---------- */
 let LANG = 'ar';
-const EN_UI = {
-  'مكتبتي':'My Library','القائمة':'Menu','الأقسام':'Sections','اطوِ الشريط':'Collapse sidebar','افتح القائمة':'Open menu',
-  'محادثة جديدة':'New chat','المكتبة':'Library','أضف كتاب':'Add book','اقتباساتي':'My quotes','تظليلاتي':'My highlights','مراجعة اليوم':"Today's review",'قاموسي':'My glossary','خريطة أفكاري':'Idea map','الإعدادات':'Settings','أقرأ حالياً':'Currently reading','المحادثات':'Chats',
-  'وش تبي تقرأ اليوم؟':'What do you want to read today?','أكمل':'Continue','الفصل':'Chapter','اسأل مكتبتك…':'Ask your library…','أرسل':'Send','أوقف':'Stop','انسخ':'Copy','انسخت':'Copied','يكتب…':'Typing…','شيل الفقرة':'Remove passage','ارفع كتاب: PDF أو EPUB أو نص':'Upload a book: PDF, EPUB or text',
-  'أكمل القراءة':'Continue reading','مكانك':'Your place','ما بدأته':'Not started','هذا مكانك في':'Here’s your place in','لقيت أكثر من كتاب، اختر:':'I found more than one book — pick one:','أفتح لك مراجعة اليوم.':"Opening today's review.",'تفضل، أضف كتابك.':'Go ahead, add your book.',
-  'ارجع':'Back','ارجع للشات':'Back to chat','ارجع للمكتبة':'Back to library','ناقش':'Discuss','السابقة':'History','المحادثات السابقة':'Previous chats','ما فيه محادثات محفوظة.':'No saved chats.','رسالة':'messages',
-  'اشرح':'Explain','اسألني':'Quiz me','ناقشني':'Debate me','اربط':'Connect','اشرح لي':'Explain this to me','اسألني في اللي قريته':'Quiz me on what I read','ناقشني في فكرة هالفصل':"Debate me on this chapter's idea",'اربط هالفصل بكتبي الثانية':'Connect this chapter to my other books','اشرح لي هالفقرة':'Explain this passage',
-  'اسمح بالكتاب كامل':'Allow the whole book','إغلاق':'Close','وش اللي ما وضح؟ أو أرسل مباشرة':"What wasn't clear? Or just send",'اكتب سؤالك أو رأيك…':'Write your question or view…','اختر وضع أو اكتب سؤالك.':'Pick a mode or write your question.','نص الفصول اللي بعد مكانك ما ينرسل إلا إذا سمحت بالكتاب كامل.':"Chapters after your place aren't sent unless you allow the whole book.",
-  'اضبط الذكاء من':'Set up AI in','أول: رابط الـAPI واسم النموذج والمفتاح.':'first: API URL, model name and key.','(ما وصل رد)':'(no reply)','(انوقف)':'(stopped)','وصل الرد':'Reply arrived','افتح':'Open','انقطع الرد، أرسل رسالة جديدة للمتابعة.':'Reply was cut off — send a new message to continue.','تراجع':'Undo','رجع التظليل':'Highlight restored','رجعت المحادثة':'Chat restored','هذي كتب تجريبية عشان تجرب التطبيق. أضف كتبك من «أضف».':'These are sample books so you can try the app. Add your own with “Add”.',
-  'ابحث في النصوص والتظليلات والملاحظات':'Search texts, highlights and notes','باقي المكتبة':'Rest of the library','مكتبتك فاضية. اضغط «أضف» والصق نص أو ارفع ملف.':'Your library is empty. Tap “Add” and paste text or upload a file.','تصدير المكتبة':'Export library','استيراد مكتبة':'Import library','جهّز للذكاء':'Prepare for AI','+ أضف':'+ Add','بحث':'Search',
-  'خلّصته':'Finished','ما فتحته بعد':'Not opened yet','اليوم':'today','أمس':'yesterday','قبل شوي':'just now','ما قريت شي هالأسبوع بعد.':"You haven't read anything this week yet.",'في العناوين':'In titles','في النصوص':'In texts','في تظليلاتي':'In my highlights','في ملاحظاتي':'In my notes','أهم فكرة في جلسة':'Key idea from a session',
-  'حاول تتذكّر الجواب قبل ما تفتحه. البطاقة ترجع لك بعد يوم، ثم أسبوع، ثم شهر.':'Try to recall the answer before revealing it. The card returns after a day, a week, then a month.','اضغط لترى الجواب':'Tap to see the answer','تذكّرتها':'I remembered','ما تذكّرت':'I forgot','خلّصت مراجعة اليوم.':"You're done for today.",'الباقي يرجع لك في وقته.':'The rest comes back on schedule.','ما عندك بطاقات اليوم.':'No cards today.','ما فيه بطاقات بعد.':'No cards yet.','وش الفكرة اللي ظللتها هنا؟':"What's the idea you highlighted here?",'تطبيق':'Applied',
-  'البطاقات تنضاف لما تقرأ أقسام فيها وقفات استرجاع أو تظلّل شي «مهم»، وترجع لك بعد يوم، ثم أسبوع، ثم شهر.':'Cards are added when you read sections with recall pauses or highlight something “Important”, and come back after a day, a week, then a month.','راجعت 10 بطاقات اليوم، وهذا يكفي. كمّل بكرة.':"You reviewed 10 cards today — that's enough. Continue tomorrow.",
-  'كل المصطلحات من كل مصادرك. تضيف مصطلح بتحديده في النص ثم «مصطلح».':'All terms from all your sources. Add one by selecting text, then “Term”.','ابحث في المصطلحات':'Search terms','بدون تعريف':'No definition','ما فيه مصطلح بهالاسم.':'No term by that name.','قاموسك فاضي. حدّد كلمة وأنت تقرأ واختر «مصطلح».':'Your glossary is empty. Select a word while reading and choose “Term”.','ظهر في':'Appears in',
-  'كل نقطة فكرة ظلّلتها أو مصطلح. النقاط الكبيرة مصطلحات تكرّرت في أكثر من مصدر، والخطوط الذهبية روابطك أنت.':'Each dot is an idea you highlighted or a term. Big dots are terms shared across sources; gold lines are your own links.','ظلّل أفكار وأنت تقرأ، وبتظهر هنا.':'Highlight ideas as you read and they’ll show up here.','مصطلح مشترك':'Shared term','تكبير':'Zoom in','تصغير':'Zoom out','ملاءمة':'Fit',
-  'رفيق القراءة':'Reading companion','أي خدمة متوافقة مع':'Any service compatible with','، مثل DeepSeek. المفتاح ينحفظ في هالمتصفح بهالجهاز بس، وما يدخل في «تصدير المكتبة».':', such as DeepSeek. The key stays in this browser on this device and is never included in “Export library”.','رابط الـAPI':'API URL','اسم النموذج':'Model name','المفتاح':'API key','أظهر':'Show','أخفِ':'Hide',
-  'نموذج يقرأ الصور (اختياري، للـPDF الممسوح)':'Vision model (optional, for scanned PDFs)','اسم نموذج الرؤية':'Vision model name','رابطه (فاضي = نفس الرابط فوق)':'Its URL (empty = same as above)','مفتاحه (فاضي = نفس المفتاح)':'Its key (empty = same key)','احفظ':'Save','جرّب الاتصال':'Test connection','امسح المفتاح':'Clear key','لغة الواجهة':'Interface language','محتوى الكتب ما يتأثر، وكل كتاب ياخذ اتجاهه من لغته.':"Book content isn't affected; each book keeps its own direction.",
-  'البطاقة: أفكار الفصل ومصطلحاته ومواضيعه. تنكتب مرة وحدة لكل فصل، وبها يعرف الرفيق كتبك بدون ما يقرأها كاملة مع كل سؤال.':'A card holds a chapter’s ideas, terms and topics. It’s written once per chapter, so the companion knows your books without reading them in full on every question.','انحفظت.':'Saved.','في هالمتصفح بس.':'In this browser only.','أجرّب…':'Testing…','الاتصال شغّال.':'Connection works.','ما اشتغل.':"Didn't work.",'انمسح المفتاح.':'Key cleared.',
-  'الفهرس':'Contents','علامة مرجعية هنا':'Bookmark here','جلسة قراءة':'Reading session','ناقش الكتاب':'Discuss the book','ابحث في الكتاب':'Search in book','خيارات العرض':'Display options','الوضع الليلي':'Dark mode','الوضع النهاري':'Light mode',
-  'مهم':'Important','ما فهمت':'Unclear','سؤال':'Question','اشرحها لي':'Explain this','مصطلح':'Term','معنى':'Meaning','اقتباس':'Quote','أدوات التحديد':'Selection tools','حدّد أي نص عشان تطلع أدوات التظليل والشرح':'Select any text to bring up highlight and explain tools','إخفاء التلميح':'Dismiss hint','حاشية':'Footnote',
-  'العرض':'Display','الوضع':'Theme','فاتح':'Light','ورقي':'Sepia','ليلي':'Dark','الخط':'Font','النسخ':'Naskh','الأميري':'Amiri','حجم الخط':'Font size','عادي':'Normal','تباعد الأسطر':'Line spacing','واسع':'Wide','عرض النص':'Text width','ضيق':'Narrow','التشكيل':'Diacritics','ظاهر':'Shown','مخفي':'Hidden','تصغير الخط':'Smaller text','تكبير الخط':'Larger text',
-  'ابحث في هالكتاب':'Search this book','كلمة أو جملة':'A word or phrase',
-  'المقدّمة':'Introduction','خريطة الكتاب':'Book map','خريطة النص':'Text map','الخاتمة':'Conclusion','علاماتي':'My bookmarks','أهم أفكار جلساتي':'Key ideas from my sessions','احذف من المكتبة':'Delete from library','أقرأ':'Reading','ما بدأت':'Not started','خلّصت':'Done','الغلاف':'Cover',
-  '→ ارجع للكتاب':'← Back to book','انسخها كلها':'Copy all','ملاحظاتي':'My notes','ملاحظة':'Note','عدّل الملاحظة':'Edit note','اربطه بـ…':'Link to…','بطاقة اقتباس':'Quote card','احذف التظليل':'Delete highlight','افتح في المصدر':'Open in source','مربوطة بـ':'Linked to',
-  'أضف للمكتبة':'Add to library','لصق نص':'Paste text','رفع ملف':'Upload file','النوع':'Type','العنوان (اختياري)':'Title (optional)','النص':'Text','أضف':'Add','اختر ملف (.txt أو .md أو .epub)':'Choose a file (.txt, .md or .epub)','روح للصق':'Go to paste',
-  'انضاف لمكتبتك':'Added to your library','انحذف من المكتبة':'Removed from library','صدّرت المكتبة':'Library exported','حطيت علامة هنا':'Bookmark added','شلت العلامة':'Bookmark removed','ربطتها':'Linked','شلت التظليل':'Highlight removed','انضاف لقاموسي':'Added to glossary','حدّد داخل فقرة وحدة':'Select within a single paragraph','انسخت، الصقه في أي AI':'Copied — paste it into any AI','كل الفصول جاهزة للذكاء':'All chapters are ready for AI','انزل للنص وحط العلامة':'Scroll into the text to place a bookmark','انسخت كل التظليلات':'Copied all highlights',
-  'في نهايتها بسألك: وش أهم فكرة قريتها؟':"At the end I'll ask: what was the key idea you read?",'أوقف الجلسة':'Stop session','تخطّي':'Skip','احفظ وكمّل':'Save and continue','وش أهم فكرة قريتها؟':'What was the key idea you read?','من ذاكرتك، قبل ما تكمل.':'From memory, before you continue.',
-  'افتح في الكتاب':'Open in book','كل اقتباس تحفظه من «اقتباس» في شريط التحديد يطلع هنا.':'Every quote you save with “Quote” in the selection bar shows up here.','ما حفظت اقتباسات بعد. حدّد نص وأنت تقرأ واختر «اقتباس».':'No saved quotes yet. Select text while reading and choose “Quote”.','كل تظليلاتك من كل الكتب.':'All your highlights from every book.','الكل':'All','صفحة الكتاب':'Book page','ما فيه تظليلات هنا بعد.':'No highlights here yet.',
-  'جاري التجهيز…':'Preparing…','احفظ الصورة':'Save image','شارك':'Share','معاينة قبل الحفظ':'Preview before saving','العنوان':'Title','المؤلف':'Author','الفصول':'Chapters','احفظ في المكتبة':'Save to library','إلغاء':'Cancel','تحويل PDF':'PDF conversion','ابدأ':'Start','أفكار':'Ideas',
-  'الملف':'Profile','القراءة':'Reading','الرفيق الذكي':'AI companion','الخصوصية والبيانات':'Privacy & data','المظهر واللغة':'Appearance & language','عن التطبيق':'About','أقسام الملف':'Profile sections',
-  'قارئ':'Reader','أهلاً،':'Hello,','اسم العرض':'Display name','لون الصورة':'Avatar color','أقرأ منذ':'Reading since','بالأرقام':'By the numbers','كتب':'Books','فصول خلّصتها':'Chapters finished','تظليلات':'Highlights','ملاحظات':'Notes','اقتباسات':'Quotes','مصطلحات':'Terms',
-  'إعدادات القارئ الافتراضية':'Reader defaults','يتبع الجهاز':'Follow device','مزيج الأصوات الافتراضي':'Default ambient sound mix','يتوفر مع ميزة الأصوات.':'Available with the sounds feature.','يتوفر مع ميزة الأصوات':'Available with the sounds feature','بدون':'None','أصوات':'Sounds',
-  'الاتصال':'Connection','أسلوب الرد':'Reply style','اللغة':'Language','الطول':'Length','بسيطة فصحى':'Simple Modern Standard','خليجي':'Gulf dialect','مثل ما أكتب':'Match how I write','مختصر':'Brief','مفصّل':'Detailed','الوضع الافتراضي':'Default mode',
-  'حماية من الحرق':'Spoiler protection','ما يكشف الرفيق تفاصيل فصول ما وصلتها.':"The companion won't reveal details of chapters you haven't reached.",'يرسل نص الكتاب كامل مع الأسئلة، وهذا يكلّف أكثر.':'Sends the whole book text with questions, which costs more.','جهّز كل الكتب':'Prepare all books','اضبط الاتصال أولاً':'Set up the connection first',
-  'وش يشوف رفيق القراءة':'What the companion can see','حالة الفصول':'Chapter status','التظليلات':'Highlights','الملاحظات والملخصات':'Notes and summaries','الاقتباسات':'Quotes','القاموس':'Glossary',
-  'الكتاب مخزّن على هالجهاز، والمقاطع اللي تسأل عنها تنرسل لمزوّد الذكاء اللي ضبطته.':'The book is stored on this device; the passages you ask about are sent to the AI provider you configured.',
-  'بياناتك':'Your data','المساحة المستخدمة':'Storage used','غير متاح في هذا المتصفح':'Not available in this browser','مرّ أكثر من 30 يومًا على آخر نسخة احتياطية. صدّر مكتبتك عشان تحفظها.':"It's been over 30 days since your last backup. Export your library to keep it safe.",
-  'امسح المحادثات':'Clear chats','امسح بطاقات الفصول':'Clear chapter cards','احذف كل البيانات':'Delete all data','امسح':'Clear','احذف':'Delete','احذف الكتاب':'Delete book',
-  'يمسح كل محادثات الرفيق من هالجهاز.':'Deletes all companion chats from this device.','يمسح بطاقات الفصول اللي كتبها الذكاء. تقدر تجهّزها من جديد.':'Deletes the chapter cards written by the AI. You can prepare them again.','يحذف كل الكتب والتظليلات والمحادثات من هالجهاز، ولا يمكن التراجع. ما يمسّ إعدادات الاتصال.':'Deletes all books, highlights and chats from this device. This cannot be undone. Connection settings are untouched.',
-  'اكتب «احذف» للتأكيد':'Type “delete” to confirm','انمسحت المحادثات':'Chats cleared','انمسحت بطاقات الفصول':'Chapter cards cleared','انحذفت كل البيانات':'All data deleted',
-  'مظهر الواجهة':'Interface theme','الورقي ويتبع الجهاز من تبويب «القراءة».':'Paper and Follow device are in the “Reading” tab.','الإصدار':'Version','قارئ عربي على جهازك: كتبك وتظليلاتك تبقى عندك.':'An Arabic reader on your device: your books and highlights stay with you.','الخطوط: IBM Plex Sans Arabic وNoto Naskh Arabic وAmiri وAref Ruqaa، برخصة SIL Open Font License.':'Fonts: IBM Plex Sans Arabic, Noto Naskh Arabic, Amiri and Aref Ruqaa, under the SIL Open Font License.',
-  'آخر قراءة':'Last read','التقدّم':'Progress','تاريخ الإضافة':'Date added','ترتيب المكتبة':'Sort library','تصفية حسب النوع':'Filter by type','طريقة العرض':'View','شبكة':'Grid','قائمة':'List','ما فيه عناصر من هالنوع.':'Nothing of this type yet.','جاهز':'Ready',
-  'استيراد ملف مكتبة':'Import a library file','اختر ملف المكتبة (.json)':'Choose a library file (.json)','ملف تصدير من «تصدير المكتبة». يُضاف لمكتبتك الحالية.':'A file exported with “Export library”. It is merged into your current library.',
-  'ابدأ القراءة':'Start reading','المترجم':'Translator','العنوان الأصلي':'Original title','ليش أقرأه':'Why read it','مراجعات مستحقة':'Reviews due','لم يبدأ':'Not started','المزيد':'More','غيّر الغلاف':'Change cover','أزل الغلاف':'Remove cover','تغيّر الغلاف':'Cover updated','انأزل الغلاف':'Cover removed','ما قدرت أقرأ الصورة':"Couldn't read the image",
-  'جهّز الكتاب':'Prepare the book','يكتب المساعد بطاقة قصيرة لكل فصل عشان يعرف كتابك بدون ما يقرأه كامل مع كل سؤال':'The assistant writes a short card for each chapter so it knows your book without reading all of it on every question',
-  'مطر':'Rain','رعد':'Thunder','ريح':'Wind','نار حطب':'Campfire','أمواج':'Waves','ريح صحراء':'Desert wind','ضجيج أبيض':'White noise','ضجيج هادئ':'Calm noise','تعذّر تحميل الصوت، تأكد من الاتصال':'Could not load the sound. Check your connection.','أصوات المطر والنار والريح والأمواج والرعد في نسخة الويب من مكتبتي.':'Rain, fire, wind, waves and thunder are in the web version of My Library.','الأصوات الطبيعية تسجيلات من Freesound برخصة CC0، لا تشترط ذكر أصحابها ونذكرهم شكرًا:':'Nature sounds are recordings from Freesound under CC0. No credit is required; we thank the recordists:','ضجيج بني':'Brown noise','مطر هادئ':'Quiet rain','ليلة صحراء':'Desert night','عاصفة':'Storm','نار وريح':'Fire & wind',
-  'شغّل الصوت':'Play sound','أوقف الصوت مؤقتاً':'Pause sound','مستوى الصوت العام':'Master volume','مستوى':'Volume','مزيجات':'Mixes','المؤقّت':'Timer','لين تنتهي جلسة القراءة':'Until the reading session ends','ابدأ جلسة قراءة من شريط القارئ أول':'Start a reading session from the reader bar first','حتى نهاية الجلسة':'Until session ends',
-  'اسم المزيج':'Mix name','احفظ المزيج':'Save mix','احذف المزيج':'Delete mix','اختر صوتاً أول':'Pick a sound first','على بعض الجوالات يوقف الصوت لما تقفل الشاشة':'On some phones the sound stops when you lock the screen','افتح مازج الأصوات':'Open sound mixer','الصوت غير مدعوم في هالمتصفح':"Sound isn't supported in this browser",
-  'يبدأ لما تشغّل الصوت وما فيه أصوات مختارة.':'Used when you press play with no sounds selected.',
-  'وسّع المحادثة':'Expand chat','افتح الكتاب':'Open book','افتح الفقرة في الكتاب':'Open passage in book','نطاق السؤال':'Question scope','هذا الكتاب':'This book','مكتبتي كلها':'My whole library','هالأسبوع':'This week','أقدم':'Older',
-  'أعد التسمية':'Rename','احذف المحادثة':'Delete chat','تحذف هالمحادثة؟':'Delete this chat?','خيارات المحادثة':'Chat options','اسم المحادثة':'Chat name','انحذفت المحادثة':'Chat deleted',
-  'شكل لكل فكرة، والذهبي لروابطك وجسورك.':'One shape per idea. Gold: your links and bridges.','تصفية الخريطة':'Filter the map','ابحث في الخريطة':'Search the map','أعد ترتيب الخريطة':'Reset layout',
-  'اسحب عقدة لتثبيتها، واضغط لتفاصيلها':'Drag a node to pin it, tap for details','أطلق كل التثبيتات':'Release all pins',
-  'غيّر النوع':'Change type','ثبّت مكانها':'Pin in place','ألغِ التثبيت':'Unpin','الجيران':'Neighbors','الروابط':'Connections','قفزة':'1 hop','قفزتان':'2 hops',
-  'رابطك':'Your link','يجمع بين كتابين':'Joins 2 books','ما لها روابط بعد':'No connections yet'
-};
-/* web-search strings */
-Object.entries({
-  'البحث في الإنترنت':'Web search',
-  'البحث التلقائي في الإنترنت':'Automatic web search',
-  'يشتغل تلقائيًا لما يحتاج السؤال معلومة حديثة أو من خارج الكتاب. مع وضع التفكير في DeepSeek يصير البحث أعمق وأغلى.':'Runs automatically when a question needs current or outside information. With DeepSeek thinking on, search becomes deeper and more expensive.',
-  'البحث في الإنترنت قد يكلّف مبلغًا بسيطًا إضافيًا على حساب مزوّدك.':'Web search may cost a little extra on your provider account.',
-  'أرسل بدون بحث':'Send without search',
-  'بحث في الإنترنت':'Searched the web',
-  'يبحث':'Searching',
-  'تم البحث':'Search finished',
-  'المصادر':'Sources',
-  'تعذّر البحث':'Web search failed'
-}).forEach(([k, v]) => { if (!(k in EN_UI)) EN_UI[k] = v; });
-/* delete-book strings (added only if missing, so existing translations stay as they are) */
-Object.entries({ 'احذف الكتاب':'Delete book','إلغاء':'Cancel','المحادثات':'Chats','يُحذف من هالجهاز:':'This will be deleted from this device:',
-  'التظليلات':'Highlights','الملاحظات':'Notes','الاقتباسات':'Quotes','بطاقات المراجعة':'Review cards',
-  'ومعها بطاقات الفصول وروابط الخريطة ومكان القراءة. ما يمكن التراجع.':'Along with chapter cards, map links and your reading position. This cannot be undone.',
-  'صدّر هذا الكتاب أولاً':'Export this book first','صدّرت الكتاب':'Book exported','خيارات الكتاب':'Book options',
-  'ما انحفظ: مساحة التخزين ممتلئة. صدّر مكتبتك واحذف ما لا تحتاجه.':'Not saved: storage is full. Export your library and delete what you do not need.',
-  'ما انحفظ آخر تغيير على هالجهاز.':'Your last change was not saved on this device.','الملف كبير جدًا. ما تغيّر شي.':'The file is too large. Nothing was changed.',
-  'ما تغيّر شي: الملف فيه بيانات غير صالحة.':'Nothing was changed: the file contains invalid data.' }).forEach(([k, v]) => { if (!(k in EN_UI)) EN_UI[k] = v; });
-/* collection strings */
-Object.entries({ 'المجموعات':'Collections','أضف إلى مجموعة':'Add to a collection','مجموعة جديدة':'New collection','اسم المجموعة':'Collection name',
-  'أنشئ':'Create','أنشئ وأضف':'Create and add','احذف المجموعة':'Delete collection','الكتب تبقى في مكتبتك.':'The books stay in your library.',
-  'حذف المجموعة؟':'Delete this collection?','تنحذف المجموعة من قائمتك، وكتبها تبقى في مكتبتك.':'The collection is removed from your list; its books stay in your library.',
-  'غير مصنّف':'Uncategorized','+ مجموعة':'+ Collection','تعديل':'Edit','خيارات المجموعة':'Collection options',
-  'اختر مجموعة، أو أنشئ واحدة جديدة.':'Pick a collection, or create a new one.','ما فيه مجموعات بعد.':'No collections yet.',
-  'ما فيه كتب في هذي المجموعة بعد.':'No books in this collection yet.','كل كتبك مصنّفة.':'All your books are filed.',
-  'انضاف للمجموعة':'Added to the collection','انشال من المجموعة':'Removed from the collection','انضافت المجموعة':'Collection created',
-  'انحذفت المجموعة':'Collection deleted','تغيّر الاسم':'Name changed' }).forEach(([k, v]) => { if (!(k in EN_UI)) EN_UI[k] = v; });
-/* ingest engine strings */
-Object.entries({ 'تحويل الملف':'Converting the file','أجهّز محوّل الملفات…':'Preparing the converter…','أقرأ الصفحات…':'Reading pages…','أرتّب الفصول والحواشي…':'Arranging chapters and notes…',
-  'ما قدرت أحوّل الملف.':'Could not convert the file.','يمكن الملف محمي أو تالف.':'The file may be protected or damaged.','طلع الناتج بشكل غير متوقّع، فما حفظت شي.':'The result had an unexpected shape, so nothing was saved.',
-  'الملف محمي بكلمة مرور. افتحه في برنامج ثاني واحفظ نسخة بدون حماية، ثم ارفعها.':'This file is password-protected. Open it in another program, save an unprotected copy, and upload that.',
-  'ما قدرت أفتح الملف. يمكن يكون تالف.':'Could not open the file. It may be damaged.','الملف فاضي.':'The file is empty.','ما قدرت أشغّل محوّل الملفات في هالمتصفح.':'Could not start the file converter in this browser.',
-  'النص سليم':'The text looks good','راجع النص قبل ما تعتمد عليه':'Check the text before relying on it','هالملف يحتاج قراءة بالصور':'This file needs image reading',
-  'نص هالملف ما ينقرأ (غالبًا صفحات ممسوحة كصور)، ويحتاج قراءة الصفحات كصور. هالميزة مو متوفرة بعد، فما راح أحفظه.':'The text in this file cannot be read (most likely scanned pages), so it needs the pages read as images. That feature is not available yet, so it will not be saved.',
-  'أغلب النص مو عربي، فما قدرت أتحقق من جودته.':'Most of the text is not Arabic, so its quality could not be checked.','بعض الصفحات نصها مشوّه.':'Some pages have garbled text.',
-  'بعض الحواشي ما انربطت بمكانها في النص.':'Some footnotes could not be linked to their place in the text.','بعض أرقام الحواشي في النص ما لقيت لها حاشية.':'Some footnote numbers in the text have no matching note.',
-  'تقسيم الفقرات ممكن يكون غير دقيق.':'Paragraph breaks may be inaccurate.','الفهرس فيه فصول أكثر من اللي قدرت أحددها.':'The table of contents lists more chapters than were found.',
-  'فيه صفحات كثيرة قبل أول فصل.':'There are many pages before the first chapter.','بعض الحروف المتصلة طلعت مقلوبة.':'Some joined letters came out reversed.',
-  'كلمات كثيرة ما لقيتها في القاموس، يمكن فيه حروف مشوّهة.':'Many words are not in the dictionary; some letters may be garbled.','ما لقيت فصول واضحة.':'No clear chapters were found.',
-  'فيه صفحات ما قدرت أقرأ نصها.':'Some pages could not be read.','ملاحظة على جودة التحويل.':'A note on conversion quality.','صفحات ما قدرت أقرأها:':'Pages that could not be read:',
-  'اللغة':'Language','عربي':'Arabic','إنجليزي':'English','فصل':'chapters','أول صفحة من الفصل الأول':'First page of chapter 1','ما طلع نص.':'No text came out.','مكان الشكل':'Figure',
-  'ارفع':'Upload','كتاب أو مقال أو ملف مكتبة: PDF أو EPUB أو Markdown أو نص. أتعرّف على نوعه بنفسي، وتقدر تصحّح قبل الحفظ.':'A book, an article or a library file: PDF, EPUB, Markdown or text. I recognize the kind myself, and you can correct it before saving.',
-  'اختر ملف':'Choose a file','أو الصق نص':'Or paste text','كمّل':'Continue','أفلت الملف هنا':'Drop the file here',
-  'ما أعرف أقرأ هالنوع من الملفات. جرّب PDF أو EPUB أو Markdown أو نص.':'I cannot read this kind of file. Try PDF, EPUB, Markdown or text.',
-  'هالملف موجود في مكتبتك':'This file is already in your library','افتح الموجود':'Open the existing copy','أضف نسخة ثانية':'Add another copy',
-  'ملف من «مكتبتي»':'A «مكتبتي» file','هذا ملف تصدير فيه':'This is an export file with','عنصر. تبي تضيفه لمكتبتك؟ ما ينحذف ولا يتغيّر شي موجود.':'items. Add them to your library? Nothing already there is deleted or changed.','استورد':'Import',
-  'تنبيه: هالكتاب محوّل من ملف ويحتاج مراجعة':'Note: this book was converted from a file and needs review',
-  'قائمة الكلمات العربية في محوّل الملفات:':'Arabic word list used by the file converter:','من Hermit Dave، مبنية من OpenSubtitles 2018. حوّلناها إلى جدول بحث. الرخصة:':'by Hermit Dave, built from OpenSubtitles 2018. Adapted into a lookup table. License:'
-}).forEach(([k, v]) => { if (!(k in EN_UI)) EN_UI[k] = v; });
-const EN_PAT = [
-  [/^أقرأ الصفحات… (\d+) من (\d+)$/, 'Reading pages… $1 of $2'],
-  [/^يجمع بين (\d+) كتب$/, 'Joins $1 books'], [/^يجمع بين (\d+) كتابًا$/, 'Joins $1 books'],
-  [/^(\d+) دقيقة$/, '$1 min'], [/^(\d+) نتيجة$/, '$1 results'], [/^(\d+) تظليل$/, '$1 highlights'], [/^بطاقة (\d+) من (\d+)$/, 'Card $1 of $2'],
-  [/^قبل (\d+) أيام$/, '$1 days ago'], [/^قبل يومين$/, '2 days ago'], [/^قبل أسبوع$/, 'a week ago'], [/^قبل أسبوعين$/, '2 weeks ago'], [/^قبل (\d+) أسابيع$/, '$1 weeks ago'],
-  [/^قراءة تقريبًا (\d+) دقيقة$/, 'About $1 min read'], [/^باقي (\d+) دقيقة من (\d+)\.$/, '$1 of $2 min left.'], [/^الفصل (\d+)$/, 'Chapter $1'], [/^باقي (\d+) دقيقة$/, '$1 min left'], [/^(\d+) من (\d+) فصل جاهز$/, '$1 of $2 chapters ready'], [/^لون (\d)$/, 'Color $1'],
-  [/^التكلفة التقريبية: (\d+) فصل(?: في \d+ كتب)? = (\d+) طلب، قرابة (\d+) ألف توكن\.$/, 'Estimate: $1 chapters = $2 requests, about $3k tokens.'],
-  [/^تحذف «(.+)» مع تظليلاته وملاحظاته؟$/, 'Delete “$1” with its highlights and notes?'],
-  [/^صفحة (\d+) من (\d+)$/, 'Page $1 of $2'], [/^حاشية (\d+)$/, 'Footnote $1']
-];
-/* reading-template strings */
-Object.entries({ 'معرض القوالب':'Template gallery','الكتاب':'The Book','حديث':'Modern','مخطوطة':'Manuscript','الأدوات':'Tools','الخط':'Type','جرّب القالب':'Try this template','أعد التلميحات':'Reset hints','رجعت التلميحات':'Hints reset',
-  'ثلاثة قوالب للقراءة. كل كتاب يتذكّر قالبه، والافتراضي للكتب الجديدة من «الملف» ← «القراءة».':'Three reading templates. Each book remembers its own; the default for new books is in Profile → Reading.',
-  'الافتراضي':'Default','استخدم الافتراضي':'Use the default','كيف تحب تقرأ هذا الكتاب؟':'How would you like to read this book?','اختر قالبًا، وتقدر تغيّره بأي وقت من «العرض».':'Pick a template. You can change it any time from Display.',
-  'القالب':'Template','القالب الافتراضي':'Default template','للكتب اللي تفتحها أول مرة. تقدر تغيّر قالب أي كتاب من «العرض» وأنت تقرأ.':'For books you open for the first time. You can change any book’s template from Display while reading.',
-  'طريقة القراءة':'Reading mode','تمرير':'Scroll','صفحات':'Pages','إخفاء الأدوات أثناء التمرير':'Hide tools while scrolling','لا':'No','نعم':'Yes',
-  'ابحث':'Search','علامة':'Bookmark','العرض':'Display','أصوات':'Sounds','المؤقّت':'Timer','ناقش':'Discuss','خروج':'Exit','حاشية':'Note','افتح التظليل':'Open the highlight','فهمت':'Got it',
-  'لتجربة ملء الشاشة الكاملة على الآيفون: اضغط «مشاركة» ثم «أضف إلى الشاشة الرئيسية».':'For true full screen on iPhone: tap “Share”, then “Add to Home Screen”.',
-  'واجهة معاصرة واثقة: سطح محايد، وتسلسل واضح، وحركة سريعة، والقراءة تمريرًا أو صفحات.':'Confident and contemporary: neutral surfaces, clear hierarchy, crisp motion, scroll or pages.',
-  'متن بالنسخ، وعناوين وأدوات بخط الواجهة، ومسافات واضحة بين الفقرات.':'Naskh body, headings and tools in the UI font, clear space between paragraphs.',
-  'دائرة عائمة تفتح الأدوات حولها في قوس، وعلى الشاشة الضيقة في لوح قصير من الأسفل. ضغطة طويلة تفتح آخر أداة، وأيقونتها شارة صغيرة على الدائرة.':'A floating circle opens the tools in an arc around it, or in a short bottom sheet on narrow screens. Long-press opens the last tool, shown as a small badge on the circle.',
-  'اضغط الدائرة لتفتح الأدوات. ضغطة طويلة تفتح آخر أداة استعملتها، وأيقونتها الصغيرة على الدائرة. حدّد أي نص لأدوات التظليل والشرح.':'Tap the circle to open the tools. Long-press opens the last tool you used; its icon is the small badge on the circle. Select any text for highlight and explain tools.',
-  'كتاب مطبوع بعناية بين يديك: صفحتان متقابلتان على الشاشة الكبيرة، وصفحة واحدة على الجوال.':'A well-made printed book in your hands: a two-page spread on large screens, a single page on a phone.',
-  'متن بالنسخ مضبوط من الطرفين بإزاحة أول السطر، وعناوين وترويسة بالأميري، وأرقام صفحات هندية، وحواشٍ أسفل الصفحة.':'Justified Naskh body with first-line indents, Amiri headings and running header, Arabic-Indic page numbers, footnotes at the foot of the page.',
-  'شريط قراءة معلّق من أعلى الصفحة: اسحبه أو اضغطه فتنزل الأدوات كورقة مدسوسة.':'A ribbon bookmark hanging from the top edge: pull or tap it and the tools slide down like a page insert.',
-  'اسحب الشريط المعلّق أو اضغطه لتنزل الأدوات. اضغط طرف الصفحة لتقلبها، ووسطها لترى مكانك. حدّد أي نص لأدوات التظليل والشرح.':'Pull or tap the hanging ribbon to bring down the tools. Tap the edge of the page to turn it, the middle to see where you are. Select any text for highlight and explain tools.',
-  'مستوحى من المخطوطة العربية وأوائل الطباعة: ورق عتيق، وحبر أحمر للعناوين، وإطار مسطّر حول النص.':'Inspired by Arabic manuscripts and early print: aged paper, red-ink headings, a ruled frame around the text.',
-  'متن بالأميري بتباعد أسطر أوسع للتشكيل، والرقعة للعناوين الكبيرة فقط بالحبر الأحمر، والتعقيبة أسفل كل صفحة.':'Amiri body with wider leading for diacritics, Ruqaa only for large headings in red ink, and the catchword at the foot of each page.',
-  'قلم في الهامش يُخرج صندوق أقلام فيه الأدوات. ملاحظاتك حواشٍ في الهامش، وعلى الجوال علامات صغيرة في السطر تنفتح بلمسة.':'A reed pen in the margin opens a pen case holding the tools. Your notes are glosses in the margin; on a phone they are small inline marks that open with a tap.',
-  'اضغط القلم في الهامش ليخرج صندوق الأقلام بالأدوات. ملاحظاتك تظهر حاشية بجانب سطرها. حدّد أي نص لأدوات التظليل والشرح.':'Tap the pen in the margin to open the pen case of tools. Your notes appear as glosses beside their line. Select any text for highlight and explain tools.' }).forEach(([k, v]) => { if (!(k in EN_UI)) EN_UI[k] = v; });
-const AR_RE = /[\u0600-\u06FF]/;
-const TR_SKIP = '#v-read, .rtp-p, [dir="auto"], .cv, .cm-a, .cm-u, textarea, pre, code, .gl-ar, .gl-def, .sh-quote, bdi';
 const tx = s => LANG === 'en' ? (EN_UI[s] || s) : s;
-function patTr(k){ for (const [re, rp] of EN_PAT) if (re.test(k)) return k.replace(re, rp); return null; }
-function trStr(k){
-  if (EN_UI[k]) return EN_UI[k];
-  const p = patTr(k); if (p != null) return p;
-  if (k.includes('·')){ const out = k.split(/(\s*·\s*)/).map(x => !x.trim() || x.includes('·') || !AR_RE.test(x) ? x : (EN_UI[x.trim()] || patTr(x.trim()))); if (out.every(x => x != null)) return out.join(''); }
-  return null;
-}
 function trText(n){ const v = n.nodeValue, k = v.trim(); if (!k || !AR_RE.test(k)) return; const p = n.parentElement; if (!p || p.closest(TR_SKIP)) return; const e = trStr(k); if (e != null) n.nodeValue = v.replace(k, e); }
-function trAttr(el, a){ if (!el.closest || el.closest('#v-read')) return; const v = el.getAttribute(a); if (!v || !AR_RE.test(v)) return; const e = trStr(v.trim()); if (e != null) el.setAttribute(a, e); }
+function trAttr(el, a){ const p = el.parentElement; if (!p || p.closest(TR_SKIP) || el.closest('.card')) return; const v = el.getAttribute(a); if (!v || !AR_RE.test(v)) return; const e = trStr(v.trim()); if (e != null) el.setAttribute(a, e); }
 function trNode(root){
   if (root.closest && root.closest(TR_SKIP)) return;
   const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); let n; while ((n = w.nextNode())) trText(n);
@@ -6475,9 +6351,13 @@ function applyLang(){
   Object.assign(TYPES, { book:'Book', article:'Article', explainer:'Explainer', notes:'Notes' });
   STATUS.none[0] = 'Not started'; STATUS.reading[0] = 'Reading'; STATUS.done[0] = 'Done';
   trNode(document.body);
+  let reflowT = 0;
   new MutationObserver(ms => ms.forEach(m => {
     if (m.type === 'attributes'){ trAttr(m.target, m.attributeName); return; }
     m.addedNodes.forEach(n => { if (n.nodeType === 3) trText(n); else if (n.nodeType === 1) trNode(n); });
+    /* the paged reader measures text before this observer runs; re-measure after
+       the English copy replaces the Arabic so pages are not cut for the wrong width */
+    clearTimeout(reflowT); reflowT = setTimeout(() => { if (LANG === 'en' && RT) rtReflowSoon(); }, 80);
   })).observe(document.body, { childList:true, subtree:true, attributes:true, attributeFilter:['aria-label', 'placeholder', 'title'] });
 }
 
