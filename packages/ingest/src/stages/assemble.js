@@ -24,6 +24,140 @@ function decorativeKeys(pages) {
  * @param {Array} groups      heading groups
  * @param {object} ctx        { title, author }
  */
+/* ---------- reading units ----------
+   The reader shows one paragraph as one block and one chapter as one unit with a duration, so a
+   paragraph of 80,000 characters or a chapter that holds most of the book cannot be read or
+   navigated. The cuts below only decide where a boundary already exists (a sentence end, a section
+   heading, a heading paragraph, a paragraph break); no character of the text changes. */
+
+export const PARA_CAP = 3000, PARA_MIN = 600;
+export const CHAP_CAP = 20000, CHAP_MIN_PART = 800;
+
+const textLen = b => (b.type === 'list' ? b.items.join(' ').length : b.type === 'figure' ? (b.caption || '').length : (b.text || '').length);
+const blocksLen = bs => bs.reduce((n, b) => n + textLen(b), 0);
+const chapterLen = ch => ch.sections.reduce((n, s) => n + blocksLen(s.blocks), 0);
+
+/** Sentences of a paragraph, each keeping its closing mark. */
+export function sentenceChunks(text) {
+  const out = [];
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c !== '.' && c !== '!' && c !== '؟' && c !== '…') continue;
+    if (i + 1 < text.length && !/\s/.test(text[i + 1])) continue;
+    out.push(text.slice(start, i + 1));
+    start = i + 1;
+  }
+  if (start < text.length) out.push(text.slice(start));
+  return out.map(s => s.trim()).filter(Boolean);
+}
+
+/** Split one paragraph into pieces of at most `cap` characters, at sentence ends or word breaks. */
+export function splitParagraph(text, cap = PARA_CAP) {
+  const parts = [];
+  let cur = '';
+  for (const sentence of sentenceChunks(text)) {
+    if (cur && (cur + ' ' + sentence).length > cap) { parts.push(cur); cur = sentence; }
+    else cur = cur ? cur + ' ' + sentence : sentence;
+  }
+  if (cur) parts.push(cur);
+  const out = [];
+  for (const p of parts) {
+    if (p.length <= cap * 1.4) { out.push(p); continue; }
+    let rest = p;
+    while (rest.length > cap) {
+      const cut = rest.lastIndexOf(' ', cap);
+      if (cut <= 0) break;
+      out.push(rest.slice(0, cut).trim()); rest = rest.slice(cut).trim();
+    }
+    if (rest) out.push(rest);
+  }
+  return out.filter(Boolean);
+}
+
+/** No paragraph is a wall of text: cut the very long ones at sentence ends. */
+function capParagraphs(book, opts) {
+  const cap = Math.max(PARA_MIN * 2, opts.params?.paragraphChars ?? PARA_CAP);
+  const fix = blocks => {
+    const out = [];
+    for (const b of blocks) {
+      if (b.type !== 'p' || (b.text || '').length <= cap || (b.text || '').includes('  \n')) { out.push(b); continue; }
+      for (const text of splitParagraph(b.text, cap)) out.push({ type: 'p', text });
+    }
+    return out;
+  };
+  for (const ch of book.chapters) for (const s of ch.sections) s.blocks = fix(s.blocks);
+  if (book.intro && book.intro.blocks) book.intro.blocks = fix(book.intro.blocks);
+}
+
+/** Notes follow the part that still contains their marker; the rest stay on the first part. */
+function assignNotes(ch, parts) {
+  const notes = ch.notes || [];
+  if (!notes.length) return;
+  for (const note of notes) {
+    const mark = '[^' + note.id + ']';
+    const hit = parts.find(p => p.sections.some(s => s.blocks.some(b => (b.text || '').includes(mark) || (b.items || []).some(x => x.includes(mark)))));
+    (hit || parts[0]).notes.push(note);
+  }
+}
+
+const partTitle = (base, k) => (k === 1 ? base : base + ' (' + k + ')');
+
+/** Cut one oversized chapter into parts: its sections, then heading paragraphs, then paragraphs. */
+function cutChapter(ch, cap) {
+  if (chapterLen(ch) <= cap) return [ch];
+  // 1. The chapter's own sections (they are real titles, so they make the best parts).
+  const usable = ch.sections.filter(s => s.blocks.length && blocksLen(s.blocks) >= CHAP_MIN_PART);
+  if (usable.length >= 2) {
+    const parts = [];
+    for (const s of ch.sections) {
+      if (!s.blocks.length || !blocksLen(s.blocks)) continue;
+      const title = s.title || partTitle(ch.title, parts.length + 1);
+      if (blocksLen(s.blocks) <= cap) parts.push({ title, minutes: 1, sections: [s], notes: [] });
+      else parts.push(...cutBlocks(s.blocks, title, cap));
+    }
+    if (parts.length >= 2) { assignNotes(ch, parts); return parts; }
+  }
+  // 2. Headings inside the chapter, then paragraph breaks.
+  const blocks = ch.sections.flatMap(s => s.blocks);
+  const parts = cutBlocks(blocks, ch.title, cap);
+  if (parts.length >= 2) { assignNotes(ch, parts); return parts; }
+  return [ch];
+}
+
+/**
+ * Group blocks into parts of at most `cap` characters. A heading paragraph opens a new part and
+ * becomes its title; otherwise a part is titled after the chapter (first part) or chapter plus
+ * its number.
+ */
+function cutBlocks(blocks, baseTitle, cap) {
+  const parts = [];
+  let cur = [], title = baseTitle, k = 1;
+  const flush = () => {
+    if (!cur.length) return;
+    parts.push({ title: title || baseTitle, minutes: 1, sections: [{ title: '', blocks: cur }], notes: [] });
+    cur = []; k++; title = partTitle(baseTitle, k);
+  };
+  for (const b of blocks) {
+    if (b.type === 'h4') {
+      if (blocksLen(cur) >= CHAP_MIN_PART) { flush(); title = b.text; continue; }
+      if (!cur.length) { title = b.text; continue; }   // a heading that opens the chapter is its title
+    }
+    if (cur.length && blocksLen(cur) + textLen(b) > cap) flush();
+    cur.push(b);
+  }
+  flush();
+  return parts;
+}
+
+function splitChapters(book, opts) {
+  const cap = Math.max(1000, opts.params?.chapterChars ?? CHAP_CAP);
+  const out = [];
+  for (const ch of book.chapters) out.push(...cutChapter(ch, cap));
+  book.chapters = out;
+}
+
+/** Assemble pages into the book: chapters, sections, paragraphs, notes and figures. */
 export function assemble(pages, stats, chapters, groups, ctx = {}, opts = {}) {
   const book = makeBook({ title: ctx.title, author: ctx.author });
   const assets = [];
@@ -197,6 +331,10 @@ export function assemble(pages, stats, chapters, groups, ctx = {}, opts = {}) {
   }
   if (!on(opts, 'drop-front-matter') && intro.length) book.intro = { blocks: intro };
   for (const c of book.chapters) { delete c._n; delete c._method; }
+  // Reading units: a wall of text in one paragraph, or one chapter that holds most of the book,
+  // is unusable in the reader. Both are grouping decisions only; no character of the text changes.
+  if (on(opts, 'paragraph-cap')) capParagraphs(book, opts);
+  if (on(opts, 'split-long-chapters')) splitChapters(book, opts);
   finalizeBook(book);
   return { book, assets, metrics: m };
 }

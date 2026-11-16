@@ -290,3 +290,18 @@ most of a book (one chapter is 69–100% of its file, up to 289 minutes) so chap
 useless; note markers whose note could not be linked still read as bare digits (the reader cannot
 open them); table/list rows become one-line paragraphs (21.9% of paragraphs in 5150ac47 are under
 four words), which is what the `paragraphs-suspect` issue reports.
+
+## Round 6 (2026-11-17): reading units (paragraph and chapter caps)
+
+The reader shows one paragraph as one block and one chapter as one unit with a duration, so the
+import now caps both. The cuts only decide where a boundary already exists (a sentence end, a
+section heading, a heading paragraph, a paragraph break); the block sequence and the text are
+unchanged (verified per fixture by comparing the paragraph sequence with the rules on and off).
+
+| Rule | Evidence on the fixtures | Status |
+|---|---|---|
+| `paragraph-cap` | a paragraph longer than 3,000 characters is cut at sentence ends (a single sentence longer than the cap is cut at a word break; verse paragraphs with `  \n` are never cut). Longest paragraph per file, off -> on: 0f1b65bc 4,057 -> 0 over 4,000, f692654d 82,814 -> 4,096, the other five were already under the cap. | kept |
+| `split-long-chapters` | a chapter over 20,000 characters is cut at its own sections (titles kept), then at heading paragraphs, then at paragraph breaks; continuation parts are titled "<chapter> (2)", "(3)". Chapters per file off -> on: 007572a7 3 -> 54, 0f1b65bc 25 -> 89, f692654d 4 -> 21, 35590259 3 -> 12, 74b4b9e2 18 -> 40, 5150ac47 23 -> 50, f42c7b4f 4 -> 6. Longest chapter in minutes: 289 -> 18 (0f1b65bc), 255 -> 18 (f692654d), 138 -> 18 (35590259), 110 -> 17 (007572a7). No chapter part is under 800 characters. | kept |
+
+Notes are split with their chapter: a note follows the part whose text still references it, and a
+note nobody references stays on the first part (the open issue below).

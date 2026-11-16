@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { detectFootnotes, detectHeadings, detectChapters, findToc } from '../src/stages/structure.js';
-import { assemble } from '../src/stages/assemble.js';
+import { assemble, splitParagraph } from '../src/stages/assemble.js';
 import { MARK_OPEN, MARK_CLOSE } from '../src/stages/normalize.js';
 
 const M = n => MARK_OPEN + n + MARK_CLOSE;
@@ -141,5 +141,54 @@ describe('assemble', () => {
     const pages = [1, 2, 3].map(i => ({ index: i, height: 600, lines: [para(400, i)], images: [{ x: 10, y: 560, w: 60, h: 30, key: 'logo', png }] }));
     const { metrics } = assemble(pages, stats, { chapters: [], method: 'none', toc: null }, [], {}, {});
     expect(metrics.figures).toBe(0);
+  });
+
+  it('splits a paragraph that is a wall of text at sentence ends, keeping every word', () => {
+    const sentence = 'هذه جملة عربية طويلة بعض الشيء لاختبار القص. ';
+    const text = sentence.repeat(80).trim();          // ~3,400 characters, no line breaks
+    const parts = splitParagraph(text, 1200);
+    expect(parts.length).toBeGreaterThan(1);
+    for (const p of parts) expect(p.length).toBeLessThanOrEqual(1200 * 1.5);
+    expect(parts.join(' ').replace(/\s+/g, ' ')).toBe(text.replace(/\s+/g, ' '));
+  });
+
+  it('splits a paragraph with no sentence end at a word boundary', () => {
+    const text = ('كلمة '.repeat(400)).trim();
+    const parts = splitParagraph(text, 1000);
+    expect(parts.length).toBeGreaterThan(1);
+    expect(parts.join(' ').replace(/\s+/g, ' ')).toBe(text);
+  });
+
+  it('cuts an oversized chapter at its own sections, keeping their titles', () => {
+    const body = 'نص الفصل الطويل الذي يتكرر ليمتلئ القسم. '.repeat(60);   // ~2,600 chars each
+    const pages = [1, 2, 3].map(i => ({
+      index: i, height: 600,
+      lines: i === 1 ? [L('فصل كبير', 560, { size: 20, parStart: true }), L(body, 520, { parStart: true })]
+        : [L('قسم ' + i, 560, { size: 16, parStart: true }), L(body, 520, { parStart: true })]
+    }));
+    const g = detectHeadings(pages, stats, {});
+    const ch = detectChapters(pages, g, {}, { params: { chapterStartsPage: false } });
+    const { book: b } = assemble(pages, stats, ch, g, {}, { params: { chapterChars: 3000 } });
+    expect(b.chapters.length).toBeGreaterThan(1);
+    expect(b.chapters.map(c => c.title)).toContain('قسم 2');
+  });
+
+  it('cuts an oversized chapter with no sections at paragraph breaks, and notes follow their marker', () => {
+    const lines = [L('فصل بلا أقسام', 560, { size: 20, parStart: true })];
+    for (let i = 0; i < 40; i++) lines.push(L('جملة رقم ' + i + ' ' + WORDS[i % 10] + ' ' + WORDS[(i * 3) % 10] + ' في هذا الفصل الطويل.', 520 - i * 18, { parStart: true, endsShort: true }));
+    const pages = [{ index: 1, height: 600, lines, notes: [] }];
+    const g = detectHeadings(pages, stats, {});
+    const ch = detectChapters(pages, g, {}, { params: { chapterStartsPage: false } });
+    const { book: b } = assemble(pages, stats, ch, g, {}, { params: { chapterChars: 900 } });
+    expect(b.chapters.length).toBeGreaterThan(1);
+    expect(b.chapters[1].title).toMatch(/\(2\)/);
+  });
+
+  it('leaves a chapter under the cap as one unit', () => {
+    const pages = [1, 2].map(i => ({ index: i, height: 600, lines: [L('فصل ' + i, 560, { size: 20, parStart: true }), para(520, i)] }));
+    const g = detectHeadings(pages, stats, {});
+    const ch = detectChapters(pages, g, {}, { params: { chapterStartsPage: false } });
+    const { book: b } = assemble(pages, stats, ch, g, {}, { params: { chapterChars: 3000 } });
+    expect(b.chapters.length).toBe(2);
   });
 });

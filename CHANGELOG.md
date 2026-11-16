@@ -14,6 +14,12 @@ All notable changes are recorded here. This project follows
 
 ### Fixed
 
+- PDF import, reading units: a paragraph is no longer a wall of text (cut at sentence ends above
+  3,000 characters; longest paragraph in the test PDFs 82,814 -> 4,096) and a chapter no longer
+  holds most of a book: chapters over 20,000 characters are cut at their own sections, then at
+  headings, then at paragraph breaks. Chapters per book rise from 3-25 to 6-89 and the longest
+  chapter falls from 289 minutes to 18. The two rules are `paragraph-cap` and
+  `split-long-chapters`; paragraph sequence and text are unchanged (checked per fixture).
 - PDF import, reading quality: words that the text layer split with a stray space are joined
   (`الص وت` -> `الصوت`), a paragraph of inset justified prose is no longer mistaken for verse (which
   put hard line breaks inside sentences), ornate parentheses read as ordinary ones, spaces before
