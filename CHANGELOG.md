@@ -14,6 +14,13 @@ All notable changes are recorded here. This project follows
 
 ### Fixed
 
+- PDF import glued words together: pdf.js writes the word gap before a word's last diacritic
+  ("رجلا ًمن" for "رجلًا من") and the importer deleted that space instead of moving it after the
+  mark, so common words ran into each other. The new `mark-word-gap` rule keeps the gap using the
+  tanween, the letter shapes of the text layer and the word list, and a final pass applies it to
+  captions, notes, headings and titles too. Across the seven test PDFs 319–6,671 word spaces per
+  book are restored and the dictionary coverage rises in every file. Books imported before this
+  change keep their old text until they are imported again.
 - In-book chat panel: with a model pinned, the header overflowed and the close
   button was pushed off screen (clipped on phones, drawn over the reader on
   desktop) with the book title collapsed, so there was no visible way back to

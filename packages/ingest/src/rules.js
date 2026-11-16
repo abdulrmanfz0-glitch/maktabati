@@ -14,6 +14,7 @@ export const RULES = [
   { id: 'mirror-brackets', stage: 'reorder', off: 'keep brackets as pdf.js returns them in RTL chunks' },
   { id: 'stat-reverse', stage: 'normalize', off: 'never reverse a page judged to be in visual order' },
   { id: 'attach-marks', stage: 'normalize', off: 'leave separated diacritic items where they fall' },
+  { id: 'mark-word-gap', stage: 'normalize', off: 'a space in front of a final mark is deleted, so the next word is glued onto it' },
   { id: 'nfkc-forms', stage: 'normalize', off: 'keep Arabic presentation forms' },
   { id: 'strip-tatweel', stage: 'normalize', off: 'keep tatweel (U+0640)' },
   { id: 'gap-space', stage: 'normalize', off: 'join the items of a line with one space' },

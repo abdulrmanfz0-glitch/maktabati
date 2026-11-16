@@ -54,11 +54,11 @@ export function assemble(pages, stats, chapters, groups, ctx = {}, opts = {}) {
   const closePara = () => {
     if (!para) return;
     if (para.verse) {
-      para.text = para.text.split('  \n').map(x => repairSplitMarks(x.replace(/\s+/g, ' ')).trim()).filter(Boolean).join('  \n');
+      para.text = para.text.split('  \n').map(x => repairSplitMarks(x.replace(/\s+/g, ' '), opts.lexicon, on(opts, 'mark-word-gap')).trim()).filter(Boolean).join('  \n');
       delete para.verse; m.verse++;
       para = null; return;
     }
-    para.text = repairSplitMarks(para.text.replace(/\s+/g, ' ')).trim();
+    para.text = repairSplitMarks(para.text.replace(/\s+/g, ' '), opts.lexicon, on(opts, 'mark-word-gap')).trim();
     if (para.text) {
       m.paragraphs++;
       if (TERMINAL.test(para.text)) m.terminal++;

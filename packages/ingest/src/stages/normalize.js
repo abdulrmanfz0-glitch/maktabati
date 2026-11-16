@@ -38,15 +38,164 @@ export const stripMarks = s => s.replace(RE_MARKS_G, '');
 // Built from RE_MARK so Quranic signs that are not combining (U+06DE ۞,
 // U+06E9 ۩, U+06E5/U+06E6) keep the space before them.
 const RE_SPACE_BEFORE_MARK = new RegExp('[ \\t\\u00A0]+(?=' + RE_MARK.source + ')', 'g');
+const RE_MARK_GAP = new RegExp('(' + RE_MARK.source + ')[ \\t\\u00A0]+(?=' + RE_MARK.source + ')', 'g');
+// "word + space + mark-run + rest". The space may be spurious (the mark belongs to the word
+// before it) or the real word gap (the mark is the last thing in the word before it).
+const RE_STRAY_MARK_GAP = new RegExp('([^\\s\\u00A0]+)([ \\t\\u00A0]+)(' + RE_MARK.source + '+)([^\\s\\u00A0]*)', 'g');
+const AR_LETTERS = '\\u0621-\\u063A\\u0641-\\u064A\\u066E-\\u06D3\\u06FA-\\u06FF';
+const AR_FORMS = '\\uFB50-\\uFDFF\\uFE70-\\uFEFF';
+// A tanween (and the alif that may follow it) always ends a word, so a letter right after one is
+// a word that lost its space in the text layer ("كثيرٍعلى"). The letters after it must be a word.
+const RE_TANWEEN_GLUED = new RegExp('(' + RE_MARK.source + '*[\u064B-\u064D])([\u0627\u0649]?)(?=[' + AR_LETTERS + '])', 'g');
+// A word after the marks carries its own diacritics; they are stripped before the word list look-up.
+const RE_LEAD_WORD = new RegExp('^[' + AR_LETTERS + AR_FORMS + RE_MARK.source.slice(1, -1) + ']+');
+const RE_TAIL_WORD = new RegExp('[' + AR_LETTERS + AR_FORMS + RE_MARK.source.slice(1, -1) + ']+$');
+const RE_TANWEEN = /[\u064B-\u064D]/;
+// A shadda doubles the letter it sits on; at a word end it is rare, in the middle of a word it is
+// not. When the letter shapes give no answer, a shadda keeps the mark on the previous word.
+const RE_SHADDA = /\u0651/;
+// A short fragment that happens to be in the word list must not outvote a whole word; the
+// letters after the marks are only taken as a new word when they are a common one.
+const NEXT_WORD_RANK = 50000;
+// A word ending in a shadda is rarer than one with a medial shadda, but the word before it must be
+// a common word for that reading to win ("كلّ شيء" vs "خِلِّكان").
+const SHADDA_PREV_RANK = 10000;
+
+/**
+ * Shape of the Arabic presentation forms: isolated (0), final (1), initial (2), medial (3).
+ * A final/isolated letter ends its word, so a space after it is a real word gap; an initial or
+ * medial letter continues into the next letter, so the space is spurious. Only four-shape letters
+ * are conclusive: non-joining letters (ا د ذ ر ز و) look final even in the middle of a word.
+ */
+const FORM_INFO = (() => {
+  const out = new Map();
+  for (let cp = 0xFE80; cp <= 0xFEFC; cp++) {
+    const base = String.fromCodePoint(cp).normalize('NFKC');
+    if (!/^[\u0621-\u064A]$/.test(base)) continue;
+    let len = 1;
+    while (cp + len <= 0xFEFC && String.fromCodePoint(cp + len).normalize('NFKC') === base) len++;
+    if (len === 2 || len === 4) for (let k = 0; k < len; k++) out.set(cp + k, { shape: k, forms: len });
+    cp += len - 1;
+  }
+  return out;
+})();
+
+/** Shape evidence for the last letter of `s`: true = the word ends there, null = no evidence. */
+function endsWord(s) {
+  const chars = [...s];
+  for (let i = chars.length - 1; i >= 0; i--) {
+    const info = FORM_INFO.get(chars[i].codePointAt(0));
+    if (info) return info.forms === 4 ? info.shape <= 1 : null;
+    if (!RE_MARK.test(chars[i])) return null;   // a plain letter carries no shape
+  }
+  return null;
+}
 
 /**
  * Repair marks that pdf.js left separated from their base letter.
- * A combining mark never starts a word, so whitespace before one is always
- * spurious. Whitespace after a mark is handled at item boundaries in
- * joinItems, where the item geometry can prove the two touch.
+ * A combining mark never starts a word, so a space in front of one is always in the wrong place,
+ * but there are two different wrong places:
+ *   - the mark belongs to the word before the space and the space is spurious ("ل ُغة" -> "لُغة");
+ *   - the space is the real word gap and pdf.js moved it in front of the final mark
+ *     ("رجلا ًمن" -> "رجلًا من"), which used to lose the space and glue the two words.
+ * The evidence decides:
+ *   - nothing but punctuation follows the marks: the mark ends the token, attach it;
+ *   - tanween (ً ٌ ٍ) only ever ends a word, so letters after it start a new word — except the
+ *     alif that is written after the mark in "كتابًا";
+ *   - otherwise the word list decides: the letters after the marks must be a whole word on their
+ *     own and the joined form must not be one. Without a word list the old behaviour (attach) is
+ *     kept, so the repair can never invent a word break.
+ * @param {string} s
+ * @param {{ has(w: string): boolean } | null} [lexicon]
+ * @param {boolean} [wordGap] false = the pre-2026-11 behaviour (delete the space in front of the
+ *   mark); the 'mark-word-gap' rule turns it off for ablation.
  */
-export function repairSplitMarks(s) {
-  return String(s).replace(RE_SPACE_BEFORE_MARK, '').normalize('NFC');
+export function repairSplitMarks(s, lexicon = null, wordGap = true) {
+  const str = String(s);
+  if (!RE_MARK.test(str)) return str.normalize('NFC');
+  // A corrupt line can be page-sized. The repairs are local to words, so cut it at a space first
+  // and never let one regex scan a whole page.
+  if (str.length > 4000) {
+    const parts = [];
+    for (let i = 0; i < str.length;) {
+      let end = Math.min(str.length, i + 4000);
+      if (end < str.length) { const sp = str.lastIndexOf(' ', end); if (sp > i) end = sp; }
+      parts.push(repairSplitMarks(str.slice(i, end), lexicon, wordGap));
+      i = end;
+    }
+    return parts.join('');
+  }
+  let out = str;
+  /* Two gaps can sit next to each other ("كتب َمحمد ُرسالة"): the word between them is consumed by
+     the first match, so the pass runs again on its own output until nothing changes. */
+  const decide = (m, prev, gap, marks, after) => {
+    if (!after) return prev + marks;                       // the mark ends the token
+    const rawNext = (after.match(RE_LEAD_WORD) || [''])[0];
+    const next = mapForms(stripMarks(rawNext));
+    if (!next) return prev + marks + after;                // punctuation follows: it ends the token
+    // The letter forms in the text layer say whether the word before the space ended there.
+    const shape = endsWord(prev);
+    // "كتابًا": the alif of the tanween is a word of its own only when it is the whole run; an alef
+    // that is followed by more letters starts the next word ("رجلٌ اسمه").
+    const tanweenAlif = RE_TANWEEN.test(marks) && (next[0] === 'ا' || next[0] === 'ى') && next.length === 1;
+    const shadda = RE_SHADDA.test(marks);
+    const prevWord = mapForms(stripMarks((prev.match(RE_TAIL_WORD) || [''])[0]));
+    const prevCommon = !!prevWord && (!!lexicon && (lexicon.rank ? lexicon.rank(prevWord) <= SHADDA_PREV_RANK : lexicon.has(prevWord)));
+    const keepGap = wordGap && !tanweenAlif && (
+      shape === true ||
+      (shape === null && (RE_TANWEEN.test(marks) || (
+        // A shadda is far more often medial than final, so it needs the word before it to be a
+        // common word before it may end one ("كلّ شيء", not "خِلِّكان").
+        (!shadda || prevCommon) && !!lexicon && next.length > 1 &&
+        (lexicon.rank ? lexicon.rank(next) <= NEXT_WORD_RANK : lexicon.has(next)) &&
+        !lexicon.has(mapForms(stripMarks(prev + marks + next)))
+      )))
+    );
+    return keepGap ? prev + marks + ' ' + after : prev + marks + after;
+  };
+  for (let pass = 0; pass < 3; pass++) {
+    const before = out;
+    // The marks of one letter never have a space between them.
+    out = out.replace(RE_MARK_GAP, '$1');
+    out = out.replace(RE_STRAY_MARK_GAP, decide);
+    if (out === before) break;
+  }
+  // A word that starts right after a tanween lost its space entirely ("كثيرٍعلى"): put it back.
+  // When an alef follows the tanween the reading is ambiguous (the tanween alif of this word or
+  // the first letter of the next one), so that shape is left alone.
+  if (wordGap && lexicon) out = out.replace(RE_TANWEEN_GLUED, (m, marksRun, alif, offset, whole) => {
+    const beforeRaw = whole.slice(0, offset);
+    if (alif || !beforeRaw || /\s$/.test(beforeRaw)) return m;  // no word before the marks: nothing to split
+    const after = whole.slice(offset + m.length);
+    const next = mapForms(stripMarks((after.match(RE_LEAD_WORD) || [''])[0]));
+    if (next.length < 2) return m;
+    const rank = w => (lexicon.rank ? lexicon.rank(w) <= NEXT_WORD_RANK : lexicon.has(w));
+    const before = mapForms(stripMarks((whole.slice(0, offset).match(RE_TAIL_WORD) || [''])[0]));
+    const cut = rank(next) || (next.length >= 3 && !!before && rank(before));
+    return cut ? marksRun + ' ' : m;
+  });
+  // Nothing may be left in front of a mark (a mark at the start of a string has no word before it).
+  out = out.replace(RE_SPACE_BEFORE_MARK, '');
+  return out.normalize('NFC');
+}
+
+/**
+ * Last pass over a finished book: no space may sit in front of a combining mark anywhere.
+ * Paragraphs, captions, notes, headings and titles are built by different code paths (some of
+ * them join lines with a space after the per-line repair), so the guarantee is enforced once,
+ * on every string of the book, instead of in each builder.
+ * @param {object} book
+ * @param {object} [opts] ingest options ({ lexicon, rules })
+ */
+export function repairBookMarks(book, opts = {}) {
+  const lexicon = opts.lexicon || null, wordGap = on(opts, 'mark-word-gap');
+  const walk = x => {
+    if (typeof x === 'string') return repairSplitMarks(x, lexicon, wordGap);
+    if (Array.isArray(x)) { for (let i = 0; i < x.length; i++) x[i] = walk(x[i]); return x; }
+    if (x && typeof x === 'object') { for (const k in x) x[k] = walk(x[k]); return x; }
+    return x;
+  };
+  return walk(book);
 }
 
 /** Match form of a string that may still contain presentation forms (for statistics). */
@@ -171,16 +320,18 @@ export function normalizePage(lines, opts = {}) {
   for (const l of out) {
     if (reversed) l.text = visualToLogical(l.text, l.base);
     else if (lineMirror && /[֐-ࣿיִ-ﻼ]/.test(l.text)) l.text = mirrorRtlBrackets(l.text, l.base);
+    // Before the presentation forms are mapped, the letter shapes can say whether the word before
+    // a space ended there — the strongest evidence for a mark that pdf.js left after a space.
+    if (on(opts, 'mark-word-gap')) l.text = repairSplitMarks(l.text, opts.lexicon, true);
     if (on(opts, 'nfkc-forms')) l.text = mapForms(l.text);
     if (on(opts, 'strip-tatweel')) l.text = stripTatweel(l.text);
     if (opts.stripMarks) l.text = stripMarks(l.text);
-    l.text = repairSplitMarks(l.text).replace(/[ \t ]+/g, ' ').trim();
+    l.text = repairSplitMarks(l.text, opts.lexicon, on(opts, 'mark-word-gap')).replace(/[ \t ]+/g, ' ').trim();
   }
   return { lines: out.filter(l => l.text), reversed, stats };
 }
 
 export const LOSSY = { veryCommon: 2000, minForms: 10, minShare: 0.05 };
-
 // Lossy forms of the top function words: one ى or ا missing (على -> عل, إلى -> إل, حتى -> حت),
 // excluding forms that are themselves ordinary words.
 const LOSSY_FORMS = new Map();

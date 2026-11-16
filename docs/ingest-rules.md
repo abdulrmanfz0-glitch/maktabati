@@ -190,3 +190,83 @@ tested on the other, both ways.
 Tuning moves nothing beyond noise on either side, so the defaults are not overfitted to
 either half. This says nothing about other publishers. (Run at d5ac533, before iterations 1
 and 2.)
+
+## Round 4 (2026-11-17): word gaps lost around final marks
+
+Trigger: reading an imported fixture in the app showed words running together
+("رجلًا" and "من" printed as one word, and the like). The text layer was the source: the
+reader had no space to render, so this was an import defect, not a font or CSS one.
+
+**Measured cause.** pdf.js writes the word gap *before* the last mark of a word instead of
+after it: "رجلًا من" arrives as `رجلا ًمن`, "جهمَّمَ" + next word as `جَهَنَّم َوَاللهُ`.
+`repairSplitMarks` assumed every space in front of a combining mark was spurious (that is the
+F4/`attach-marks` case "ل ُغة" -> "لُغة") and deleted it, which is exactly the opposite of what
+these strings need: the space must move *after* the mark.
+
+**Fix.** New rule `mark-word-gap`. The space stays as a word gap (and moves after the marks)
+when the evidence says the previous word ended there:
+- alif or alef maqsura after a tanween (`كتاب ًا` -> `كتابًا`, `معن ًى` -> `معنًى`) means the tanween
+  alif belongs to the same word, so nothing moves;
+- tanween (ً ٌ ٍ) anywhere else: nunation only ends a word, so the letters after it start a new one;
+- the letter shapes in the text layer: a letter in final/isolated presentation form ends its word,
+  an initial/medial one continues into the next letter (four-shape letters only; non-joining
+  letters look final even mid-word and give no answer);
+- otherwise the word list: the letters after the marks must be a common word (rank <= 5000) and the
+  joined form must not be one. A shadda in the marks blocks this last resort, because a doubled
+  letter at a word end is rare while it is common mid-word (`خِلِّكان`, `وتعجَّبَ`).
+
+The same rule puts back a space that is missing entirely: a nunation right before a letter
+(`كثيرٍعلى`, `واحدٌجوهرًا`) is a word boundary, so a space is inserted when the letters after it are
+a word, or the word before it is one and the rest is three letters or more. An alef right after
+the nunation is ambiguous (this word's tanween alif or the next word's first letter), so that
+shape is left alone.
+
+A final pass over the finished book (`repairBookMarks`) enforces the same invariant on paragraphs,
+captions, notes, headings and titles, because those are built by different code paths and some of
+them join lines with a space after the per-line repair.
+
+**Measured effect on the 7 fixtures** (rule on vs off, same run; re-measured independently, not
+by the rule's author):
+
+| Fixture | Arabic tokens (on) | Word spaces (on/off) | tanween mid-word (on/off) | Space before a mark | Score (on/off) |
+|---|---:|---:|---:|---:|---|
+| 007572a7 | 31,514 | 31,595 / 30,912 | 57 / 467 | 0 | 0.926 / 0.925 |
+| 0f1b65bc | 86,735 | 88,118 / 81,447 | 171 / 1,913 | 0 | 0.934 / 0.926 |
+| 35590259 | 27,490 | 26,993 / 26,674 | 14 / 196 | 0 | 0.937 / 0.936 |
+| 5150ac47 | 47,313 | 52,649 / 51,472 | 44 / 1,026 | 0 | 0.931 / 0.931 |
+| 74b4b9e2 | 64,151 | 64,280 / 63,634 | 9 / 389 | 0 | 0.961 / 0.959 |
+| f42c7b4f | 13,403 | 12,950 / 12,338 | 10 / 341 | 0 | 0.926 / 0.924 |
+| f692654d | 63,218 | 64,474 / 63,901 | 29 / 364 | 0 | 0.971 / 0.971 |
+
+10,681 word spaces are restored in total (319–6,671 per file), every one of them right after a
+combining mark and before a letter; no space is removed and the scores never drop (six files
+improve by 0.001–0.008 because the restored boundaries feed the function-word check). "Tanween
+mid-word" is a token with a nunation followed by a letter, which Arabic orthography does not
+allow inside a word; it falls from 4,696 to 334, the rest being stray or misplaced marks in the
+text layer.
+
+
+**Checked, not assumed.**
+- With `lossy-repair` off, the rule-off and rule-on texts are character-for-character identical
+  except for the spaces: the rule only moves a space, it never drops or reorders a character.
+  (An early version dropped the text after the marks when it was punctuation; caught this way and
+  fixed, and `normalize.test.js` now pins it.)
+- 70 word gaps inserted in three fixtures were read by hand: "جملةً عنه", "رجلًا من",
+  "ووُلدتُ منها", "أتيتُ على", "ألفتُ طُرق", "بأنْ يزدادَ" are right; the false splits found
+  ("خِلِّكان", "الشوقيَّات", "وتعجَّبَ") are what the shadda guard and the shape check now prevent.
+  The sample still contains no case where the rule joined two words that were apart.
+- `pdf-diacritics.test.js` keeps its "no space before a combining mark" check over all fixtures,
+  now enforced on the whole book, so captions and notes cannot regress.
+
+An adversarial audit (synthetic cases, independent of the author) found five defects that are now
+fixed and pinned by tests: the tanween-alef rule also swallowed the alef of the next word
+(رجلٌ اسمه became رجلٌاسمه); a word-final shadda blocked the word-list path (كلّ شيء); two adjacent
+gaps left the second one glued (كتب َمحمد ُرسالة); the book-wide pass skipped strings with no
+space; and a page-sized line could make the regexes quadratic (long strings are now repaired in
+4,000-character pieces cut at a space). Known limit: a following word that is not in the 50k list
+cannot be separated on lexical evidence alone (مررت َبقوم).
+
+**Limits.** Text layers without presentation forms give no shape evidence, so a rare name whose
+parts are both common words can still be split (the word list is a 50k subtitle list, not a
+dictionary of names). Outside these seven files the rule is **[UNVERIFIED]**; the guard keeps the
+old behaviour when the evidence is absent.

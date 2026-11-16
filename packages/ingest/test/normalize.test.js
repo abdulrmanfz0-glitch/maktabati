@@ -112,6 +112,62 @@ describe('split Arabic diacritics from pdf.js', () => {
   });
 });
 
+describe('a mark pdf.js left after the word gap', () => {
+  /* A space in front of a combining mark is always in the wrong place: it belongs in front of the
+     mark when the mark ended the previous word, and after it when the two are one word. The word
+     list and the letter shapes decide; these cases pin the decisions down. */
+  const lex = {
+    size: 8,
+    has: w => ['رجلا', 'من', 'كان', 'خل', 'لغة', 'الحد', 'بما', 'خلكان'].includes(w),
+    rank: w => (w === 'من' ? 2 : 900)
+  };
+  const noSpace = s => s.replace(/[ \t\u00A0]/g, '');
+  const TANWEEN = '\u064B';
+
+  it('moves the space after a tanween, which always ends a word', () => {
+    expect(repairSplitMarks('كان رجلا ' + TANWEEN + 'من أهل بلخ', lex)).toBe('كان رجلا' + TANWEEN + ' من أهل بلخ');
+  });
+  it('keeps the tanween alif in its word', () => {
+    expect(repairSplitMarks('كتاب ' + TANWEEN + 'ا هنا', lex)).toBe('كتاب' + TANWEEN + 'ا هنا');
+    expect(repairSplitMarks('معن ' + TANWEEN + 'ى ذلك', lex)).toBe('معن' + TANWEEN + 'ى ذلك');
+  });
+  it('attaches the mark when the letters after it continue the word', () => {
+    expect(repairSplitMarks('ل ُغة', lex)).toBe('لُغة');
+    expect(repairSplitMarks('بالتصر ُّف ومضى', lex)).toBe('بالتصرُّف ومضى');
+  });
+  it('does not break a rare name that only the shadda holds together', () => {
+    expect(repairSplitMarks('خِل ِّكان', lex)).toBe('خِلِّكان');
+    expect(repairSplitMarks('حد ِّ بما', lex)).toBe('حدِّ بما');
+  });
+  it('keeps the word gap for a common word before a shadda', () => {
+    expect(repairSplitMarks('كل ّشيء', lex)).toBe('كلّ شيء');
+    expect(repairSplitMarks('ثم ّقال', lex)).toBe('ثمّ قال');
+  });
+  it('does not swallow the alef of the next word', () => {
+    expect(repairSplitMarks('رجل ٌاسمه محمد', lex)).toBe('رجلٌ اسمه محمد');
+    expect(repairSplitMarks('كتاب ٌالكتاب', lex)).toBe('كتابٌ الكتاب');
+  });
+  it('repairs two gaps that sit next to each other', () => {
+    expect(repairSplitMarks('كتب َمحمد ُرسالة', lex)).toBe('كتبَ محمدُ رسالة');
+  });
+  it('does not invent a gap when no word comes before the marks', () => {
+    expect(repairSplitMarks(' ًسلام', lex)).toBe('ًسلام');
+  });
+  it('uses the letter shape when the text layer has presentation forms', () => {
+    const finalMeem = U(0xFEE2), medialMeem = U(0xFEE4);
+    expect(repairSplitMarks('ب' + finalMeem + ' َو', lex)).toBe('ب' + finalMeem + 'َ و');
+    expect(repairSplitMarks('ب' + medialMeem + ' َو', lex)).toBe('ب' + medialMeem + 'َو');
+  });
+  it('never drops or reorders a character', () => {
+    for (const s of ['وﻛﻨﺖ ُ»ﺟﻼﱠ دًا ﻷ', 'كان رجلا ًمن أهل', 'ل ُغة', 'خِل ِّكان', 'إن َّ مؤسسة']) {
+      expect(noSpace(repairSplitMarks(s, lex))).toBe(noSpace(s));
+    }
+  });
+  it('keeps the old behaviour when the rule is off', () => {
+    expect(repairSplitMarks('كان رجلا ' + TANWEEN + 'من أهل', lex, false)).toBe('كان رجلا' + TANWEEN + 'من أهل');
+  });
+});
+
 describe('real spaces after a word ending in a mark', () => {
   const phrases = [
     ['كلّ شيء', ['كلّ', ' شيء']],

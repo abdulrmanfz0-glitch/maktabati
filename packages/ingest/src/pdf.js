@@ -7,7 +7,7 @@
 import { IngestError, makeReport } from './model.js';
 import { extractPage, imageCoverage, imageUnionCoverage } from './stages/extract.js';
 import { reorderPage } from './stages/reorder.js';
-import { normalizePage, MARK_OPEN, MARK_CLOSE, pairOrderVotes, decidePairOrder, mirrorPairs, lossyEvidence, repairLossy } from './stages/normalize.js';
+import { normalizePage, repairBookMarks, MARK_OPEN, MARK_CLOSE, pairOrderVotes, decidePairOrder, mirrorPairs, lossyEvidence, repairLossy } from './stages/normalize.js';
 import { docStats, layoutPage } from './stages/layout.js';
 import { cleanPages, residualRepeats } from './stages/clean.js';
 import { detectFootnotes, detectEndnotes, alignSequences, detectHeadings, detectChapters } from './stages/structure.js';
@@ -205,6 +205,9 @@ export async function* ingestPdf(bytes, options = {}) {
       endnotes.map = on(opts, 'endnote-align') ? alignSequences(seqs, endnotes.sequences) : new Map(seqs.map((_, i) => [i, i]));
     }
     const asm = assemble(pages, stats, chapters, groups, { title, author, endnotes }, opts);
+    // Paragraphs, captions, notes and headings are built by different code paths; enforce the
+    // mark/space invariant once on the finished book.
+    repairBookMarks(asm.book, opts);
     timings.assemble = now() - tA;
 
     // --- score ---
