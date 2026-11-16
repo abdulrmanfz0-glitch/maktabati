@@ -25,6 +25,7 @@ script against `dist/web` or `dist/single` will fail those assertions by design.
 | `ai-failure.mjs` | yes | Starts its own fake provider; 429, abort, delete, idle, empty answers, two tabs, IndexedDB failure |
 | `ai-background.mjs` | yes | Starts its own fake provider; reply keeps streaming after the chat closes, toast + unread, stop/delete abort |
 | `ux-polish.mjs` | yes | First-run demo hint, empty-library action, undo for highlight/chat deletion, dialog focus |
+| `chat-panel.mjs` | no | Book chat panel: close button on screen at 1280/390/360 with a model pinned, ⋯ menu + Escape, close keeps the page and scroll, expand keeps the conversation (seeds a fake key and a saved chat; calls no provider) |
 | `i18n.mjs` | yes | English/Arabic switching, no Arabic UI leaks in every view/dialog, reader chrome vs book content, all three templates, LTR/RTL, 390px overflow |
 | `ai-providers.mjs` | yes | Starts its own fake provider; key detection, ambiguous sk- choice, provider picker, /models fallback, custom reload |
 | `ai-connections.mjs` | yes | Starts its own fake provider; two connections, pinned models, task defaults, chat switcher, reload, export has no key |

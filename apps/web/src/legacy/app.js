@@ -4307,7 +4307,7 @@ function modelSwitchHTML(C){
   const label = currentPin ? currentPin.label : tx('اختر موديلًا');
   return '<div class="ch-model">' +
     '<button type="button" class="ch-model-btn" data-chmodel aria-haspopup="listbox" aria-expanded="' + (C.modelOpen ? 'true' : 'false') + '">' +
-      '<span>' + esc(label) + '</span>' + svg('chev') + '</button>' +
+      '<span dir="auto">' + esc(label) + '</span>' + svg('chev') + '</button>' +
     '<div class="ch-model-menu" role="listbox" aria-label="' + esc(tx('اختر موديل المحادثة')) + '"' + (C.modelOpen ? '' : ' hidden') + '>' +
       groups.map(g => '<p class="ch-model-g">' + esc(g.label) + '</p>' + g.pins.map(p => {
         const on = !!(currentPin && currentPin.connectionId === p.connectionId && currentPin.model === p.model);
@@ -4322,8 +4322,19 @@ function drawChat(){
   if (page) C.host.innerHTML = '<div class="home' + (empty ? ' is-empty' : '') + '">' + (it ? chipBar(C, it) : '') + (empty
       ? '<div class="home-hero">' + (it ? '<h1 class="home-h">' + tx('ناقش') + ' «<bdi dir="auto">' + esc(short(it.title, 40)) + '</bdi>»</h1>' : greetHTML() + '<h1 class="home-h">' + tx('وش تبي تقرأ اليوم؟') + '</h1>') + modelSwitchHTML(C) + composerHTML(C) + (it ? modesHTML(C) : suggestHTML()) + '</div>'
       : '<div class="ch-page-head">' + (it ? '<b dir="auto">' + tx('ناقش') + ' «' + esc(short(it.title, 32)) + '»</b>' : '<b>' + tx('محادثة') + '</b>') + '<span style="flex:1"></span>' + modelSwitchHTML(C) + '</div><div class="ch-msgs" id="chMsgs" aria-live="polite"></div><div class="home-foot">' + modesHTML(C) + composerHTML(C) + '</div>') + '</div>';
-  else C.host.innerHTML = '<div class="ch-head"><b dir="auto">' + tx('ناقش') + ' «' + esc(short(it ? it.title : '', 26)) + '»</b><span style="flex:1"></span>' + modelSwitchHTML(C) +
-      '<button class="gbtn ch-sm" data-ch="hist">' + tx('السابقة') + '</button><button class="gbtn ch-sm" data-ch="new">' + tx('محادثة جديدة') + '</button><button class="btn" data-ch="expand" aria-label="' + tx('وسّع المحادثة') + '">' + svg('expand') + '</button><button class="btn" data-ch="close" aria-label="' + tx('إغلاق') + '">' + svg('close') + '</button></div>' +
+  /* Panel header: close first, then the title, then the occasional actions. Every control is
+     fixed-width and only the title (and the model pill) may shrink, so the row never overflows
+     and the close button always stays on screen. History and new chat live in the ⋯ menu. */
+  else C.host.innerHTML = '<div class="ch-head">' +
+      '<button class="btn ch-x" data-ch="close" aria-label="' + tx('أغلق المحادثة') + '" title="' + tx('أغلق المحادثة') + '">' + svg('close') + '</button>' +
+      '<b class="ch-ttl" dir="auto">' + esc(short(it ? it.title : tx('محادثة'), 26)) + '</b>' +
+      modelSwitchHTML(C) +
+      '<div class="ch-more"><button type="button" class="btn" data-chmore aria-haspopup="menu" aria-expanded="false" aria-label="' + tx('خيارات المحادثة') + '" title="' + tx('خيارات المحادثة') + '">' + svg('dots') + '</button>' +
+        '<div class="ch-menu" role="menu" aria-label="' + tx('خيارات المحادثة') + '" hidden>' +
+          '<button type="button" role="menuitem" data-ch="new">' + tx('محادثة جديدة') + '</button>' +
+          '<button type="button" role="menuitem" data-ch="hist">' + tx('السابقة') + '</button>' +
+        '</div></div>' +
+      '<button class="btn" data-ch="expand" aria-label="' + tx('وسّع المحادثة') + '" title="' + tx('وسّع المحادثة') + '">' + svg('expand') + '</button></div>' +
       prepBanner(it) + '<div class="ch-msgs" id="chMsgs" aria-live="polite"></div><div class="ch-foot">' + modesHTML(C) + composerHTML(C) + '</div>';
   if (!page || !empty) drawMsgs();
   const ta = hq(C, '#chIn'), send = hq(C, '#chSend');
@@ -4335,14 +4346,28 @@ function drawChat(){
   const ff = hq(C, '#chFile'); if (ff) ff.onchange = e => { const f = e.target.files[0]; e.target.value = ''; importFile(f); };
   const fu = hq(C, '#chFull'); if (fu) fu.onchange = () => { C.full = fu.checked; kv.set('chatfull:' + C.conv.bookId, C.full); };
   C.host.onclick = e => {
-    if (C.modelOpen && !e.target.closest('.ch-model') && !e.target.closest('[data-chmodel]')){
-      setTimeout(() => { if (CH === C && C.modelOpen){ C.modelOpen = false; drawChat(); } }, 0);
-    }
+    /* Popovers (the model list and the ⋯ menu) close on a click outside them without redrawing
+       the panel, so the draft text and the scroll position survive. */
+    const pops = () => {
+      const mm = hq(C, '.ch-model-menu');
+      if (mm && !mm.hidden){ mm.hidden = true; C.modelOpen = false; const b = hq(C, '[data-chmodel]'); if (b) b.setAttribute('aria-expanded', 'false'); }
+      const cm = hq(C, '.ch-menu');
+      if (cm && !cm.hidden){ cm.hidden = true; const b = hq(C, '[data-chmore]'); if (b) b.setAttribute('aria-expanded', 'false'); }
+    };
+    if (!e.target.closest('.ch-model') && !e.target.closest('[data-chmodel]') && !e.target.closest('.ch-more')) pops();
     const mb = e.target.closest('[data-chmodel]');
     if (mb){
       e.preventDefault();
       C.modelOpen = !C.modelOpen;
+      const cm = hq(C, '.ch-menu'); if (cm && !cm.hidden){ cm.hidden = true; const cb = hq(C, '[data-chmore]'); if (cb) cb.setAttribute('aria-expanded', 'false'); }
       drawChat();
+      return;
+    }
+    const mo = e.target.closest('[data-chmore]');
+    if (mo){
+      e.preventDefault(); pops();
+      const menu = hq(C, '.ch-menu');
+      if (menu){ menu.hidden = !menu.hidden; mo.setAttribute('aria-expanded', String(!menu.hidden)); }
       return;
     }
     const pk = e.target.closest('[data-pin-conn][data-pin-model]');
@@ -4372,6 +4397,7 @@ function drawChat(){
     const b = e.target.closest('[data-ch]');
     if (b){
       const a = b.dataset.ch;
+      pops();
       if (a === 'close') closeChat();
       else if (a === 'expand') expandChat();
       else if (a === 'openbook') openBookAt(C.conv);
@@ -6446,7 +6472,18 @@ async function init(){
   $('#scrim').addEventListener('click', () => menu(false));
   $('#sheetScrim').addEventListener('click', closeSheet);
   $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
-  document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (!$('#modal').hidden) closeModal(); else if ($('#ctxm')) closeCtx(); else if (sndOpenP) sndClose(); else if (document.body.classList.contains('side-open')) side(false); else if (CH && CH.view === 'panel') closeChat(); else if ($('#sheet').classList.contains('open')) closeSheet(); else if (document.body.classList.contains('menu-open')) menu(false); else if (RT && cur.view === 'read' && rtEsc()){} else { hideSel(); hideFn(); } });
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    /* An open popover in the chat takes the first Escape, so the panel stays open. */
+    const pop = $('#chatIn .ch-model-menu:not([hidden]), #chatIn .ch-menu:not([hidden])');
+    if (pop){
+      pop.hidden = true;
+      const pb = pop.parentElement.querySelector('button[aria-expanded]'); if (pb) pb.setAttribute('aria-expanded', 'false');
+      if (CH) CH.modelOpen = false;
+      return;
+    }
+    if (!$('#modal').hidden) closeModal(); else if ($('#ctxm')) closeCtx(); else if (sndOpenP) sndClose(); else if (document.body.classList.contains('side-open')) side(false); else if (CH && CH.view === 'panel') closeChat(); else if ($('#sheet').classList.contains('open')) closeSheet(); else if (document.body.classList.contains('menu-open')) menu(false); else if (RT && cur.view === 'read' && rtEsc()){} else { hideSel(); hideFn(); }
+  });
   /* keep Tab inside the open dialog: modal, sheet, or chat panel */
   document.addEventListener('keydown', e => {
     if (e.key !== 'Tab') return;

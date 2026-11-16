@@ -12,6 +12,16 @@ All notable changes are recorded here. This project follows
   from its page or its library menu; filter the library by a collection or by
   unfiled books.
 
+### Fixed
+
+- In-book chat panel: with a model pinned, the header overflowed and the close
+  button was pushed off screen (clipped on phones, drawn over the reader on
+  desktop) with the book title collapsed, so there was no visible way back to
+  the book. The close button now comes first and is always on screen, the title
+  truncates, history and new chat moved into a ⋯ menu, and Escape closes an open
+  menu before the panel. Closing keeps the same page and scroll position;
+  expanding keeps the same conversation.
+
 ## [0.1.0] - 2026-11-10
 
 ### Added

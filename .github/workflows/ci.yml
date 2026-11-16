@@ -58,6 +58,8 @@ jobs:
         run: node tests/e2e/smoke.mjs http://127.0.0.1:5173/
       - name: AI failure paths
         run: node tests/e2e/ai-failure.mjs http://127.0.0.1:5173/
+      - name: Chat panel layout
+        run: node tests/e2e/chat-panel.mjs http://127.0.0.1:5173/
       - name: Stop Vite
         if: always()
         run: |

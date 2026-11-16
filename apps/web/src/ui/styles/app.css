@@ -365,10 +365,27 @@ body{ --tb-h:52px; }
 .cmp-att span{ flex:1; min-width:0; }
 /* book chat panel */
 .chat-scrim{ position:fixed; inset:0; z-index:71; background:rgba(0,0,0,.35); }
-.chat{ position:fixed; inset-inline:0; bottom:0; z-index:72; height:min(88svh, 780px); background:var(--bg); color:var(--ink); border-top:1px solid var(--rule); border-radius:14px 14px 0 0; box-shadow:0 -8px 30px rgba(0,0,0,.18); font-size:16px; line-height:1.7; }
+.chat{ position:fixed; inset-inline:0; bottom:0; z-index:72; height:min(88svh, 780px); background:var(--bg); color:var(--ink); border-top:1px solid var(--rule); border-radius:14px 14px 0 0; box-shadow:0 -8px 30px rgba(0,0,0,.18); font-size:16px; line-height:1.7; overflow:hidden; }
 .chat-in{ max-width:768px; height:100%; margin-inline:auto; display:flex; flex-direction:column; }
-.ch-head{ display:flex; align-items:center; gap:6px; min-height:52px; padding-inline:16px 6px; border-bottom:1px solid var(--rule); }
-.ch-head b{ font-size:15px; font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* One non-wrapping row: everything is fixed-width except the title and the model pill, so the
+   close button can never be pushed off screen (it used to be, once a model was pinned). */
+.ch-head{ display:flex; align-items:center; gap:6px; min-height:56px; padding-inline:8px 6px; border-bottom:1px solid var(--rule); flex-wrap:nowrap; }
+.ch-head > *{ flex:none; }
+.ch-head .ch-ttl{ flex:1 1 auto; min-width:0; font-size:15px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ch-x{ border:1px solid var(--rule); background:var(--surface); }
+.ch-x:hover{ background:var(--hover); }
+.ch-head .ch-model{ flex:0 1 auto; min-width:0; max-width:132px; }
+.ch-head .ch-model-btn{ max-width:100%; }
+.ch-more{ position:relative; flex:none; }
+.ch-menu{ position:absolute; z-index:6; top:calc(100% + 6px); inset-inline-end:0; min-width:184px; padding:6px; display:flex; flex-direction:column; gap:2px; border:1px solid var(--rule); border-radius:12px; background:var(--bg); box-shadow:0 10px 28px rgba(0,0,0,.18); }
+.ch-menu[hidden]{ display:none; }
+.ch-menu button{ min-height:44px; padding:0 10px; border:0; border-radius:8px; background:transparent; color:var(--ink); font:inherit; font-size:14px; text-align:start; cursor:pointer; }
+.ch-menu button:hover{ background:var(--hover); }
+@media (max-width:999.98px){
+  /* On a phone the panel is full width; the title matters more than the model name, and the
+     model list is one tap away in the full chat. */
+  .ch-head .ch-model{ display:none; }
+}
 .chat .gbtn{ background:transparent; border-color:var(--rule); color:var(--ink); }
 .chat .gbtn:hover{ background:var(--hover); }
 .ch-sm{ min-height:34px; padding:0 12px; font-size:13px; white-space:nowrap; }
