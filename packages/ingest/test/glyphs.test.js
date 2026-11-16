@@ -250,14 +250,14 @@ describe('guillemet and quote order (document level)', () => {
     let v;
     for (let i = 0; i < 6; i++) v = pairOrderVotes('قال »نعم« ثم', v);
     v = pairOrderVotes('قال «نعم»', v);
-    expect(decidePairOrder(v)).toEqual([true, false]);
+    expect(decidePairOrder(v)).toEqual([true, false, false]);
     expect(mirrorPairs('قال »نعم« ثم', [true, false])).toBe('قال «نعم» ثم');
   });
   it('does not touch a correct document where one line closes a quote and opens the next', () => {
     let v;
     for (let i = 0; i < 20; i++) v = pairOrderVotes('قال «نعم» ثم', v);
     for (let i = 0; i < 6; i++) v = pairOrderVotes('نهاية» ثم «بداية', v); // legitimate
-    expect(decidePairOrder(v)).toEqual([false, false]);
+    expect(decidePairOrder(v)).toEqual([false, false, false]);
   });
   it('mirrors double quotes too', () => {
     expect(mirrorPairs('قال ”نعم“', [false, true])).toBe('قال “نعم”');

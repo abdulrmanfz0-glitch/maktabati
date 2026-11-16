@@ -26,6 +26,7 @@ else {
   console.log('arabic tokens: ' + a.arabicTokens);
   console.log('reversed ligature pairs (top function words): ' + a.reversedPairs.functionWords + ' broken vs ' + a.reversedPairs.functionWordsCorrect + ' correct (share ' + a.reversedPairs.correctShare + ')');
   console.log('unmapped glyph characters in output: ' + JSON.stringify(a.unmapped));
+  console.log('hard breaks inside a paragraph: ' + a.hardBreaks + '  words split by a stray space: ' + a.splitWords);
   console.log('lossy (top function words missing one ى/ا): ' + a.lossy.functionWords);
   console.log('guillemets ' + JSON.stringify(a.guillemets) + '  quotes ' + JSON.stringify(a.quotes));
   for (const [k, list] of Object.entries(a.examples)) console.log('examples ' + k + ': ' + list.map(e => e.ok + ' ' + e.correct + '/' + e.broken).join(', '));

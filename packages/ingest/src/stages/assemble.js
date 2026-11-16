@@ -6,7 +6,8 @@ import { makeBook, makeChapter, makeSection, finalizeBook } from '../model.js';
 import { MARK_OPEN, MARK_CLOSE, repairSplitMarks } from './normalize.js';
 
 const RE_MARK_G = new RegExp(MARK_OPEN + '(\\d+)' + MARK_CLOSE, 'g');
-const RE_CAPTION = /^(شكل|الشكل|صورة|جدول|خريطة|رسم|figure|fig\.|table|plate)\b/i;
+// ASCII \b never matches after an Arabic letter, so the Arabic alternatives use a lookahead.
+const RE_CAPTION = /^(?:شكل|الشكل|صورة|جدول|خريطة|رسم)(?=[\s:]|$)|^(?:figure|fig\.|table|plate)\b/i;
 const TERMINAL = /[.!?؟…»”"'):؛]$/;
 
 /** Images that repeat at the same place on several pages are decoration (logos, ornaments). */

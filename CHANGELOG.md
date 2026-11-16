@@ -14,6 +14,13 @@ All notable changes are recorded here. This project follows
 
 ### Fixed
 
+- PDF import, reading quality: words that the text layer split with a stray space are joined
+  (`الص وت` -> `الصوت`), a paragraph of inset justified prose is no longer mistaken for verse (which
+  put hard line breaks inside sentences), ornate parentheses read as ordinary ones, spaces before
+  `، ؛ : ! ؟` are removed, an Arabic/Latin boundary always gets a space, and the caption prefix
+  check matches Arabic captions. On the seven test PDFs split-word pairs fall from 156 to 28 and
+  prose hard-break paragraphs from 701 to 529; what remains is real poetry and quoted verse. See
+  `docs/ingest-rules.md` round 5.
 - PDF import glued words together: pdf.js writes the word gap before a word's last diacritic
   ("رجلا ًمن" for "رجلًا من") and the importer deleted that space instead of moving it after the
   mark, so common words ran into each other. The new `mark-word-gap` rule keeps the gap using the

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mapForms, stripTatweel, stripControls, attachMarks, joinItems, normalizePage, reversalStats, repairSplitMarks, MARK_OPEN, MARK_CLOSE, toAsciiDigits } from '../src/stages/normalize.js';
+import { mapForms, stripTatweel, stripControls, attachMarks, joinItems, normalizePage, reversalStats, repairSplitMarks, joinSplitWords, MARK_OPEN, MARK_CLOSE, toAsciiDigits } from '../src/stages/normalize.js';
 import { assemble } from '../src/stages/assemble.js';
 import { RE_PRES } from '../src/text.js';
 
@@ -165,6 +165,31 @@ describe('a mark pdf.js left after the word gap', () => {
   });
   it('keeps the old behaviour when the rule is off', () => {
     expect(repairSplitMarks('كان رجلا ' + TANWEEN + 'من أهل', lex, false)).toBe('كان رجلا' + TANWEEN + 'من أهل');
+  });
+});
+
+describe('a word the text layer split with a space', () => {
+  const lex = {
+    size: 8,
+    has: w => ['الصوت', 'منها', 'ها', 'بيت', 'من', 'تحقق', 'الصحبة', 'كلمة', 'كلمات'].includes(w),
+    rank: w => (['الصوت', 'تحقق', 'الصحبة'].includes(w) ? 900 : (['من', 'ها', 'منها', 'بيت'].includes(w) ? 50 : Infinity))
+  };
+
+  it('joins a split word when only the whole is a word', () => {
+    expect(joinSplitWords('سمعت الص وت من بعيد', lex)).toBe('سمعت الصوت من بعيد');
+    expect(joinSplitWords('تم تحق ق الأمر', lex)).toBe('تم تحقق الأمر');
+  });
+  it('keeps the space when both halves are words', () => {
+    expect(joinSplitWords('خرج من ها الباب', lex)).toBe('خرج من ها الباب');
+  });
+  it('keeps the space when the whole is not a word', () => {
+    expect(joinSplitWords('كلمات كثيرة هنا', lex)).toBe('كلمات كثيرة هنا');
+  });
+  it('leaves text without a space alone', () => {
+    expect(joinSplitWords('الصوت', lex)).toBe('الصوت');
+  });
+  it('does not run without a word list', () => {
+    expect(joinSplitWords('الص وت', null)).toBe('الص وت');
   });
 });
 

@@ -59,8 +59,24 @@ export function audit(text, lexicon = null) {
     lossy: { functionWords: lossy },
     guillemets: { good: gGood, reversed: gBad },
     quotes: { good: qGood, reversed: qBad },
+    // Reading-quality counters: a hard break inside a paragraph, and a word the text layer split
+    // with a space (two runs that join into a common word while neither part is a word alone).
+    hardBreaks: (text.match(/ {2}\n/g) || []).length,
+    splitWords: 0,
     examples: Object.fromEntries(Object.entries(EXAMPLES).map(([k, list]) => [k, list.map(([ok, bad]) => ({ ok, correct: c(ok), broken: c(bad) }))]))
   };
+  if (lexicon) {
+    const words = text.split(/\s+/).filter(w => /^[ء-يً-ٰـ]+$/.test(w));
+    let split = 0;
+    for (let i = 0; i + 1 < words.length; i++) {
+      const a = words[i], b = words[i + 1];
+      if (a.length + b.length > 22 || Math.min(a.length, b.length) > 3) continue;
+      if (lexicon.has(a) && lexicon.has(b)) continue;
+      const joined = a + b;
+      if (lexicon.has(joined) && (lexicon.rank ? lexicon.rank(joined) <= 5000 : true)) split++;
+    }
+    out.splitWords = split;
+  }
   if (lexicon) {
     // General counts: a token that is not a known word but becomes a very common one when one
     // candidate ligature pair is put back in order (reversed pair), or when one ى/ا is inserted (lossy).

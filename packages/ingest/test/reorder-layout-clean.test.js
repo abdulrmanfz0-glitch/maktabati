@@ -89,8 +89,28 @@ describe('layout', () => {
     expect(p.lines[0].zone).toBe('top');
     expect(p.lines[p.lines.length - 1].zone).toBe('bottom');
   });
-  it('detects two columns and orders the right column first', () => {
-    const lines = [];
+  it('does not call an inset block of justified prose verse', () => {
+    // Two full-width prose pages set the document frame at 50..400. A third page is a quotation
+    // inset to 75..375: centered on the page, but its lines fill their own measure, so they must
+    // not become verse (that is what used to put hard line breaks inside prose paragraphs).
+    const pages = [bodyPage(1), bodyPage(2)];
+    const inset = { index: 3, width: 450, height: 600, lines: [] };
+    for (let i = 0; i < 10; i++) inset.lines.push(L('نص مقتبس طويل يمتد إلى حد الإطار الداخلي.', 520 - i * 18, 75, 375));
+    pages.push(inset);
+    const s = docStats(pages);
+    for (const p of pages) layoutPage(p, s, {});
+    expect(inset.lines.some(l => l.verse)).toBe(false);
+  });
+  it('still marks a run of centered short lines as verse', () => {
+    const pages = [bodyPage(1), bodyPage(2)];
+    const poem = { index: 3, width: 450, height: 600, lines: [] };
+    for (let i = 0; i < 6; i++) poem.lines.push(L('بيت من الشعر العربي القديم', 500 - i * 18, 120, 330));
+    pages.push(poem);
+    const s = docStats(pages);
+    for (const p of pages) layoutPage(p, s, {});
+    expect(poem.lines.filter(l => l.verse).length).toBeGreaterThanOrEqual(4);
+  });
+  it('detects two columns and orders the right column first', () => {    const lines = [];
     for (let i = 0; i < 8; i++) { lines.push(L('يمين ' + i, 500 - i * 18, 240, 400)); lines.push(L('يسار ' + i, 500 - i * 18, 50, 210)); }
     const stats = { bodySize: 13, leading: 18, frameLeft: 50, frameRight: 400, rtl: true };
     expect(detectColumns(lines, 450, stats).columns).toBe(2);

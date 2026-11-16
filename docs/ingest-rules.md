@@ -270,3 +270,23 @@ cannot be separated on lexical evidence alone (مررت َبقوم).
 parts are both common words can still be split (the word list is a 50k subtitle list, not a
 dictionary of names). Outside these seven files the rule is **[UNVERIFIED]**; the guard keeps the
 old behaviour when the evidence is absent.
+
+## Round 5 (2026-11-17): reading quality
+
+No new text is invented here; these rules only decide where a word ends, where a line ends, and
+how a bracket or a script change should be spaced.
+
+| Rule / change | Evidence on the fixtures | Status |
+|---|---|---|
+| `verse` (stricter) | the old test (centered = both margins > 1.2 em) marked every line of an inset justified block as verse: 007572a7 had 63 paragraphs with hard breaks inside prose, 5150ac47 11, 0f1b65bc 618 (poetry book, but also its prose chapters). A verse line must now also be narrower than 0.85 of the measure and sit at least 2.2 em inside the frame. Prose hard breaks: 007572a7 63 -> 45 paragraphs (the rest is its real poem and quoted verse), 5150ac47 11 -> 0, f692654d 1 -> 0, 74b4b9e2 4 -> 1, 35590259 2 -> 2 (quoted verse), 0f1b65bc 618 -> 481 (its poetry chapter keeps 454). Unit tests: an inset justified block is not verse, a centered short run still is. | kept |
+| `join-split-words` | a word the text layer split with a space ("الص وت" for "الصوت", "محم د" for "محمد"). Every adjacent pair where the joined form is a common word (rank <= 5000) and neither half is a word alone is joined. Measured with `tools/audit-text.mjs`: split pairs 007572a7 8 -> 0, 5150ac47 14 -> 2, 0f1b65bc 81 -> 3, f692654d 17 -> 15, 35590259 25 -> 3, 74b4b9e2 3 -> 0, f42c7b4f 8 -> 5 (156 -> 28 in total). 26 merged pairs read by hand in 0f1b65bc were all split words. A pair where both halves are words keeps its space ("من ها"). | kept |
+| ornate parentheses | 46 U+FD3E/U+FD3F in 5150ac47/0f1b65bc read as boxes in some fonts and never match ASCII brackets in search or pairing. They are now a mirrorable pair and map to `(`/`)`. Occurrences left: 0. | kept |
+| space before punctuation | a space before `، ؛ : ! ؟` came from line joins and item gaps; removed per line. Left in the fixtures: 3 in 5150ac47, 0 in the others (was 23/7/6/6/1/1/0). | kept |
+| Arabic/Latin boundary | the word-gap threshold left 44 Arabic->Latin boundaries unspaced in 5150ac47 (`لماذاDeepSeek`). A script change now always gets a space. Unspaced boundaries left: 8 in 5150ac47 (all inside one pdf.js item), 0 in the others. | kept |
+| caption prefix | `RE_CAPTION` used an ASCII word boundary after the Arabic alternatives, which can never match, so `شكل 1:` captions were only found by the small-font branch. Replaced with a `(?=[\s:]|$)` lookahead. Figures with captions are only measurable with `images: true`; not re-measured here. | kept |
+
+Open reading-quality issues (measured in the release audit, not fixed here): chapters that hold
+most of a book (one chapter is 69–100% of its file, up to 289 minutes) so chapter navigation is
+useless; note markers whose note could not be linked still read as bare digits (the reader cannot
+open them); table/list rows become one-line paragraphs (21.9% of paragraphs in 5150ac47 are under
+four words), which is what the `paragraphs-suspect` issue reports.

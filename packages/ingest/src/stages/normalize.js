@@ -25,6 +25,10 @@ export const stripControls = s => s.replace(RE_CONTROLS, '');
 export function mapForms(s) {
   return s.replace(RE_FORMS, c => {
     if (LAM_ALEF[c]) return LAM_ALEF[c];
+    // Ornate parentheses have no compatibility mapping; they read as ordinary ones. The pair order
+    // was already voted and mirrored on the ornate characters (see PAIRS).
+    if (c === '\uFD3E') return '(';
+    if (c === '\uFD3F') return ')';
     const n = c.normalize('NFKC');
     // FE70-FE7F are mark forms: NFKC yields "space + mark" (isolated) or "tatweel + mark"
     // (medial); keep only the mark so it stays on the preceding letter.
@@ -50,6 +54,8 @@ const RE_TANWEEN_GLUED = new RegExp('(' + RE_MARK.source + '*[\u064B-\u064D])([\
 // A word after the marks carries its own diacritics; they are stripped before the word list look-up.
 const RE_LEAD_WORD = new RegExp('^[' + AR_LETTERS + AR_FORMS + RE_MARK.source.slice(1, -1) + ']+');
 const RE_TAIL_WORD = new RegExp('[' + AR_LETTERS + AR_FORMS + RE_MARK.source.slice(1, -1) + ']+$');
+// One word of letters and marks only (a punctuation mark means the pair is not a split word).
+const RE_WORD_ONLY = new RegExp('^[' + AR_LETTERS + RE_MARK.source.slice(1, -1) + ']+$');
 const RE_TANWEEN = /[\u064B-\u064D]/;
 // A shadda doubles the letter it sits on; at a word end it is rare, in the middle of a word it is
 // not. When the letter shapes give no answer, a shadda keeps the mark on the previous word.
@@ -180,17 +186,58 @@ export function repairSplitMarks(s, lexicon = null, wordGap = true) {
 }
 
 /**
- * Last pass over a finished book: no space may sit in front of a combining mark anywhere.
- * Paragraphs, captions, notes, headings and titles are built by different code paths (some of
- * them join lines with a space after the per-line repair), so the guarantee is enforced once,
- * on every string of the book, instead of in each builder.
+ * Join words that the text layer split in two with a space ("الص وت" for "الصوت").
+ * The gap comes from glyph geometry (a zero-width ligature component, a kern, or a justification
+ * gap that crossed the word-gap threshold), not from a word boundary. The word list decides:
+ * two adjacent letter runs are joined when the joined form is a common word and at least one of
+ * the halves is not a word on its own. Both halves being words keeps the space ("من ها" is
+ * "منها" only when "ها" is not a word... it is, so that pair is left alone).
+ * @param {string} s
+ * @param {{ has(w: string): boolean, rank?(w: string): number } | null} lexicon
+ */
+export function joinSplitWords(s, lexicon) {
+  if (!lexicon) return s;
+  const str = String(s);
+  if (str.length > 20000 || str.indexOf(' ') < 0) return str;
+  const known = w => (lexicon.rank ? lexicon.rank(w) <= NEXT_WORD_RANK : lexicon.has(w));
+  const canJoin = (a, b) => {
+    if (!RE_WORD_ONLY.test(a) || !RE_WORD_ONLY.test(b)) return false;
+    if (a.length + b.length > 22 || Math.min(a.length, b.length) > 3) return false;
+    const A = mapForms(stripMarks(a)), B = mapForms(stripMarks(b));
+    if (!A || !B) return false;
+    if (!known(A + B)) return false;
+    return !(known(A) && known(B));
+  };
+  // Words and their separators, so a pair that cannot join is retried one word later
+  // ("سمعت الص وت": the first pair is "سمعت الص", the word that needs joining starts at "الص").
+  const parts = str.split(/([ \t]+)/);
+  const out = [parts[0] || ''];
+  for (let i = 1; i < parts.length; i += 2) {
+    const sep = parts[i], word = parts[i + 1] ?? '';
+    const prev = out[out.length - 1];
+    if (sep.length === 1 && word && prev && canJoin(prev, word)) { out[out.length - 1] = prev + word; continue; }
+    out.push(sep, word);
+  }
+  return out.join('');
+}
+
+/**
+ * Last pass over a finished book: no space may sit in front of a combining mark anywhere, and no
+ * word may be split by a stray space. Paragraphs, captions, notes, headings and titles are built
+ * by different code paths (some of them join lines with a space after the per-line repair), so
+ * the guarantee is enforced once, on every string of the book, instead of in each builder.
  * @param {object} book
  * @param {object} [opts] ingest options ({ lexicon, rules })
  */
 export function repairBookMarks(book, opts = {}) {
   const lexicon = opts.lexicon || null, wordGap = on(opts, 'mark-word-gap');
+  const joinSplit = on(opts, 'join-split-words') && !!lexicon;
   const walk = x => {
-    if (typeof x === 'string') return repairSplitMarks(x, lexicon, wordGap);
+    if (typeof x === 'string') {
+      let out = repairSplitMarks(x, lexicon, wordGap);
+      if (joinSplit) out = joinSplitWords(out, lexicon);
+      return out;
+    }
     if (Array.isArray(x)) { for (let i = 0; i < x.length; i++) x[i] = walk(x[i]); return x; }
     if (x && typeof x === 'object') { for (const k in x) x[k] = walk(x[k]); return x; }
     return x;
@@ -266,6 +313,13 @@ export function joinItems(items, base, opts = {}) {
         gap = rtlPair ? prev.x - (it.x + it.w) : it.x - (prev.x + prev.w);
         space = gap > gapEm * Math.max(it.size, prev.size);
       }
+      // A word never runs from one script into another ("لماذاDeepSeek"): at an Arabic/Latin
+      // boundary the space is always real, whatever the glyph gap says.
+      const lastCh = [...prev.s.replace(/\s+$/, '')].pop() || '';
+      const firstCh = [...s.replace(/^\s+/, '')][0] || '';
+      const arLast = /[\u0621-\u064A]/.test(lastCh), arFirst = /[\u0621-\u064A]/.test(firstCh);
+      const latLast = /[A-Za-z]/.test(lastCh), latFirst = /[A-Za-z]/.test(firstCh);
+      if ((arLast && latFirst) || (latLast && arFirst)) space = true;
       const startsMark = RE_MARK.test(([...s.replace(/^\s+/, '')][0] || ''));
       const prevEndsMark = RE_MARK.test(([...prev.s.replace(/\s+$/, '')].at(-1) || ''));
       // A mark belongs to the preceding base letter. Never put a space in
@@ -326,6 +380,8 @@ export function normalizePage(lines, opts = {}) {
     if (on(opts, 'nfkc-forms')) l.text = mapForms(l.text);
     if (on(opts, 'strip-tatweel')) l.text = stripTatweel(l.text);
     if (opts.stripMarks) l.text = stripMarks(l.text);
+    // A space just before a closing punctuation mark is never part of the text.
+    l.text = l.text.replace(/[ \t\u00A0]+(?=[\u060C\u061B:!\u061F])/g, '');
     l.text = repairSplitMarks(l.text, opts.lexicon, on(opts, 'mark-word-gap')).replace(/[ \t ]+/g, ' ').trim();
   }
   return { lines: out.filter(l => l.text), reversed, stats };
@@ -382,7 +438,8 @@ export function repairLossy(text, lexicon, veryCommon = LOSSY.veryCommon) {
   return { text: out, n };
 }
 
-export const PAIRS = [['«', '»'], ['“', '”']];
+// Ornate parentheses (U+FD3E/U+FD3F) are a pair too, and pdf.js reverses them like the guillemets.
+export const PAIRS = [['«', '»'], ['“', '”'], ['\uFD3E', '\uFD3F']];
 
 /**
  * Votes for one line: for each pair type with balanced counts, whether it opens first (good)

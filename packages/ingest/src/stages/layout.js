@@ -5,6 +5,11 @@
 //  - paragraph starts by gap analysis: extra vertical gap, first-line indent, short previous line
 import { on } from '../rules.js';
 
+// A centered line wider than this share of the document measure is an indented prose block, not verse.
+const VERSE_MAX_MEASURE = 0.85;
+// ... and it must sit clearly inside the text frame, not just inside it by a hair.
+const VERSE_MIN_MARGIN = 2.2;
+
 const quant = (a, q) => { if (!a.length) return 0; const s = a.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.max(0, Math.floor(q * (s.length - 1))))]; };
 
 function mode(values, weights, step = 0.5) {
@@ -134,13 +139,19 @@ export function layoutPage(page, stats, opts = {}) {
     prev = l;
   }
   // Verse: runs of 2+ consecutive centered lines (both margins clearly indented, roughly equal).
+  // A centered line must also be clearly narrower than the document measure: an indented block of
+  // justified prose (a quotation) is centered on the page but fills its own measure, and marking
+  // it as verse is what used to add hard line breaks inside prose paragraphs.
   if (on(opts, 'verse')) {
     const body = L.filter(l => !l.zone);
+    const measure = stats.frameRight - stats.frameLeft;
     const centered = l => {
       const right = frameR ?? Math.max(...L.filter(x => x.col === l.col).map(x => x.x1));
       const left = frameL ?? Math.min(...L.filter(x => x.col === l.col).map(x => x.x0));
       const gl = l.x0 - left, gr = right - l.x1;
-      return gl > 1.2 * l.size && gr > 1.2 * l.size && Math.abs(gl - gr) < Math.max(2 * l.size, 0.3 * (gl + gr)) && Math.abs(l.size - stats.bodySize) <= 0.6;
+      return (!measure || (l.x1 - l.x0) <= VERSE_MAX_MEASURE * measure)
+        && gl > VERSE_MIN_MARGIN * l.size && gr > VERSE_MIN_MARGIN * l.size
+        && Math.abs(gl - gr) < Math.max(2 * l.size, 0.3 * (gl + gr)) && Math.abs(l.size - stats.bodySize) <= 0.6;
     };
     for (let i = 0; i < body.length;) {
       let j = i;
