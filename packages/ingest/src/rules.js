@@ -42,6 +42,7 @@ export const RULES = [
   { id: 'heading-chapters', stage: 'structure', off: 'no chapters from heading heuristics' },
   { id: 'drop-front-matter', stage: 'assemble', off: 'keep pages before the first chapter as intro' },
   { id: 'cross-page-paragraphs', stage: 'assemble', off: 'a page break always ends the paragraph' },
+  { id: 'orphan-notes', stage: 'assemble', off: 'a note whose marker was not linked stays invisible in the reader' },
   { id: 'paragraph-cap', stage: 'assemble', off: 'a paragraph of 80,000 characters stays one block' },
   { id: 'split-long-chapters', stage: 'assemble', off: 'a chapter that holds most of the book stays one unit' },
   { id: 'figures', stage: 'assemble', off: 'no figure extraction' },

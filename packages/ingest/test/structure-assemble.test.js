@@ -124,6 +124,22 @@ describe('assemble', () => {
     expect(metrics.unlinkedMarkers).toBe(1);
   });
 
+  it('puts a note nobody references at the chapter end so it can be read', () => {
+    const pages = [{ index: 1, height: 600, lines: [L('جملة بلا علامة.', 440, { parStart: true })], notes: [{ n: '1', text: 'نص الحاشية الضائعة', cont: false }] }];
+    const { book: b } = assemble(pages, stats, { chapters: [], method: 'none', toc: null }, [], {}, {});
+    const sec = b.chapters[0].sections.find(s => s.title === 'الحواشي');
+    expect(sec).toBeTruthy();
+    expect(sec.blocks[0].text).toBe('(1) نص الحاشية الضائعة');
+    expect(b.chapters[0].notes).toBeUndefined();
+  });
+
+  it('keeps a linked note as a note', () => {
+    const pages = [{ index: 1, height: 600, lines: [L('جملة' + M(1) + '.', 440, { parStart: true })], notes: [{ n: '1', text: 'حاشية', cont: false }] }];
+    const { book: b } = assemble(pages, stats, { chapters: [], method: 'none', toc: null }, [], {}, {});
+    expect(b.chapters[0].notes.map(n => n.text)).toEqual(['حاشية']);
+    expect(b.chapters[0].sections.some(s => s.title === 'الحواشي')).toBe(false);
+  });
+
   it('places a figure with its caption', () => {
     const png = new Uint8Array([137, 80, 78, 71]);
     const pages = [{ index: 7, height: 600, lines: [para(540, 1), L('شكل 1: رسم توضيحي', 280, { size: 11, parStart: true }), para(240, 2)], images: [{ x: 100, y: 300, w: 250, h: 200, key: 'k', png }] }];

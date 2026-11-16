@@ -305,3 +305,17 @@ unchanged (verified per fixture by comparing the paragraph sequence with the rul
 
 Notes are split with their chapter: a note follows the part whose text still references it, and a
 note nobody references stays on the first part (the open issue below).
+
+## Round 7 (2026-11-17): notes the reader could never open
+
+A note is only reachable from its `[^id]` marker, so a note whose marker was not linked is lost to
+the reader even though the text is in the file (5150ac47: 13 notes, 18,658 characters; 74b4b9e2: 1).
+
+| Rule | Evidence on the fixtures | Status |
+|---|---|---|
+| `orphan-notes` | after assembly, a note that no block in its chapter references is moved to a "الحواشي" section at the end of that chapter, numbered with the printed number, and removed from `chapter.notes`. Notes per file before -> after: 5150ac47 13 -> 0 in `notes` (all 13 in 2 "الحواشي" sections), 74b4b9e2 1 -> 0 (1 section); other files unchanged (every note was linked). Note texts missing from the book: 0 in all 7. | kept |
+| printed note numbers | an unlinked note used to get the chapter's running counter as its id, so the "الحواشي" entry numbers did not match the digits left in the text. Unlinked notes now keep the printed number when it is free in the chapter (5150ac47 starts at 17, the first endnote that failed to link). | kept |
+
+The bare digit that an unmatched marker leaves in the text is kept (it is what the printed page
+shows, and the note it points to is now readable in "الحواشي"). A marker whose note is linked still
+becomes a normal footnote button.

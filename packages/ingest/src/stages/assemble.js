@@ -157,6 +157,24 @@ function splitChapters(book, opts) {
   book.chapters = out;
 }
 
+/**
+ * A note whose marker could not be linked (an endnote whose page was missed, a marker read as a
+ * plain digit) is invisible in the reader: it is only reachable from its marker. Move those notes
+ * to a "الحواشي" section at the end of the chapter, where the reader can read them.
+ */
+function appendOrphanNotes(book) {
+  for (const ch of book.chapters) {
+    const notes = ch.notes || [];
+    if (!notes.length) continue;
+    const body = ch.sections.map(s => s.blocks.map(b => b.type === 'list' ? b.items.join(' ') : (b.text || '')).join('\n')).join('\n');
+    const orphan = notes.filter(n => !body.includes('[^' + n.id + ']'));
+    if (!orphan.length) continue;
+    ch.sections.push({ title: 'الحواشي', blocks: orphan.map(n => ({ type: 'p', text: '(' + n.id + ') ' + n.text })) });
+    ch.notes = notes.filter(n => !orphan.includes(n));
+    if (!ch.notes.length) delete ch.notes;
+  }
+}
+
 /** Assemble pages into the book: chapters, sections, paragraphs, notes and figures. */
 export function assemble(pages, stats, chapters, groups, ctx = {}, opts = {}) {
   const book = makeBook({ title: ctx.title, author: ctx.author });
@@ -310,9 +328,12 @@ export function assemble(pages, stats, chapters, groups, ctx = {}, opts = {}) {
       for (const n of contNotes) {
         if (chapter && chapter.notes.length) chapter.notes[chapter.notes.length - 1].text += ' ' + n.text;
       }
-      for (const n of pending.values()) {
+      for (const [num, n] of pending) {
         ensureChapter();
-        chapter.notes.push({ id: String(++chapter._n), text: n.text });
+        // Keep the printed number so the note list matches the numbers in the text; fall back to
+        // the running id when that number is already taken in this chapter.
+        const id = num && isFinite(+num) && !chapter.notes.some(x => x.id === String(num)) ? String(num) : String(++chapter._n);
+        chapter.notes.push({ id, text: n.text });
         m.notes++;
       }
     }
@@ -325,7 +346,9 @@ export function assemble(pages, stats, chapters, groups, ctx = {}, opts = {}) {
       for (const [n, text] of seq) {
         if (ctx.endnotes.used && ctx.endnotes.used.has(j + ':' + n)) continue;
         const c = seqChapter.get(j) || book.chapters[book.chapters.length - 1];
-        c.notes.push({ id: String(++c._n), text }); m.notes++; m.endKept = (m.endKept || 0) + 1;
+        // The printed number, so the "الحواشي" list matches the markers the reader sees.
+        const id = isFinite(+n) && !c.notes.some(x => x.id === String(n)) ? String(n) : String(++c._n);
+        c.notes.push({ id, text }); m.notes++; m.endKept = (m.endKept || 0) + 1;
       }
     });
   }
@@ -335,6 +358,7 @@ export function assemble(pages, stats, chapters, groups, ctx = {}, opts = {}) {
   // is unusable in the reader. Both are grouping decisions only; no character of the text changes.
   if (on(opts, 'paragraph-cap')) capParagraphs(book, opts);
   if (on(opts, 'split-long-chapters')) splitChapters(book, opts);
+  if (on(opts, 'orphan-notes')) appendOrphanNotes(book);
   finalizeBook(book);
   return { book, assets, metrics: m };
 }

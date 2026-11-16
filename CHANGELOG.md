@@ -14,7 +14,10 @@ All notable changes are recorded here. This project follows
 
 ### Fixed
 
-- PDF import, reading units: a paragraph is no longer a wall of text (cut at sentence ends above
+- PDF import, notes: a note whose marker could not be linked used to be invisible (it is only
+  reachable from its marker). Such notes now appear in a "الحواشي" section at the end of their
+  chapter, numbered with the printed number, so the digits left in the text can be looked up. 13
+  notes (18,658 characters) in one test book become readable; no note text is lost in any file.- PDF import, reading units: a paragraph is no longer a wall of text (cut at sentence ends above
   3,000 characters; longest paragraph in the test PDFs 82,814 -> 4,096) and a chapter no longer
   holds most of a book: chapters over 20,000 characters are cut at their own sections, then at
   headings, then at paragraph breaks. Chapters per book rise from 3-25 to 6-89 and the longest
