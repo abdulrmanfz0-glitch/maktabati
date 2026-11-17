@@ -104,7 +104,35 @@ function assignNotes(ch, parts) {
 const partTitle = (base, k) => (k === 1 ? base : base + ' (' + k + ')');
 
 /** Cut one oversized chapter into parts: its sections, then heading paragraphs, then paragraphs. */
+// A paragraph that is only a chapter label ('الفصل الثاني', 'الباب 3', 'Chapter 4'). Books often
+// set these in body size, so layout never marks them as headings; without this a 3-part novel was
+// cut every 20,000 characters, mid-scene, into parts called 'الجزء الأول (8)'.
+// The label is the word plus an ordinal or a number, nothing else ('قسم الشرطة' is not a label).
+const ORD = '(?:ال)?(?:أول|اول|أولى|ثاني|ثانية|ثالث|ثالثة|رابع|رابعة|خامس|خامسة|سادس|سادسة|سابع|سابعة|ثامن|ثامنة|تاسع|تاسعة|عاشر|عاشرة|حادي عشر|ثاني عشر|ثالث عشر|رابع عشر|خامس عشر|سادس عشر|سابع عشر|ثامن عشر|تاسع عشر|عشرون|عشرين)';
+const RE_LABEL = new RegExp('^(?:ال)?(?:فصل|باب|مبحث|مطلب|حلقة|قسم|مقالة)\\s+(?:' + ORD + '|[0-9٠-٩]{1,3})\\s*[:.\\-–—]?$|^(?:chapter|part)\\s+(?:[0-9]{1,3}|[ivxlc]{1,6}|one|two|three|four|five|six|seven|eight|nine|ten)\\s*[:.]?$', 'iu');
+const isLabel = b => b.type === 'p' && (b.text || '').length <= 40 && RE_LABEL.test((b.text || '').trim());
+
+/** Cut a chapter at its own chapter labels: one part per label, the label in the part's title. */
+function cutAtLabels(ch, cap) {
+  const blocks = ch.sections.flatMap(s => s.blocks);
+  const at = blocks.map((b, i) => (isLabel(b) ? i : -1)).filter(i => i >= 0);
+  if (at.length < 2) return null;
+  const parts = [];
+  const lead = blocks.slice(0, at[0]);
+  for (let k = 0; k < at.length; k++) {
+    const body = blocks.slice(at[k] + 1, k + 1 < at.length ? at[k + 1] : blocks.length);
+    if (k === 0 && blocksLen(lead)) body.unshift(...lead);
+    const title = (ch.title ? ch.title + ': ' : '') + blocks[at[k]].text.trim();
+    if (blocksLen(body) <= cap) parts.push({ title, minutes: 1, sections: [{ title: '', blocks: body }], notes: [] });
+    else parts.push(...cutBlocks(body, title, cap));
+  }
+  assignNotes(ch, parts);
+  return parts;
+}
+
 function cutChapter(ch, cap) {
+  const labelled = cutAtLabels(ch, cap);
+  if (labelled) return labelled;
   if (chapterLen(ch) <= cap) return [ch];
   // 1. The chapter's own sections (they are real titles, so they make the best parts).
   const usable = ch.sections.filter(s => s.blocks.length && blocksLen(s.blocks) >= CHAP_MIN_PART);
@@ -184,7 +212,21 @@ export function assemble(pages, stats, chapters, groups, ctx = {}, opts = {}) {
   const m = { endLinked: 0, nonTerminalEnd: {}, verse: 0, paragraphs: 0, terminal: 0, mega: 0, figures: 0, captions: 0, notes: 0, linked: 0, unlinkedMarkers: 0, frontMatterPages: 0, sections: 0, placed: new Map(), frontSkipped: [] };
   // Coverage: count what each page contributes to the book (lines, headings, figures).
   const mark = pi => m.placed.set(pi, (m.placed.get(pi) || 0) + 1);
-  const starts = new Map(chapters.chapters.map(c => [c.page + ':' + c.line, c]));
+  // A chapter start must sit on a line the loop below will visit. An outline entry can point at a
+  // blank page or a removed line (a running header), and then the chapter never opened and every
+  // page after it was silently dropped. Move such a start to the first live line at or after it.
+  const live = l => l && !l.removed && l.role !== 'note' && l.role !== 'endnote';
+  for (const c of chapters.chapters) {
+    if (live(pages[c.page] && pages[c.page].lines[c.line])) continue;
+    let moved = false;
+    for (let pi = c.page; pi < pages.length && !moved; pi++) {
+      const from = pi === c.page ? c.line : 0;
+      const k = pages[pi].lines.findIndex((l, i) => i >= from && live(l));
+      if (k >= 0) { c.page = pi; c.line = k; c.group = null; moved = true; }
+    }
+  }
+  const starts = new Map();
+  for (const c of chapters.chapters) if (!starts.has(c.page + ':' + c.line)) starts.set(c.page + ':' + c.line, c);
   const groupAt = new Map(groups.map(g => [g.page + ':' + g.start, g]));
   const chapterLevel = chapters.chapters.length ? Math.min(...chapters.chapters.map(c => c.group ? c.group.level : 1)) : 0;
   // Section level: the shallowest heading level used inside the chapters (not in front matter).
@@ -212,6 +254,9 @@ export function assemble(pages, stats, chapters, groups, ctx = {}, opts = {}) {
       para = null; return;
     }
     para.text = repairSplitMarks(para.text.replace(/\s+/g, ' '), opts.lexicon, on(opts, 'mark-word-gap')).trim();
+    // A mark standing alone between spaces belongs to no letter (it drifted from the line above
+    // or below: '« ّ لطم مارميلادوف»'). Drop it rather than show a floating diacritic.
+    if (on(opts, 'drop-stray-marks')) para.text = para.text.replace(/(^|\s)[\u064B-\u0652\u0670]+(?=\s|$)/g, '$1').replace(/\s{2,}/g, ' ').trim();
     if (para.text) {
       m.paragraphs++;
       if (TERMINAL.test(para.text)) m.terminal++;

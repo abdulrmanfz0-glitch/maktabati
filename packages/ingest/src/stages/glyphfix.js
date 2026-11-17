@@ -21,6 +21,7 @@ import { classifyCensus, glyphNameToText } from '../glyphs.js';
 import { solveLigatures, SOLVER } from '../ligsolver.js';
 import { FUNCTION_WORDS, matchForm, tokens as tokenize, RE_MARKS_G } from '../text.js';
 import { TrigramModel } from '../score.js';
+import { RE_AR_WORD, fixItemLigatures } from './extract.js';
 
 // Characters pdf.js normalizes (NFKC) per glyph in getTextContent, from pdf.js 5.x normalizeUnicode.
 const PDFJS_NORM = /[ µ;ຳ -  Ωﬀ-ﬄﬆﬠ-זּטּ-לּמּנּ-סּףּ-פּצּ-ﮡﮤ-ﮩﮮ-ﮱﯓ-ﯜﯞ-ﯧﯪ-ﯸﯼ-ﯽﰀ-ﱝﱤ-ﳱﳵ-ﴽﶈﷴﷺ-ﷻﹱﹷﹹﹻﹽ]/g;
@@ -40,6 +41,65 @@ function replaceAll(s, map) {
   return out;
 }
 
+// Reversed lam-alef ligatures ('لا' 'لإ' 'لأ' 'لآ') reverse into 'ال' 'إل' 'أل' 'آل', which are
+// also ordinary letter pairs (the article, 'إلى'). Replacing them in the whole string broke far
+// more words than it fixed, so the document evidence vetoed every swap and words like 'يف' 'اهلل'
+// 'إىل' stayed reversed. Swaps are decided per word instead.
+const AMBIG = new Set(['ال', 'إل', 'أل', 'آل']);
+const RE_WORD = /[\u0621-\u064A\u0670-\u06D3]+(?:[\u064B-\u065F\u0670][\u0621-\u064A\u0670-\u06D3]*)*/g;
+/** Known as a word, or after taking off a common prefix and suffix (the word list has stems). */
+const PRE = /^(?:و|ف)?(?:ب|ل|ك)?(?:ال)?/, SUF = /(?:ها|هم|هن|هما|كم|نا|ه|ك|ي|ين|ون|ان|ات|ة|تم)$/;
+function knownish(t, lexicon) {
+  t = t.replace(RE_MARKS_G, '');
+  // Alef maksura and ta marbuta only end a word: 'المعىن' is a reversed 'المعنى' even though
+  // the bundled word list (built from subtitles) contains it.
+  if (/[ىة](?=[\u0621-\u064A])/.test(t)) return false;
+  if (isKnown(t, lexicon)) return true;
+  const a = t.replace(PRE, ''), b = a.replace(SUF, '');
+  return [a, b, t.replace(SUF, '')].some(x => x.length >= 2 && x !== t && isKnown(x, lexicon));
+}
+// 'لآ' normalizes to the function word 'لا'; the alef madda never follows lam in a real 'لا'.
+const isFw = t => !/لآ/.test(t) && FUNCTION_WORDS.has(matchForm(t.replace(RE_MARKS_G, '')));
+/** Every way to swap a subset of the reversed pairs found in w (at most 2^5 variants). */
+function variants(w, swaps) {
+  const sites = [];
+  for (const [from, to] of swaps) { let i = w.indexOf(from); while (i >= 0) { sites.push({ i, from, to }); i = w.indexOf(from, i + from.length); } }
+  sites.sort((x, y) => x.i - y.i);
+  // Overlapping sites ('ام' and 'مل' in 'املتحدة') are alternatives: try every non-overlapping subset.
+  const all = sites.slice(0, 8);
+  const out = [];
+  for (let mask = 1; mask < 1 << all.length; mask++) {
+    const pick = all.filter((x, k) => mask & (1 << k));
+    if (pick.some((x, k) => k && x.i < pick[k - 1].i + pick[k - 1].from.length)) continue;
+    let r = '', at = 0;
+    for (const x of pick) { r += w.slice(at, x.i) + x.to; at = x.i + x.from.length; }
+    out.push({ w: r + w.slice(at), n: pick.length });
+  }
+  return out.sort((x, y) => x.n - y.n);
+}
+/** One word: a swapped form only when the word list (or the function words) says so. */
+export function swapWord(w, swaps, lexicon) {
+  const vs = variants(w, swaps);
+  if (!vs.length) return w;
+  // The word list was built from real PDFs and holds a few reversed forms ('إىل'): a function word wins.
+  if (/[ىة](?=[\u0621-\u064A])/.test(w.replace(RE_MARKS_G, ''))) { const ok = vs.find(v => !/[ىة](?=[\u0621-\u064A])/.test(v.w.replace(RE_MARKS_G, '')) && knownish(v.w, lexicon)); if (ok) return ok.w; }
+  if (!isFw(w)) { const fw = vs.find(v => isFw(v.w)); if (fw) return fw.w; }
+  // A whole-word match beats a stem match: 'احلين' has the stem 'احل' but 'الحين' is a word.
+  const whole = t => isKnown(t.replace(RE_MARKS_G, ''), lexicon) && !/[ىة](?=[\u0621-\u064A])/.test(t);
+  if (whole(w)) return w;
+  const full = vs.find(v => whole(v.w));
+  if (full) return full.w;
+  if (knownish(w, lexicon)) return w;
+  const hit = vs.find(v => knownish(v.w, lexicon));
+  if (hit) return hit.w;
+  // Unknown either way: only the swaps no Arabic word can need.
+  let out = w;
+  if (swaps.has('إل') || swaps.has('أل') || swaps.has('آل')) out = out.replace(/(^|[وفبكل])ا([إأآ])ل/g, '$1ال$2').replace(/^([وف]?)ل([إأآ])ل/, '$1لل$2');
+  if (out === 'ال' && swaps.has('ال')) out = 'لا';
+  return out;
+}
+const swapWords = (s, swaps, lexicon) => s.replace(RE_WORD, w => swapWord(w, swaps, lexicon));
+
 const isKnown = (t, lexicon) => FUNCTION_WORDS.has(matchForm(t)) || (lexicon ? lexicon.has(t) : false);
 
 /**
@@ -49,7 +109,7 @@ const isKnown = (t, lexicon) => FUNCTION_WORDS.has(matchForm(t)) || (lexicon ? l
 export function multiEvidence(items, swaps, lexicon) {
   let before = 0, after = 0, changed = 0;
   for (const it of items) {
-    const s2 = replaceAll(it.s, swaps);
+    const s2 = swapWords(it.s, swaps, lexicon);
     if (s2 === it.s) continue;
     const a = tokenize(nfkcForms(it.s)), b = tokenize(nfkcForms(s2));
     if (a.length !== b.length) continue;
@@ -80,7 +140,25 @@ export function repairGlyphs(raws, census, ctx = {}, opts = {}) {
 
   // Items, with the pdf.js normalization emulated when raw-ligatures is off.
   const rawLig = on(opts, 'raw-ligatures');
-  let pages = raws.map(r => Object.assign({}, r, { items: r.items.map(it => rawLig ? it : Object.assign({}, it, { s: pdfjsNormalized(it.s, it.dir) })) }));
+  // Exact ligature restore from the glyph stream (see extract.js ligatureStream).
+  const exact = { items: 0, located: 0, fixed: 0, missed: 0 };
+  const exactOn = on(opts, 'exact-ligatures');
+  const restore = (r) => {
+    if (!exactOn || !r.lig || !r.lig.s) return r.items;
+    const cur = { at: 0 };
+    return r.items.map(it => {
+      if (it.dir !== 'rtl') return it;
+      exact.items++;
+      const s2 = fixItemLigatures(it.s, r.lig, cur);
+      if (s2 === null) { exact.missed++; return it; }
+      exact.located++;
+      const out = s2 === it.s ? Object.assign({}, it) : Object.assign({}, it, { s: s2 });
+      if (s2 !== it.s) exact.fixed++;
+      out._exact = true;
+      return out;
+    });
+  };
+  let pages = raws.map(r => Object.assign({}, r, { items: restore(r).map(it => rawLig ? it : Object.assign({}, it, { s: pdfjsNormalized(it.s, it.dir) })) }));
 
   const itemsByFid = new Map();
   for (const p of pages) for (const it of p.items) { if (!itemsByFid.has(it.fid)) itemsByFid.set(it.fid, []); itemsByFid.get(it.fid).push(it); }
@@ -141,20 +219,31 @@ export function repairGlyphs(raws, census, ctx = {}, opts = {}) {
   // --- glyph-names ---
   if (on(opts, 'glyph-names')) for (const u of unknown) {
     if (!u.ch) continue;
-    const emb = ctx.names ? ctx.names.get(u.F.name) : null;
+    const ent = ctx.names ? ctx.names.get(u.F.name) : null;
+    // embeddedGlyphNames maps a font to { format, names }, not to the names map itself.
+    const emb = ent && (typeof ent.get === 'function' ? ent : ent.names instanceof Map ? ent.names : null);
     const name = (emb && emb.get(u.code)) || (Array.isArray(u.F.differences) && u.F.differences[u.code]) || (Array.isArray(u.F.defaultEncoding) && u.F.defaultEncoding[u.code]) || null;
     const text = glyphNameToText(name);
     if (text) { setFix(u.fid, u.ch, text); u.resolved = 'name'; rep.namesResolved++; }
   }
 
-  // Apply multi swaps and name fixes before the solver sees the text.
+  const multiWord = (it, w) => {
+    const m = applyMulti.get(it.fid);
+    const r = swapWord(w, m, lexicon);
+    if (r !== w) rep.multiReplaced++;
+    return r;
+  };
+
+  // Apply multi swaps and name fixes before the solver sees the text. An item the glyph
+  // stream already restored is exact and skips the word-list swap.
   const applyItem = it => {
     let s = it.s;
-    if (it.dir === 'rtl' && applyMulti.has(it.fid)) { const s2 = replaceAll(s, applyMulti.get(it.fid)); if (s2 !== s) { rep.multiReplaced += countDiff(s, applyMulti.get(it.fid)); s = s2; } }
+    if (it.dir === 'rtl' && applyMulti.has(it.fid) && !it._exact) s = s.replace(RE_AR_WORD, w => multiWord(it, w));
     if (fix.has(it.fid)) s = replaceAll(s, fix.get(it.fid));
     return s === it.s ? it : Object.assign({}, it, { s });
   };
   pages = pages.map(p => Object.assign({}, p, { items: p.items.map(applyItem) }));
+  rep.exactLigatures = exact;
 
   // --- ligature-solver ---
   const open = unknown.filter(u => u.ch && !u.resolved);

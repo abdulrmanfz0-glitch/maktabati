@@ -59,6 +59,8 @@ export async function extractPage(page, OPS, opt = {}) {
     items.push({ s: it.str, x: t[4] - x0, y: t[5] - y0, w: it.width, size: Math.hypot(t[2], t[3]) || Math.abs(t[3]) || 1, font: f.font, fid: it.fontName, bold: f.bold, italic: f.italic, dir: it.dir });
   }
 
+  const lig = OPS.showText !== undefined ? ligatureStream(ops, OPS) : null;
+
   const images = [];
   let ctm = IDENT.slice();
   const stack = [];
@@ -91,7 +93,7 @@ export async function extractPage(page, OPS, opt = {}) {
   }
   for (const im of images) delete im.id;
 
-  return { index: page.pageNumber, width, height, items, images };
+  return { index: page.pageNumber, width, height, items, images, lig };
 }
 
 /** Share of the page covered by the largest image (used to spot scanned pages). */
@@ -120,3 +122,75 @@ export const imageUnionCoverage = p => {
   }
   return Math.min(1, area / pageArea);
 };
+
+// One Arabic word: letters, tatweel and marks.
+export const RE_AR_WORD = /[\u0621-\u063A\u0640-\u065F\u066E-\u06D3\u06D5\u0670]+/g;
+const RE_AR_LETTER = /[\u0621-\u063A\u0641-\u064A\u066E-\u06D3\u06D5]/g;
+
+const RE_AR_CHAR = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/;
+
+/**
+ * Ligature glyphs, read from the glyph stream itself. A glyph whose ToUnicode entry holds two or
+ * more Arabic characters ('في' 'لى' 'لا') is drawn in visual order like every other glyph; pdf.js
+ * reverses right-to-left text character by character, so that glyph's characters come out
+ * reversed ('يف' 'ىل'). The stream keeps the truth: here the page's Arabic characters are listed
+ * in stream order, each with the id of the multi-character glyph it came from (-1 for a glyph of
+ * one character). The glyphs stage finds each item in this stream and turns those runs back.
+ * No word list is involved. Returns null when the page has no such glyph.
+ */
+export function ligatureStream(ops, OPS) {
+  let chars = '';
+  const unit = [];
+  let id = 0, any = false;
+  for (let i = 0; i < ops.fnArray.length; i++) {
+    const fn = ops.fnArray[i];
+    if (fn !== OPS.showText && fn !== OPS.showSpacedText) continue;
+    const gl = ops.argsArray[i][0];
+    if (!Array.isArray(gl)) continue;
+    for (const g of gl) {
+      if (!g || typeof g !== 'object') continue;
+      const ar = [...(g.unicode || '')].filter(c => RE_AR_CHAR.test(c));
+      if (!ar.length) continue;
+      const multi = ar.length >= 2;
+      if (multi) any = true;
+      const gid = multi ? id++ : -1;
+      for (const c of ar) { chars += c; unit.push(gid); }
+    }
+  }
+  return any ? { s: chars, u: Int32Array.from(unit) } : null;
+}
+
+/**
+ * Turn reversed multi-character glyphs in one right-to-left item back, using the page stream.
+ * `cursor` = { at } is where the previous item matched, so repeated lines resolve in order.
+ * Returns the fixed string, or null when the item could not be located in the stream.
+ */
+export function fixItemLigatures(str, stream, cursor) {
+  const cs = [...str];
+  const pos = []; // indexes in cs of the Arabic characters, in visual (stream) order
+  for (let k = cs.length - 1; k >= 0; k--) if (RE_AR_CHAR.test(cs[k])) pos.push(k);
+  if (pos.length < 2) return str;
+  const target = pos.map(k => cs[k]).join('');
+  let at = stream.s.indexOf(target, cursor.at);
+  if (at < 0) at = stream.s.indexOf(target);
+  if (at < 0) return null;
+  cursor.at = at + target.length;
+  // Group the item's characters by stream glyph; reverse each multi-character glyph's run.
+  let changed = false;
+  for (let j = 0; j < pos.length;) {
+    const gid = stream.u[at + j];
+    let e = j + 1;
+    while (gid >= 0 && e < pos.length && stream.u[at + e] === gid) e++;
+    if (gid >= 0 && e - j >= 2) {
+      // pos[j..e-1] are descending indexes in cs: the run sits at cs[pos[e-1]..pos[j]].
+      const lo = pos[e - 1], hi = pos[j];
+      if (hi - lo === e - j - 1) {
+        const run = cs.slice(lo, hi + 1).reverse();
+        for (let k = 0; k < run.length; k++) cs[lo + k] = run[k];
+        changed = true;
+      }
+    }
+    j = e;
+  }
+  return changed ? cs.join('') : str;
+}

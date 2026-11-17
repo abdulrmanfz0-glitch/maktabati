@@ -7,7 +7,7 @@
 import { IngestError, makeReport } from './model.js';
 import { extractPage, imageCoverage, imageUnionCoverage } from './stages/extract.js';
 import { reorderPage } from './stages/reorder.js';
-import { normalizePage, repairBookMarks, MARK_OPEN, MARK_CLOSE, pairOrderVotes, decidePairOrder, mirrorPairs, lossyEvidence, repairLossy } from './stages/normalize.js';
+import { normalizePage, adaptiveSpaceGap, repairBookMarks, MARK_OPEN, MARK_CLOSE, pairOrderVotes, decidePairOrder, mirrorPairs, lossyEvidence, repairLossy } from './stages/normalize.js';
 import { docStats, layoutPage } from './stages/layout.js';
 import { cleanPages, residualRepeats } from './stages/clean.js';
 import { detectFootnotes, detectEndnotes, alignSequences, detectHeadings, detectChapters } from './stages/structure.js';
@@ -55,7 +55,10 @@ async function resolveOutline(doc) {
       out.push({ title: String(o.title || ''), page: idx + 1 });
     } catch (e) { /* unresolvable entry */ }
   }
-  return out;
+  // Bookmarks can be listed out of page order (InDesign 'Page vierge' entries); chapters are
+  // cut by start page, so an unsorted outline made every chapter empty and dropped the book.
+  out.sort((a, b) => a.page - b.page);
+  return out.filter((o, i) => i === 0 || o.page !== out[i - 1].page);
 }
 
 export async function* ingestPdf(bytes, options = {}) {
@@ -135,9 +138,15 @@ export async function* ingestPdf(bytes, options = {}) {
     tA = now();
     const pages = [];
     let reversedPages = 0, lossyRepaired = 0, pairsFixed = 0;
-    for (const raw of gl.raws) {
+    const ordered = gl.raws.map(raw => reorderPage(raw, opts));
+    if (on(opts, 'adaptive-space-gap')) {
+      const cut = adaptiveSpaceGap(ordered, opts.params.spaceGapEm ?? 0.15);
+      if (cut !== null) { opts.params = Object.assign({}, opts.params, { spaceGapEm: cut }); report.spaceGapEm = cut; }
+    }
+    for (let r = 0; r < gl.raws.length; r++) {
+      const raw = gl.raws[r];
       check();
-      const lines = reorderPage(raw, opts);
+      const lines = ordered[r];
       const norm = normalizePage(lines, opts);
       if (norm.reversed) reversedPages++;
       lossyRepaired += norm.lossy || 0;
@@ -186,8 +195,16 @@ export async function* ingestPdf(bytes, options = {}) {
 
     // --- assemble ---
     tA = now();
-    const title = String(meta.info?.Title || '').trim() || (groups.length ? groups.slice().sort((a, b) => b.size - a.size || a.page - b.page).find(g => g.page < 5)?.text : '') || '';
-    const author = String(meta.info?.Author || '').trim();
+    // The title page often says it in words: 'المؤلف: دوستويفسكي'. Read that before guessing.
+    const front = pages.slice(0, 4).flatMap(p => p.lines.map(l => l.text.trim()));
+    const labelled = re => { for (const t of front) { const m = re.exec(t); if (m && m[1].trim().length >= 2 && m[1].trim().length <= 60) return m[1].trim().replace(/[.،,]+$/, ''); } return ''; };
+    const RE_AUTHOR = /^(?:المؤلف|تأليف|Author)\s*[:：]\s*(.+)$/i;
+    const RE_TITLE = /^(?:العنوان|اسم الكتاب|عنوان الكتاب|Title)\s*[:：]\s*(.+)$/i;
+    const RE_TRANSLATOR = /^(?:المترجم|ترجمة|Translator)\s*[:：]\s*(.+)$/i;
+    const title = String(meta.info?.Title || '').trim() || labelled(RE_TITLE) || (groups.length ? groups.slice().sort((a, b) => b.size - a.size || a.page - b.page).find(g => g.page < 5)?.text : '') || '';
+    const author = String(meta.info?.Author || '').trim() || labelled(RE_AUTHOR);
+    const translator = labelled(RE_TRANSLATOR);
+    if (translator) report.translator = translator;
     // Endnotes: marker sequences in reading order (markers not claimed by a same-page footnote),
     // aligned to the endnote sequences.
     if (endnotes.sequences.length) {

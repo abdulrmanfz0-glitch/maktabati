@@ -4,6 +4,9 @@
 
 export const RULES = [
   { id: 'raw-ligatures', stage: 'extract', off: 'pdf.js expands ligature glyphs before its right-to-left reversal (their letters come out reversed)' },
+  { id: 'drop-stray-marks', stage: 'assemble', off: 'a diacritic standing alone between spaces stays in the text' },
+  { id: 'adaptive-space-gap', stage: 'normalize', off: 'the word-space gap is the fixed profile value' },
+  { id: 'exact-ligatures', stage: 'glyphs', off: 'reversed ligature letters are only restored by the word-list swap, not from the glyph stream' },
   { id: 'reversed-multi', stage: 'glyphs', off: 'multi-letter glyph mappings stay reversed inside right-to-left chunks' },
   { id: 'glyph-names', stage: 'glyphs', off: 'glyphs with no usable Unicode are not read from their glyph names' },
   { id: 'ligature-solver', stage: 'glyphs', off: 'unknown glyphs are not solved (their pages go to vision)' },
