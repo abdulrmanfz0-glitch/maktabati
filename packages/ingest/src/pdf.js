@@ -198,7 +198,7 @@ export async function* ingestPdf(bytes, options = {}) {
     // The title page often says it in words: 'المؤلف: دوستويفسكي'. Read that before guessing.
     const front = pages.slice(0, 4).flatMap(p => p.lines.map(l => l.text.trim()));
     const labelled = re => { for (const t of front) { const m = re.exec(t); if (m && m[1].trim().length >= 2 && m[1].trim().length <= 60) return m[1].trim().replace(/[.،,]+$/, ''); } return ''; };
-    const RE_AUTHOR = /^(?:المؤلف|تأليف|بقلم|الكاتب|Author)\s*[:：]\s*(.+)$/i;
+    const RE_AUTHOR = /^(?:المؤلف|تأليف|Author)\s*[:：]\s*(.+)$/i;
     const RE_TITLE = /^(?:العنوان|اسم الكتاب|عنوان الكتاب|Title)\s*[:：]\s*(.+)$/i;
     const RE_TRANSLATOR = /^(?:المترجم|ترجمة|Translator)\s*[:：]\s*(.+)$/i;
     const title = String(meta.info?.Title || '').trim() || labelled(RE_TITLE) || (groups.length ? groups.slice().sort((a, b) => b.size - a.size || a.page - b.page).find(g => g.page < 5)?.text : '') || '';

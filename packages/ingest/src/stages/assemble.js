@@ -107,7 +107,9 @@ const partTitle = (base, k) => (k === 1 ? base : base + ' (' + k + ')');
 // A paragraph that is only a chapter label ('الفصل الثاني', 'الباب 3', 'Chapter 4'). Books often
 // set these in body size, so layout never marks them as headings; without this a 3-part novel was
 // cut every 20,000 characters, mid-scene, into parts called 'الجزء الأول (8)'.
-const RE_LABEL = /^(?:ال)?(?:فصل|باب|مبحث|مطلب|حلقة|قسم|مقالة|chapter|part)\s+[\p{L}\p{N}]+(?:\s+[\p{L}\p{N}]+){0,2}\s*[:.\-–—]?$/iu;
+// The label is the word plus an ordinal or a number, nothing else ('قسم الشرطة' is not a label).
+const ORD = '(?:ال)?(?:أول|اول|أولى|ثاني|ثانية|ثالث|ثالثة|رابع|رابعة|خامس|خامسة|سادس|سادسة|سابع|سابعة|ثامن|ثامنة|تاسع|تاسعة|عاشر|عاشرة|حادي عشر|ثاني عشر|ثالث عشر|رابع عشر|خامس عشر|سادس عشر|سابع عشر|ثامن عشر|تاسع عشر|عشرون|عشرين)';
+const RE_LABEL = new RegExp('^(?:ال)?(?:فصل|باب|مبحث|مطلب|حلقة|قسم|مقالة)\\s+(?:' + ORD + '|[0-9٠-٩]{1,3})\\s*[:.\\-–—]?$|^(?:chapter|part)\\s+(?:[0-9]{1,3}|[ivxlc]{1,6}|one|two|three|four|five|six|seven|eight|nine|ten)\\s*[:.]?$', 'iu');
 const isLabel = b => b.type === 'p' && (b.text || '').length <= 40 && RE_LABEL.test((b.text || '').trim());
 
 /** Cut a chapter at its own chapter labels: one part per label, the label in the part's title. */
