@@ -55,7 +55,10 @@ async function resolveOutline(doc) {
       out.push({ title: String(o.title || ''), page: idx + 1 });
     } catch (e) { /* unresolvable entry */ }
   }
-  return out;
+  // Bookmarks can be listed out of page order (InDesign 'Page vierge' entries); chapters are
+  // cut by start page, so an unsorted outline made every chapter empty and dropped the book.
+  out.sort((a, b) => a.page - b.page);
+  return out.filter((o, i) => i === 0 || o.page !== out[i - 1].page);
 }
 
 export async function* ingestPdf(bytes, options = {}) {

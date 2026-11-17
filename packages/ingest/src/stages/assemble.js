@@ -184,7 +184,21 @@ export function assemble(pages, stats, chapters, groups, ctx = {}, opts = {}) {
   const m = { endLinked: 0, nonTerminalEnd: {}, verse: 0, paragraphs: 0, terminal: 0, mega: 0, figures: 0, captions: 0, notes: 0, linked: 0, unlinkedMarkers: 0, frontMatterPages: 0, sections: 0, placed: new Map(), frontSkipped: [] };
   // Coverage: count what each page contributes to the book (lines, headings, figures).
   const mark = pi => m.placed.set(pi, (m.placed.get(pi) || 0) + 1);
-  const starts = new Map(chapters.chapters.map(c => [c.page + ':' + c.line, c]));
+  // A chapter start must sit on a line the loop below will visit. An outline entry can point at a
+  // blank page or a removed line (a running header), and then the chapter never opened and every
+  // page after it was silently dropped. Move such a start to the first live line at or after it.
+  const live = l => l && !l.removed && l.role !== 'note' && l.role !== 'endnote';
+  for (const c of chapters.chapters) {
+    if (live(pages[c.page] && pages[c.page].lines[c.line])) continue;
+    let moved = false;
+    for (let pi = c.page; pi < pages.length && !moved; pi++) {
+      const from = pi === c.page ? c.line : 0;
+      const k = pages[pi].lines.findIndex((l, i) => i >= from && live(l));
+      if (k >= 0) { c.page = pi; c.line = k; c.group = null; moved = true; }
+    }
+  }
+  const starts = new Map();
+  for (const c of chapters.chapters) if (!starts.has(c.page + ':' + c.line)) starts.set(c.page + ':' + c.line, c);
   const groupAt = new Map(groups.map(g => [g.page + ':' + g.start, g]));
   const chapterLevel = chapters.chapters.length ? Math.min(...chapters.chapters.map(c => c.group ? c.group.level : 1)) : 0;
   // Section level: the shallowest heading level used inside the chapters (not in front matter).

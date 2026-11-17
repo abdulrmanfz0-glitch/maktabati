@@ -40,6 +40,56 @@ function replaceAll(s, map) {
   return out;
 }
 
+// Reversed lam-alef ligatures ('لا' 'لإ' 'لأ' 'لآ') reverse into 'ال' 'إل' 'أل' 'آل', which are
+// also ordinary letter pairs (the article, 'إلى'). Replacing them in the whole string broke far
+// more words than it fixed, so the document evidence vetoed every swap and words like 'يف' 'اهلل'
+// 'إىل' stayed reversed. Swaps are decided per word instead.
+const AMBIG = new Set(['ال', 'إل', 'أل', 'آل']);
+const RE_WORD = /[\u0621-\u064A\u0670-\u06D3]+(?:[\u064B-\u065F\u0670][\u0621-\u064A\u0670-\u06D3]*)*/g;
+/** Known as a word, or after taking off a common prefix and suffix (the word list has stems). */
+const PRE = /^(?:و|ف)?(?:ب|ل|ك)?(?:ال)?/, SUF = /(?:ها|هم|هن|هما|كم|نا|ه|ك|ي|ين|ون|ان|ات|ة|تم)$/;
+function knownish(t, lexicon) {
+  t = t.replace(RE_MARKS_G, '');
+  // Alef maksura and ta marbuta only end a word: 'المعىن' is a reversed 'المعنى' even though
+  // the bundled word list (built from subtitles) contains it.
+  if (/[ىة](?=[\u0621-\u064A])/.test(t)) return false;
+  if (isKnown(t, lexicon)) return true;
+  const a = t.replace(PRE, ''), b = a.replace(SUF, '');
+  return [a, b, t.replace(SUF, '')].some(x => x.length >= 2 && x !== t && isKnown(x, lexicon));
+}
+const isFw = t => FUNCTION_WORDS.has(matchForm(t.replace(RE_MARKS_G, '')));
+/** Every way to swap a subset of the reversed pairs found in w (at most 2^5 variants). */
+function variants(w, swaps) {
+  const sites = [];
+  for (const [from, to] of swaps) { let i = w.indexOf(from); while (i >= 0) { sites.push({ i, from, to }); i = w.indexOf(from, i + from.length); } }
+  sites.sort((x, y) => x.i - y.i);
+  const clean = sites.filter((x, k) => k === 0 || x.i >= sites[k - 1].i + sites[k - 1].from.length).slice(0, 5);
+  const out = [];
+  for (let mask = 1; mask < 1 << clean.length; mask++) {
+    let r = '', at = 0, n = 0;
+    clean.forEach((x, k) => { if (mask & (1 << k)) { r += w.slice(at, x.i) + x.to; at = x.i + x.from.length; n++; } });
+    out.push({ w: r + w.slice(at), n });
+  }
+  return out.sort((x, y) => x.n - y.n);
+}
+/** One word: a swapped form only when the word list (or the function words) says so. */
+export function swapWord(w, swaps, lexicon) {
+  const vs = variants(w, swaps);
+  if (!vs.length) return w;
+  // The word list was built from real PDFs and holds a few reversed forms ('إىل'): a function word wins.
+  if (/[ىة](?=[\u0621-\u064A])/.test(w.replace(RE_MARKS_G, ''))) { const ok = vs.find(v => !/[ىة](?=[\u0621-\u064A])/.test(v.w.replace(RE_MARKS_G, '')) && knownish(v.w, lexicon)); if (ok) return ok.w; }
+  if (!isFw(w)) { const fw = vs.find(v => isFw(v.w)); if (fw) return fw.w; }
+  if (knownish(w, lexicon)) return w;
+  const hit = vs.find(v => knownish(v.w, lexicon));
+  if (hit) return hit.w;
+  // Unknown either way: only the swaps no Arabic word can need.
+  let out = w;
+  if (swaps.has('إل') || swaps.has('أل') || swaps.has('آل')) out = out.replace(/(^|[وفبكل])ا([إأآ])ل/g, '$1ال$2').replace(/^([وف]?)ل([إأآ])ل/, '$1لل$2');
+  if (out === 'ال' && swaps.has('ال')) out = 'لا';
+  return out;
+}
+const swapWords = (s, swaps, lexicon) => s.replace(RE_WORD, w => swapWord(w, swaps, lexicon));
+
 const isKnown = (t, lexicon) => FUNCTION_WORDS.has(matchForm(t)) || (lexicon ? lexicon.has(t) : false);
 
 /**
@@ -49,7 +99,7 @@ const isKnown = (t, lexicon) => FUNCTION_WORDS.has(matchForm(t)) || (lexicon ? l
 export function multiEvidence(items, swaps, lexicon) {
   let before = 0, after = 0, changed = 0;
   for (const it of items) {
-    const s2 = replaceAll(it.s, swaps);
+    const s2 = swapWords(it.s, swaps, lexicon);
     if (s2 === it.s) continue;
     const a = tokenize(nfkcForms(it.s)), b = tokenize(nfkcForms(s2));
     if (a.length !== b.length) continue;
@@ -141,7 +191,9 @@ export function repairGlyphs(raws, census, ctx = {}, opts = {}) {
   // --- glyph-names ---
   if (on(opts, 'glyph-names')) for (const u of unknown) {
     if (!u.ch) continue;
-    const emb = ctx.names ? ctx.names.get(u.F.name) : null;
+    const ent = ctx.names ? ctx.names.get(u.F.name) : null;
+    // embeddedGlyphNames maps a font to { format, names }, not to the names map itself.
+    const emb = ent && (typeof ent.get === 'function' ? ent : ent.names instanceof Map ? ent.names : null);
     const name = (emb && emb.get(u.code)) || (Array.isArray(u.F.differences) && u.F.differences[u.code]) || (Array.isArray(u.F.defaultEncoding) && u.F.defaultEncoding[u.code]) || null;
     const text = glyphNameToText(name);
     if (text) { setFix(u.fid, u.ch, text); u.resolved = 'name'; rep.namesResolved++; }
@@ -150,7 +202,7 @@ export function repairGlyphs(raws, census, ctx = {}, opts = {}) {
   // Apply multi swaps and name fixes before the solver sees the text.
   const applyItem = it => {
     let s = it.s;
-    if (it.dir === 'rtl' && applyMulti.has(it.fid)) { const s2 = replaceAll(s, applyMulti.get(it.fid)); if (s2 !== s) { rep.multiReplaced += countDiff(s, applyMulti.get(it.fid)); s = s2; } }
+    if (it.dir === 'rtl' && applyMulti.has(it.fid)) { const s2 = swapWords(s, applyMulti.get(it.fid), lexicon); if (s2 !== s) { rep.multiReplaced += countDiff(s, applyMulti.get(it.fid)); s = s2; } }
     if (fix.has(it.fid)) s = replaceAll(s, fix.get(it.fid));
     return s === it.s ? it : Object.assign({}, it, { s });
   };
