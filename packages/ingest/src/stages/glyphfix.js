@@ -21,6 +21,7 @@ import { classifyCensus, glyphNameToText } from '../glyphs.js';
 import { solveLigatures, SOLVER } from '../ligsolver.js';
 import { FUNCTION_WORDS, matchForm, tokens as tokenize, RE_MARKS_G } from '../text.js';
 import { TrigramModel } from '../score.js';
+import { RE_AR_WORD, fixItemLigatures } from './extract.js';
 
 // Characters pdf.js normalizes (NFKC) per glyph in getTextContent, from pdf.js 5.x normalizeUnicode.
 const PDFJS_NORM = /[ µ;ຳ -  Ωﬀ-ﬄﬆﬠ-זּטּ-לּמּנּ-סּףּ-פּצּ-ﮡﮤ-ﮩﮮ-ﮱﯓ-ﯜﯞ-ﯧﯪ-ﯸﯼ-ﯽﰀ-ﱝﱤ-ﳱﳵ-ﴽﶈﷴﷺ-ﷻﹱﹷﹹﹻﹽ]/g;
@@ -139,7 +140,25 @@ export function repairGlyphs(raws, census, ctx = {}, opts = {}) {
 
   // Items, with the pdf.js normalization emulated when raw-ligatures is off.
   const rawLig = on(opts, 'raw-ligatures');
-  let pages = raws.map(r => Object.assign({}, r, { items: r.items.map(it => rawLig ? it : Object.assign({}, it, { s: pdfjsNormalized(it.s, it.dir) })) }));
+  // Exact ligature restore from the glyph stream (see extract.js ligatureStream).
+  const exact = { items: 0, located: 0, fixed: 0, missed: 0 };
+  const exactOn = on(opts, 'exact-ligatures');
+  const restore = (r) => {
+    if (!exactOn || !r.lig || !r.lig.s) return r.items;
+    const cur = { at: 0 };
+    return r.items.map(it => {
+      if (it.dir !== 'rtl') return it;
+      exact.items++;
+      const s2 = fixItemLigatures(it.s, r.lig, cur);
+      if (s2 === null) { exact.missed++; return it; }
+      exact.located++;
+      const out = s2 === it.s ? Object.assign({}, it) : Object.assign({}, it, { s: s2 });
+      if (s2 !== it.s) exact.fixed++;
+      out._exact = true;
+      return out;
+    });
+  };
+  let pages = raws.map(r => Object.assign({}, r, { items: restore(r).map(it => rawLig ? it : Object.assign({}, it, { s: pdfjsNormalized(it.s, it.dir) })) }));
 
   const itemsByFid = new Map();
   for (const p of pages) for (const it of p.items) { if (!itemsByFid.has(it.fid)) itemsByFid.set(it.fid, []); itemsByFid.get(it.fid).push(it); }
@@ -208,14 +227,23 @@ export function repairGlyphs(raws, census, ctx = {}, opts = {}) {
     if (text) { setFix(u.fid, u.ch, text); u.resolved = 'name'; rep.namesResolved++; }
   }
 
-  // Apply multi swaps and name fixes before the solver sees the text.
+  const multiWord = (it, w) => {
+    const m = applyMulti.get(it.fid);
+    const r = swapWord(w, m, lexicon);
+    if (r !== w) rep.multiReplaced++;
+    return r;
+  };
+
+  // Apply multi swaps and name fixes before the solver sees the text. An item the glyph
+  // stream already restored is exact and skips the word-list swap.
   const applyItem = it => {
     let s = it.s;
-    if (it.dir === 'rtl' && applyMulti.has(it.fid)) { const s2 = swapWords(s, applyMulti.get(it.fid), lexicon); if (s2 !== s) { rep.multiReplaced += countDiff(s, applyMulti.get(it.fid)); s = s2; } }
+    if (it.dir === 'rtl' && applyMulti.has(it.fid) && !it._exact) s = s.replace(RE_AR_WORD, w => multiWord(it, w));
     if (fix.has(it.fid)) s = replaceAll(s, fix.get(it.fid));
     return s === it.s ? it : Object.assign({}, it, { s });
   };
   pages = pages.map(p => Object.assign({}, p, { items: p.items.map(applyItem) }));
+  rep.exactLigatures = exact;
 
   // --- ligature-solver ---
   const open = unknown.filter(u => u.ch && !u.resolved);

@@ -214,7 +214,12 @@ export function detectChapters(pages, groups, ctx = {}, opts = {}) {
   SPACELESS = on(opts, 'spaceless-keys'); ANAGRAM = on(opts, 'toc-anagram');
   if (on(opts, 'outline-chapters') && ctx.outline && ctx.outline.length >= 2) {
     const ch = fromOutline(ctx.outline, pages, groups);
-    if (ch.length >= 2) return { chapters: ch, method: 'outline', toc: null };
+    // An outline that only bookmarks the first pages (Acrobat's file-name bookmarks: 'Crime and
+    // Punishment P01_CO', 'Crime and Punishment P01') says nothing about chapters; using it made
+    // the whole book one chapter. It must reach past the first tenth of the book.
+    const last = ch.length ? Math.max(...ch.map(c => c.page)) : 0;
+    const spread = pages.length < 10 || last >= Math.max(2, pages.length * 0.1);
+    if (ch.length >= 2 && spread) return { chapters: ch, method: 'outline', toc: null };
   }
   let toc = null;
   if (on(opts, 'toc-chapters') && groups.length) {

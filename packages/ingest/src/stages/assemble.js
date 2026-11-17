@@ -104,7 +104,33 @@ function assignNotes(ch, parts) {
 const partTitle = (base, k) => (k === 1 ? base : base + ' (' + k + ')');
 
 /** Cut one oversized chapter into parts: its sections, then heading paragraphs, then paragraphs. */
+// A paragraph that is only a chapter label ('الفصل الثاني', 'الباب 3', 'Chapter 4'). Books often
+// set these in body size, so layout never marks them as headings; without this a 3-part novel was
+// cut every 20,000 characters, mid-scene, into parts called 'الجزء الأول (8)'.
+const RE_LABEL = /^(?:ال)?(?:فصل|باب|مبحث|مطلب|حلقة|قسم|مقالة|chapter|part)\s+[\p{L}\p{N}]+(?:\s+[\p{L}\p{N}]+){0,2}\s*[:.\-–—]?$/iu;
+const isLabel = b => b.type === 'p' && (b.text || '').length <= 40 && RE_LABEL.test((b.text || '').trim());
+
+/** Cut a chapter at its own chapter labels: one part per label, the label in the part's title. */
+function cutAtLabels(ch, cap) {
+  const blocks = ch.sections.flatMap(s => s.blocks);
+  const at = blocks.map((b, i) => (isLabel(b) ? i : -1)).filter(i => i >= 0);
+  if (at.length < 2) return null;
+  const parts = [];
+  const lead = blocks.slice(0, at[0]);
+  for (let k = 0; k < at.length; k++) {
+    const body = blocks.slice(at[k] + 1, k + 1 < at.length ? at[k + 1] : blocks.length);
+    if (k === 0 && blocksLen(lead)) body.unshift(...lead);
+    const title = (ch.title ? ch.title + ': ' : '') + blocks[at[k]].text.trim();
+    if (blocksLen(body) <= cap) parts.push({ title, minutes: 1, sections: [{ title: '', blocks: body }], notes: [] });
+    else parts.push(...cutBlocks(body, title, cap));
+  }
+  assignNotes(ch, parts);
+  return parts;
+}
+
 function cutChapter(ch, cap) {
+  const labelled = cutAtLabels(ch, cap);
+  if (labelled) return labelled;
   if (chapterLen(ch) <= cap) return [ch];
   // 1. The chapter's own sections (they are real titles, so they make the best parts).
   const usable = ch.sections.filter(s => s.blocks.length && blocksLen(s.blocks) >= CHAP_MIN_PART);
@@ -226,6 +252,9 @@ export function assemble(pages, stats, chapters, groups, ctx = {}, opts = {}) {
       para = null; return;
     }
     para.text = repairSplitMarks(para.text.replace(/\s+/g, ' '), opts.lexicon, on(opts, 'mark-word-gap')).trim();
+    // A mark standing alone between spaces belongs to no letter (it drifted from the line above
+    // or below: '« ّ لطم مارميلادوف»'). Drop it rather than show a floating diacritic.
+    if (on(opts, 'drop-stray-marks')) para.text = para.text.replace(/(^|\s)[\u064B-\u0652\u0670]+(?=\s|$)/g, '$1').replace(/\s{2,}/g, ' ').trim();
     if (para.text) {
       m.paragraphs++;
       if (TERMINAL.test(para.text)) m.terminal++;

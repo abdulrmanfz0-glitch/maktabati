@@ -25,10 +25,13 @@ export const stripControls = s => s.replace(RE_CONTROLS, '');
 export function mapForms(s) {
   return s.replace(RE_FORMS, c => {
     if (LAM_ALEF[c]) return LAM_ALEF[c];
-    // Ornate parentheses have no compatibility mapping; they read as ordinary ones. The pair order
-    // was already voted and mirrored on the ornate characters (see PAIRS).
-    if (c === '\uFD3E') return '(';
-    if (c === '\uFD3F') return ')';
+    // Ornate parentheses have no compatibility mapping; they read as ordinary ones. They are not
+    // bidi-mirrored: Arabic text opens a verse with U+FD3F '﴿' and closes it with U+FD3E '﴾'
+    // in logical order, so FD3F is the opening bracket. (Mapping FD3E to '(' turned every
+    // correctly extracted Quran quotation into ')…('.) A document whose brackets come out
+    // reversed is caught later by the pair-order vote on '(' ')'.
+    if (c === '\uFD3F') return '(';
+    if (c === '\uFD3E') return ')';
     const n = c.normalize('NFKC');
     // FE70-FE7F are mark forms: NFKC yields "space + mark" (isolated) or "tatweel + mark"
     // (medial); keep only the mark so it stays on the preceding letter.
@@ -439,7 +442,9 @@ export function repairLossy(text, lexicon, veryCommon = LOSSY.veryCommon) {
 }
 
 // Ornate parentheses (U+FD3E/U+FD3F) are a pair too, and pdf.js reverses them like the guillemets.
-export const PAIRS = [['«', '»'], ['“', '”'], ['\uFD3E', '\uFD3F']];
+// Round and square brackets too: some producers (Acrobat, Lotus fonts) draw them by shape, so
+// pdf.js returns ')نص(' in every right-to-left line and the reorder stage leaves them.
+export const PAIRS = [['«', '»'], ['“', '”'], ['\uFD3F', '\uFD3E'], ['(', ')'], ['[', ']']];
 
 /**
  * Votes for one line: for each pair type with balanced counts, whether it opens first (good)
@@ -466,3 +471,40 @@ export function mirrorPairs(s, which) {
 }
 
 export const toAsciiDigits = s => String(s).replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 0x0660)).replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 0x06F0));
+
+/**
+ * The word-space threshold for this document, from its own gaps. Gaps between neighbouring
+ * right-to-left items of a line fall in two groups: about zero (one word broken into several
+ * items) and the word spaces. A fixed 0.15 em cut the word-space group of some books in half
+ * (Acrobat with Lotus: spaces of 0.12-0.15 em), gluing words: 'خرجتحتى'. The cut goes in the
+ * emptiest stretch between 0.05 and 0.15 em; it is never raised above the profile value.
+ * Returns null when the document gives no clear valley.
+ */
+export function adaptiveSpaceGap(lineSets, cap = 0.15) {
+  const bins = new Array(9).fill(0); // 0, 0.025 .. 0.2
+  let n = 0, word = 0;
+  for (const lines of lineSets) for (const ln of lines) {
+    if (ln.base !== 1) continue;
+    const its = ln.items || [];
+    for (let k = 1; k < its.length; k++) {
+      const a = its[k - 1], b = its[k];
+      const size = Math.max(a.size, b.size) || 1;
+      const e = (a.x - (b.x + b.w)) / size;
+      if (e < -0.02 || e > 0.6) continue;
+      n++;
+      if (e >= 0.075) word++;
+      const i = Math.round(e / 0.025);
+      if (i < bins.length) bins[i]++;
+    }
+  }
+  if (n < 200 || word < 0.1 * n) return null;
+  // The emptiest bin from 0.05 to 0.125 em; it must be nearly empty to count as a valley.
+  let best = -1;
+  for (let i = 2; i <= 5; i++) if (best < 0 || bins[i] < bins[best]) best = i;
+  if (bins[best] > 0.01 * n) return null;
+  // The middle of the empty run that holds it.
+  let last = best;
+  while (last + 1 <= 5 && bins[last + 1] === bins[best]) last++;
+  const cut = ((best + last) / 2 + 0.5) * 0.025;
+  return cut < cap ? cut : null;
+}
