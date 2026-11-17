@@ -282,8 +282,9 @@ export async function runSmoke(b, url, vp, extra = []) {
       assert(s.cols === 1, 'expected one page on phone, got cols ' + s.cols);
     });
     await item('SEL-07-phone', async () => {
-      /* The selection tools dock at the foot of the screen on a finger (away from the system menu)
-         and the system selection is let go, so no blue block is left behind. */
+      /* On a finger the tools dock at the foot of the screen (away from the system menu) and the
+         selection stays, exactly like a mouse drag on a computer: the reader keeps seeing it and can
+         keep extending it until an action is taken. */
       await go('#/lib'); await go('#/read/' + BOOK + '/c0'); await settle(1200);
       if (await has('#rtPick')){ await click('#rtPick [data-rtpick="modern"]'); await settle(1000); }
       await ev(`(() => { const p = [...document.querySelectorAll('#v-read [data-bk]')].find(e => (e.textContent || '').trim().length > 40 && !e.querySelector('mark'));
@@ -299,11 +300,12 @@ export async function runSmoke(b, url, vp, extra = []) {
           sel: getSelection().toString().length, marks: document.querySelectorAll('#v-read mark.hl').length }; })()`);
       assert(box.bottom <= box.vh + 1 && box.top > box.vh * 0.5, 'bar not docked at the foot: ' + JSON.stringify(box));
       assert(box.left >= 0 && box.right <= box.vw + 1, 'bar outside the screen: ' + JSON.stringify(box));
-      assert(box.sel === 0, 'system selection was not released');
+      assert(box.sel > 0, 'the selection was released while the tools are open');
       await ev(`document.querySelector('#selbar [data-sel="imp"]').click()`); await settle(900);
-      const after = await ev(`document.querySelectorAll('#v-read mark.hl').length`);
-      assert(after > box.marks, 'the dock action did not add a highlight');
-      return 'top ' + box.top + ' bottom ' + box.bottom + ' of ' + box.vh + ', selection released';
+      const after = await ev(`(() => ({ marks: document.querySelectorAll('#v-read mark.hl').length, sel: getSelection().toString().length, bar: document.querySelector('#selbar').hidden }))()`);
+      assert(after.marks > box.marks, 'the dock action did not add a highlight');
+      assert(after.sel === 0 && after.bar, 'the selection should be released after the action: ' + JSON.stringify(after));
+      return 'top ' + box.top + ' bottom ' + box.bottom + ' of ' + box.vh + ', selection kept until the action';
     });
     await item('RT-03-phone', async () => {
       /* The pager asks the flow for a column WIDTH, one page wide, and lets both engines create the

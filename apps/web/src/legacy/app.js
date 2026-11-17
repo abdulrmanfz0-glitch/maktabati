@@ -1394,7 +1394,9 @@ const closestBk = n => { const e = n && (n.nodeType === 1 ? n : n.parentElement)
 let SEL = null;
 /* Closing the bar ends the selection: leaving a live system selection behind is what left a whole
    paragraph tinted with no way to drop it (the system menu cannot be dismissed by us). */
+let selHideT = 0;
 function hideSel(){
+  clearTimeout(selHideT);
   const bar = $('#selbar'); bar.hidden = true; delete document.body.dataset.sel; SEL = null;
   const s = getSelection();
   if (s && s.rangeCount && !s.isCollapsed){ try{ s.removeAllRanges(); }catch(_){} }
@@ -1402,7 +1404,14 @@ function hideSel(){
 function onSel(){
   if (cur.view !== 'read'){ hideSel(); return; }
   const s = getSelection();
-  if (!s.rangeCount || s.isCollapsed){ if (SEL && SEL.committed) return; hideSel(); return; }
+  if (!s.rangeCount || s.isCollapsed){
+    /* The bar goes away when the selection does, but not in the same tick: a platform may collapse
+       the selection as the tap on one of the actions is on its way, and that click must land. */
+    clearTimeout(selHideT);
+    selHideT = setTimeout(() => { if (getSelection().isCollapsed) hideSel(); }, 250);
+    return;
+  }
+  clearTimeout(selHideT);
   const r = s.getRangeAt(0); const sb = closestBk(r.startContainer), eb = closestBk(r.endContainer);
   if (!sb || !$('#v-read').contains(sb)){ hideSel(); return; }
   const q = s.toString().replace(/\s+/g, ' ').trim(); if (q.length < 2){ hideSel(); return; }
@@ -1415,17 +1424,12 @@ function onSel(){
   $('[data-sel="quote"]').hidden = q.length > 320;
   const bar = $('#selbar'); bar.hidden = false; document.body.dataset.sel = '1';
   if (!pref.get('selHint', false)){ pref.set('selHint', true); $('#selHint').hidden = true; }
-  /* A finger gets the dock at the foot of the screen, and the system selection is let go at once:
-     the text stays ours (the quote is kept in SEL), while the blue block and the system menu that
-     cannot be dismissed disappear. A mouse keeps the selection and gets the pill beside it. */
-  if (matchMedia('(pointer: coarse)').matches){
-    bar.style.top = ''; bar.style.left = '';
-    const sq = $('#selQ'); if (sq) sq.textContent = '«' + (q.length > 80 ? q.slice(0, 78).trimEnd() + '…' : q) + '»';
-    SEL.committed = true;
-    try{ s.removeAllRanges(); }catch(_){}
-    return;
-  }
-  const sq = $('#selQ'); if (sq) sq.textContent = '';
+  const sq = $('#selQ'); if (sq) sq.textContent = '«' + (q.length > 80 ? q.slice(0, 78).trimEnd() + '…' : q) + '»';
+  /* A finger gets the dock at the foot of the screen, out of the way of the system menu; the system
+     selection itself is left alone, exactly like a mouse drag on a computer: the reader keeps seeing
+     it, can extend it with the handles, and it goes away only when the tools close or an action is
+     taken. A mouse gets the pill beside the selection. */
+  if (matchMedia('(pointer: coarse)').matches){ bar.style.top = ''; bar.style.left = ''; return; }
   const rc = r.getBoundingClientRect(); const bw = bar.offsetWidth, bh = bar.offsetHeight;
   let top = rc.bottom + 12; if (top + bh > innerHeight - 8) top = Math.max(64, rc.top - bh - 12);
   const left = Math.min(innerWidth - bw - 8, Math.max(8, rc.left + rc.width / 2 - bw / 2));

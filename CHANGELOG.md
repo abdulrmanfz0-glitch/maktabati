@@ -25,13 +25,13 @@ All notable changes are recorded here. This project follows
   both engines create the overflow columns it turns through; the same chapter now paginates in
   WebKit exactly as it does in Chrome. Checked in WebKit (Playwright build 18.2) at 390x844 and
   844x390 for every template with no text outside a page.
-- Reader, selection on a phone: the tools (highlight kinds, explain, term, meaning, quote) used to
-  pop up under the selection, where they collided with the system's own copy/paste menu, which
-  cannot be moved or dismissed, and the system selection stayed tinted after the tools closed. With
-  a finger the tools are now a dock at the foot of the screen, away from that menu; the system
-  selection is released as soon as the dock opens (the selected phrase is kept and shown in the
-  dock), so the blue block and the system menu disappear, and a "نسخ النص" action copies the
-  selection in one tap. With a mouse the tools stay a small pill beside the selection.
+- Reader, selection on a phone: the tools (highlight kinds, explain, term, meaning, quote, copy)
+  used to pop up under the selection, where they collided with the system's own copy/paste menu,
+  which cannot be moved or dismissed. With a finger they are now a dock at the foot of the screen,
+  and the selection itself behaves like a mouse drag on a computer: it stays visible, the handles
+  keep working so the reader can extend it, and it goes away only when the tools close or an action
+  is taken. A "نسخ النص" action copies the selection in one tap. With a mouse the tools are a small
+  pill beside the selection.
 - Reader, phone on its side: the page-based templates (The Book, Manuscript) used the desktop
   page and drew a 252x350 page in an 844x390 screen (10 pages became 51). A short screen now counts
   as a phone: the page fills the viewport, the measure is capped at 700px (660 for the manuscript),
