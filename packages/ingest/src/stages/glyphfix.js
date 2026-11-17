@@ -57,18 +57,22 @@ function knownish(t, lexicon) {
   const a = t.replace(PRE, ''), b = a.replace(SUF, '');
   return [a, b, t.replace(SUF, '')].some(x => x.length >= 2 && x !== t && isKnown(x, lexicon));
 }
-const isFw = t => FUNCTION_WORDS.has(matchForm(t.replace(RE_MARKS_G, '')));
+// 'لآ' normalizes to the function word 'لا'; the alef madda never follows lam in a real 'لا'.
+const isFw = t => !/لآ/.test(t) && FUNCTION_WORDS.has(matchForm(t.replace(RE_MARKS_G, '')));
 /** Every way to swap a subset of the reversed pairs found in w (at most 2^5 variants). */
 function variants(w, swaps) {
   const sites = [];
   for (const [from, to] of swaps) { let i = w.indexOf(from); while (i >= 0) { sites.push({ i, from, to }); i = w.indexOf(from, i + from.length); } }
   sites.sort((x, y) => x.i - y.i);
-  const clean = sites.filter((x, k) => k === 0 || x.i >= sites[k - 1].i + sites[k - 1].from.length).slice(0, 5);
+  // Overlapping sites ('ام' and 'مل' in 'املتحدة') are alternatives: try every non-overlapping subset.
+  const all = sites.slice(0, 8);
   const out = [];
-  for (let mask = 1; mask < 1 << clean.length; mask++) {
-    let r = '', at = 0, n = 0;
-    clean.forEach((x, k) => { if (mask & (1 << k)) { r += w.slice(at, x.i) + x.to; at = x.i + x.from.length; n++; } });
-    out.push({ w: r + w.slice(at), n });
+  for (let mask = 1; mask < 1 << all.length; mask++) {
+    const pick = all.filter((x, k) => mask & (1 << k));
+    if (pick.some((x, k) => k && x.i < pick[k - 1].i + pick[k - 1].from.length)) continue;
+    let r = '', at = 0;
+    for (const x of pick) { r += w.slice(at, x.i) + x.to; at = x.i + x.from.length; }
+    out.push({ w: r + w.slice(at), n: pick.length });
   }
   return out.sort((x, y) => x.n - y.n);
 }
@@ -79,6 +83,11 @@ export function swapWord(w, swaps, lexicon) {
   // The word list was built from real PDFs and holds a few reversed forms ('إىل'): a function word wins.
   if (/[ىة](?=[\u0621-\u064A])/.test(w.replace(RE_MARKS_G, ''))) { const ok = vs.find(v => !/[ىة](?=[\u0621-\u064A])/.test(v.w.replace(RE_MARKS_G, '')) && knownish(v.w, lexicon)); if (ok) return ok.w; }
   if (!isFw(w)) { const fw = vs.find(v => isFw(v.w)); if (fw) return fw.w; }
+  // A whole-word match beats a stem match: 'احلين' has the stem 'احل' but 'الحين' is a word.
+  const whole = t => isKnown(t.replace(RE_MARKS_G, ''), lexicon) && !/[ىة](?=[\u0621-\u064A])/.test(t);
+  if (whole(w)) return w;
+  const full = vs.find(v => whole(v.w));
+  if (full) return full.w;
   if (knownish(w, lexicon)) return w;
   const hit = vs.find(v => knownish(v.w, lexicon));
   if (hit) return hit.w;
