@@ -164,6 +164,7 @@ Object.entries({
   'نزّلت الصورة، ارفقها في X':'Image downloaded. Attach it in X.','لو ما انفتح X اضغط «افتح X».':'If X did not open, tap “Open X”.',
   'النص أطول من 280، قصّه قبل النشر.':'The text is over 280. Trim it before posting.',
   'افتح X':'Open X','تم':'Done','نزّلت الصورة':'Image downloaded','نسخت النص':'Caption copied','تعذّر النسخ':'Could not copy',
+  'نسخ النص':'Copy text','نسخت التحديد':'Copied the selection','تعذّر نسخ التحديد':'Could not copy the selection',
   'المشاركة بالصورة غير متاحة هنا. نزّلت الصورة ونسخت النص.':'Sharing with an image is not available here. Image downloaded and caption copied.',
   'المشاركة بالصورة غير متاحة هنا. نزّلت الصورة، والنص انسخه بزر «انسخ النص».':'Sharing with an image is not available here. Image downloaded; copy the caption with “Copy caption”.',
   'نزّل الصورة وارفعها من':'Download the image and upload it at','لا يوجد نص للاقتباس':'The quote is empty',

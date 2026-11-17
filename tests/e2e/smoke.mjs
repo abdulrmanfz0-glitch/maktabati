@@ -281,6 +281,30 @@ export async function runSmoke(b, url, vp, extra = []) {
       await setTpl('book'); const s = await rt();
       assert(s.cols === 1, 'expected one page on phone, got cols ' + s.cols);
     });
+    await item('SEL-07-phone', async () => {
+      /* The selection tools dock at the foot of the screen on a finger (away from the system menu)
+         and the system selection is let go, so no blue block is left behind. */
+      await go('#/lib'); await go('#/read/' + BOOK + '/c0'); await settle(1200);
+      if (await has('#rtPick')){ await click('#rtPick [data-rtpick="modern"]'); await settle(1000); }
+      await ev(`(() => { const p = [...document.querySelectorAll('#v-read [data-bk]')].find(e => (e.textContent || '').trim().length > 40 && !e.querySelector('mark'));
+        if (!p) return; p.scrollIntoView({ block:'center' });
+        const w = document.createTreeWalker(p, NodeFilter.SHOW_TEXT); let n = w.nextNode();
+        while (n && (n.data || '').trim().length < 25) n = w.nextNode();
+        if (!n) return; const r = document.createRange(); r.setStart(n, 3); r.setEnd(n, 16);
+        const s = getSelection(); s.removeAllRanges(); s.addRange(r); })()`);
+      await settle(800);
+      assert(await vis('#selbar'), 'docked selection bar not shown');
+      const box = await ev(`(() => { const e = document.querySelector('#selbar'); const r = e.getBoundingClientRect();
+        return { top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right), vh: innerHeight, vw: innerWidth,
+          sel: getSelection().toString().length, marks: document.querySelectorAll('#v-read mark.hl').length }; })()`);
+      assert(box.bottom <= box.vh + 1 && box.top > box.vh * 0.5, 'bar not docked at the foot: ' + JSON.stringify(box));
+      assert(box.left >= 0 && box.right <= box.vw + 1, 'bar outside the screen: ' + JSON.stringify(box));
+      assert(box.sel === 0, 'system selection was not released');
+      await ev(`document.querySelector('#selbar [data-sel="imp"]').click()`); await settle(900);
+      const after = await ev(`document.querySelectorAll('#v-read mark.hl').length`);
+      assert(after > box.marks, 'the dock action did not add a highlight');
+      return 'top ' + box.top + ' bottom ' + box.bottom + ' of ' + box.vh + ', selection released';
+    });
   }
 }
 

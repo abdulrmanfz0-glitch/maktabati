@@ -1392,10 +1392,17 @@ async function retryFailed(it){
 /* ---------- selection tools ---------- */
 const closestBk = n => { const e = n && (n.nodeType === 1 ? n : n.parentElement); return e ? e.closest('[data-bk]') : null; };
 let SEL = null;
-function hideSel(){ $('#selbar').hidden = true; SEL = null; }
+/* Closing the bar ends the selection: leaving a live system selection behind is what left a whole
+   paragraph tinted with no way to drop it (the system menu cannot be dismissed by us). */
+function hideSel(){
+  const bar = $('#selbar'); bar.hidden = true; delete document.body.dataset.sel; SEL = null;
+  const s = getSelection();
+  if (s && s.rangeCount && !s.isCollapsed){ try{ s.removeAllRanges(); }catch(_){} }
+}
 function onSel(){
   if (cur.view !== 'read'){ hideSel(); return; }
-  const s = getSelection(); if (!s.rangeCount || s.isCollapsed){ hideSel(); return; }
+  const s = getSelection();
+  if (!s.rangeCount || s.isCollapsed){ if (SEL && SEL.committed) return; hideSel(); return; }
   const r = s.getRangeAt(0); const sb = closestBk(r.startContainer), eb = closestBk(r.endContainer);
   if (!sb || !$('#v-read').contains(sb)){ hideSel(); return; }
   const q = s.toString().replace(/\s+/g, ' ').trim(); if (q.length < 2){ hideSel(); return; }
@@ -1406,8 +1413,19 @@ function onSel(){
   $('[data-sel="meaning"]').hidden = nw > 3;
   $('[data-sel="term"]').hidden = arView || nw > 6;
   $('[data-sel="quote"]').hidden = q.length > 320;
-  const bar = $('#selbar'); bar.hidden = false;
+  const bar = $('#selbar'); bar.hidden = false; document.body.dataset.sel = '1';
   if (!pref.get('selHint', false)){ pref.set('selHint', true); $('#selHint').hidden = true; }
+  /* A finger gets the dock at the foot of the screen, and the system selection is let go at once:
+     the text stays ours (the quote is kept in SEL), while the blue block and the system menu that
+     cannot be dismissed disappear. A mouse keeps the selection and gets the pill beside it. */
+  if (matchMedia('(pointer: coarse)').matches){
+    bar.style.top = ''; bar.style.left = '';
+    const sq = $('#selQ'); if (sq) sq.textContent = '«' + (q.length > 80 ? q.slice(0, 78).trimEnd() + '…' : q) + '»';
+    SEL.committed = true;
+    try{ s.removeAllRanges(); }catch(_){}
+    return;
+  }
+  const sq = $('#selQ'); if (sq) sq.textContent = '';
   const rc = r.getBoundingClientRect(); const bw = bar.offsetWidth, bh = bar.offsetHeight;
   let top = rc.bottom + 12; if (top + bh > innerHeight - 8) top = Math.max(64, rc.top - bh - 12);
   const left = Math.min(innerWidth - bw - 8, Math.max(8, rc.left + rc.width / 2 - bw / 2));
@@ -1415,6 +1433,17 @@ function onSel(){
 }
 async function selAction(kind){
   const S = SEL; if (!S || !RD) return; const it = RD.it;
+  if (kind === 'copy'){
+    /* Copying is ours now: on a finger the system selection is released as soon as the tools open,
+       so the system's own "Copy" is gone by the time the reader taps. */
+    const t = S.quote; hideSel();
+    try{ await navigator.clipboard.writeText(t); toast('نسخت التحديد'); return; }catch(_){}
+    const ta = document.createElement('textarea'); ta.value = t; ta.style.cssText = 'position:fixed;top:-1000px;inset-inline-start:0';
+    document.body.appendChild(ta); ta.select();
+    const ok = (() => { try{ return document.execCommand('copy'); }catch(_){ return false; } })();
+    ta.remove(); hideSel(); toast(ok ? 'نسخت التحديد' : 'تعذّر نسخ التحديد');
+    return;
+  }
   if (kind === 'meaning'){ const w = S.quote.replace(/[^\u0600-\u06FFa-zA-Z\s]/g, '').trim(); window.open('https://www.almaany.com/ar/dict/ar-ar/' + encodeURIComponent(stripD(w)) + '/', '_blank', 'noopener'); return; }
   if (kind === 'quote'){ getSelection().removeAllRanges(); hideSel(); const qa = { id:uid(), kind:'quote', itemId:it.id, bk:S.bk, text:S.quote, t:Date.now() }; await put('annos', qa); quoteModal(qa, it); return; }
   if (kind === 'explain'){
