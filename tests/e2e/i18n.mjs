@@ -112,7 +112,7 @@ try {
 
   // Every reading template keeps English chrome over RTL book content.
   await go('#/read/demo-experience/c0', 900);
-  for (const tpl of ['book', 'manu', 'modern']) {
+  for (const tpl of ['book', 'manu', 'tidy', 'modern']) {
     await ev(`window.__rt && window.__rt.set(${JSON.stringify(tpl)})`); await sleep(900);
     const leaks = await englishLeaks();
     check('template chrome is English: ' + tpl, leaks.length === 0, JSON.stringify(leaks.slice(0, 4)));

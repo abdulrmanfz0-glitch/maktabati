@@ -8,16 +8,32 @@ All notable changes are recorded here. This project follows
 
 ### Added
 
+- Reading template «مرتب» (Tidy): one calm page with a short measure, a
+  green rule under the chapter opening, headings in the UI font, a small page number, and every
+  tool behind the round button. Phone first: a full-bleed page, shorter picker previews, and a
+  readable measure when the phone is on its side.
 - Library collections: create, rename, and delete shelves; add or remove a book
   from its page or its library menu; filter the library by a collection or by
   unfiled books.
 
 ### Fixed
 
+- Reader, phone on its side: the page-based templates (The Book, Manuscript) used the desktop
+  page and drew a 252x350 page in an 844x390 screen (10 pages became 51). A short screen now counts
+  as a phone: the page fills the viewport, the measure is capped at 700px (660 for the manuscript),
+  and the margins shrink.
+- Reader, Modern: the page counter read backwards in RTL ("11 / 2" for page 2 of 11); both numbers
+  now sit in a dir="ltr" island.
+- Reader, Manuscript: the catchword at the foot of the page picked a box label or a list number
+  ("مصطلح", "2") instead of the first word of the text. It now skips labels, numbering, footnote
+  marks and non-words, and is hidden when the screen is too short for it.
+- Reader, first open: once there were four templates, the picker's last card and the "use the
+  default" button were cut off on a phone; the phone picker now uses shorter previews and fits.
 - PDF import, notes: a note whose marker could not be linked used to be invisible (it is only
   reachable from its marker). Such notes now appear in a "الحواشي" section at the end of their
   chapter, numbered with the printed number, so the digits left in the text can be looked up. 13
-  notes (18,658 characters) in one test book become readable; no note text is lost in any file.- PDF import, reading units: a paragraph is no longer a wall of text (cut at sentence ends above
+  notes (18,658 characters) in one test book become readable; no note text is lost in any file.
+- PDF import, reading units: a paragraph is no longer a wall of text (cut at sentence ends above
   3,000 characters; longest paragraph in the test PDFs 82,814 -> 4,096) and a chapter no longer
   holds most of a book: chapters over 20,000 characters are cut at their own sections, then at
   headings, then at paragraph breaks. Chapters per book rise from 3-25 to 6-89 and the longest

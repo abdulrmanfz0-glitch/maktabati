@@ -69,7 +69,7 @@ async function run(b, url, vp) {
   if (await ev(`!!document.querySelector('#rtPick')`)) await ev(`document.querySelector('#rtPick [data-rtpick="modern"]').click()`);
   await settle(800); await ev(`document.querySelectorAll('#rtUI [data-rthint]').forEach(x => x.click())`);
 
-  const CONFIGS = [['modern', 'scroll'], ['modern', 'paged'], ['book', 'paged'], ['manu', 'paged']];
+  const CONFIGS = [['modern', 'scroll'], ['modern', 'paged'], ['book', 'paged'], ['manu', 'paged'], ['tidy', 'paged']];
   // the demo book (mostly one paragraph per block), then a book like an import: two blocks of 30 paragraphs each,
   // where the old block-level bookmark always fell back to the block's first paragraph
   for (const [bookId, tag] of [[BOOK, ''], ['bm-long', 'long-']]) {

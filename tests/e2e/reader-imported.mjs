@@ -40,7 +40,7 @@ for (const [vp, size] of Object.entries({ desktop: { width: 1280, height: 900 },
     await ev(`location.hash = '#/book/${it.id}'`); await settle();
     check(vp + ' book page review warning', it.rec !== 'review' || await ev(`!!document.querySelector('#v-book .bp-warn')`), 'rec ' + it.rec);
     let first = true;
-    for (const tpl of ['modern', 'book', 'manu']) {
+    for (const tpl of ['modern', 'book', 'manu', 'tidy']) {
       // footnotes
       await ev(`location.hash = '#/read/${it.id}/c${it.fnCh}'`); await settle(1500);
       if (first) { await ev(`document.querySelector('#rtPick [data-rtpick="${tpl}"]').click()`); await settle(1200); first = false; }

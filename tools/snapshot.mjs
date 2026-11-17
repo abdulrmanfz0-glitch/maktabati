@@ -70,7 +70,7 @@ const SCREENS = [
   ['quote-card-editor', '#/quotes', `document.querySelector('[data-qcard]').click()`],
   ['reader-explainer', '#/read/' + EXPL]
 ];
-const TEMPLATES = { modern: 'حديث', book: 'الكتاب', manu: 'مخطوطة' };
+const TEMPLATES = { modern: 'حديث', book: 'الكتاب', manu: 'مخطوطة', tidy: 'مرتب' };
 
 async function take(name, page) {
   const srv = /^(https?|file):/.test(page) ? null : await serve(ROOT);

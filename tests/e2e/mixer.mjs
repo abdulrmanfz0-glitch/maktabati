@@ -82,7 +82,7 @@ async function run(b, url, vp) {
   await ev(`location.hash = '#/read/${BOOK}'`); await settle(1200);
   if (await ev(`!!document.querySelector('#rtPick')`)) await ev(`document.querySelector('#rtPick [data-rtpick="modern"]').click()`);
   await settle(800); await ev(`document.querySelectorAll('#rtUI [data-rthint]').forEach(x => x.click())`);
-  for (const tpl of ['modern', 'book', 'manu']) {
+  for (const tpl of ['modern', 'book', 'manu', 'tidy']) {
     await item('reader-' + tpl, async () => {
       if ((await ev('window.__rt.st.id')) !== tpl) { await ev(`window.__rt.set('${tpl}')`); await settle(1200); await ev(`document.querySelectorAll('#rtUI [data-rthint]').forEach(x => x.click())`); await settle(); }
       const P0 = await ev('window.__rt.st.P');

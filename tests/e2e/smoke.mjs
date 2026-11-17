@@ -150,7 +150,7 @@ export async function runSmoke(b, url, vp, extra = []) {
 
   await item('RT-02', async () => {
     const seen = [];
-    for (const id of ['book', 'manu', 'modern']) {
+    for (const id of ['book', 'manu', 'tidy', 'modern']) {
       await setTpl(id); const s = await rt();
       assert(s && s.id === id, 'switch to ' + id + ' failed');
       if (id !== 'modern') assert(s.paged, id + ' not paged');
@@ -261,7 +261,7 @@ export async function runSmoke(b, url, vp, extra = []) {
       await ev(`document.querySelector('#sClear')`); await go('#/profile/ai'); await click('#sClear');
     });
     await item('TG-01', async () => {
-      await go('#/templates'); assert(await count('#v-tpl .tg-card') === 3, 'expected 3 template cards');
+      await go('#/templates'); assert(await count('#v-tpl .tg-card') === 4, 'expected 4 template cards');
       const saved = await ev(`(JSON.parse(localStorage.getItem('maktabati:profile') || '{}').tpl || {}).books`);
       await click('#v-tpl [data-tgtry="manu"]'); await settle(1500);
       const s = await rt(); assert(s && s.id === 'manu', 'did not open in manuscript');

@@ -15,7 +15,7 @@ companion that knows your library.
 
 - Imports PDF, EPUB, Markdown, and plain text locally; PDF/EPUB conversion runs
   in a Web Worker and never uploads the book to a server.
-- Reads in three templates: Modern, The Book, and Manuscript, with scroll or
+- Reads in four templates: Modern, The Book, Manuscript, and Tidy, with scroll or
   paged reading, Arabic RTL/LTR support, font size, line spacing, text width,
   and diacritics controls.
 - Saves highlights, notes, quotes, bookmarks, glossary terms, chapter cards,
@@ -239,7 +239,7 @@ Third-party components and assets are listed in
 ## العربية
 
 «مكتبتي» بيئة قراءة عربية محلية: تستورد PDF أو EPUB أو Markdown أو نصًا،
-وتقرأه في ثلاثة قوالب، وتظلّل وتدوّن وتلخّص وتراجع، وتشغّل أصواتًا محيطة،
+وتقرأه في أربعة قوالب، وتظلّل وتدوّن وتلخّص وتراجع، وتشغّل أصواتًا محيطة،
 وتناقش الكتاب مع رفيق ذكاء اصطناعي.
 
 - **التشغيل:** Node.js 22.13 أو أحدث، ثم `npm install` و`npm run dev`، وافتح

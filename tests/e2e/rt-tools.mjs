@@ -87,7 +87,7 @@ async function run(b, url, vp) {
     assert(hid && back, 'hide ' + hid + ' back ' + back);
   });
 
-  for (const [tpl, sel] of [['book', '.rt-rib'], ['manu', '.rt-pen']]) {
+  for (const [tpl, sel] of [['book', '.rt-rib'], ['manu', '.rt-pen'], ['tidy', '.rt-fab']]) {
     await item('STILL-' + tpl, async () => {
       await setTpl(tpl);
       const a = await rect('#rtUI ' + sel); assert(a, 'no ' + sel);

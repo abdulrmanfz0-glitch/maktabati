@@ -5817,6 +5817,11 @@ const TPLS = [
     type:'متن بالأميري بتباعد أسطر أوسع للتشكيل، والرقعة للعناوين الكبيرة فقط بالحبر الأحمر، والتعقيبة أسفل كل صفحة.',
     tools:'قلم في الهامش يُخرج صندوق أقلام فيه الأدوات. ملاحظاتك حواشٍ في الهامش، وعلى الجوال علامات صغيرة في السطر تنفتح بلمسة.',
     hint:'اضغط القلم في الهامش ليخرج صندوق الأقلام بالأدوات. ملاحظاتك تظهر حاشية بجانب سطرها. حدّد أي نص لأدوات التظليل والشرح.' },
+  { id:'tidy', on:true, name:'مرتب', paged:true, fn:true, spread:false,
+    idea:'صفحة واحدة هادئة بعمود نص قصير: عنوان واضح، ومسافات مريحة، وأدوات في زر واحد. مصمّم للجوال أولاً.',
+    type:'متن بالنسخ بلا إزاحة أول السطر، وعناوين بخط الواجهة مع خط فاصل رفيع، ورقم صفحة صغير أسفل الصفحة.',
+    tools:'زر دائري أسفل الصفحة يفتح الأدوات في قوس على الشاشة الكبيرة ولوح قصير على الجوال. ضغطة طويلة تفتح آخر أداة.',
+    hint:'اضغط الزر الدائري لفتح الأدوات. ضغطة طويلة تفتح آخر أداة استعملتها. اضغط طرف الصفحة لتقلبها، ووسطها لترى مكانك. حدّد أي نص لأدوات التظليل والشرح.' },
   { id:'lamp', on:false, name:'سراج' },
   { id:'note', on:false, name:'دفتر' }
 ];
@@ -5916,16 +5921,20 @@ function rtWrap(){
 
 /* ----- page-by-page layout: one CSS column per page, cut per page so the footnotes of that page fit under it ----- */
 function rtGeom(){
-  const s = rtSafe(), id = RT.id, aw = innerWidth - s.l - s.r, ah = innerHeight - s.t - s.b, phone = aw < 600;
+  const s = rtSafe(), id = RT.id, aw = innerWidth - s.l - s.r, ah = innerHeight - s.t - s.b, short = ah < 560, phone = aw < 600 || short;
   const fs = parseFloat(getComputedStyle(document.documentElement).fontSize) || 19, spread = !!RT.T.spread && aw >= 960 && ah >= 600;
   let sw, sh;
   if (id === 'modern' || phone){ sw = aw; sh = ah; }
   else if (spread){ sh = Math.min(ah - 48, 920); sw = Math.min(aw - 64, Math.round(sh * 1.42)); }
   else { sh = Math.min(ah - 40, 980); sw = Math.min(aw - 40, Math.round(sh * .72)); }
   const pw = spread ? sw / 2 : sw; let mt, mb, mi, mo;
-  if (id === 'modern'){ mt = 60; mb = 54; const tw0 = Math.min(pw - 48, Math.round(fs * (document.documentElement.dataset.width === 'narrow' ? 27 : 34))); mi = mo = Math.floor((pw - tw0) / 2); }
-  else if (id === 'manu'){ mt = phone ? 50 : 72; mb = phone ? 70 : 86; mo = phone ? 28 : Math.max(60, Math.round(pw * .17)); mi = phone ? 24 : Math.max(36, Math.round(pw * .09)); }
-  else { mt = phone ? 48 : 66; mb = phone ? 48 : 62; mo = phone ? 22 : Math.max(36, Math.round(pw * .1)); mi = phone ? 22 : Math.max(30, Math.round(pw * .085)); }
+  if (id === 'modern'){ mt = short ? 42 : 60; mb = short ? 38 : 54; const tw0 = Math.min(pw - 48, Math.round(fs * (document.documentElement.dataset.width === 'narrow' ? 27 : 34))); mi = mo = Math.floor((pw - tw0) / 2); }
+  else if (id === 'manu'){ mt = phone ? (short ? 30 : 50) : 72; mb = phone ? (short ? 34 : 70) : 86; mo = phone ? (short ? 18 : 28) : Math.max(60, Math.round(pw * .17)); mi = phone ? (short ? 16 : 24) : Math.max(36, Math.round(pw * .09)); }
+  else if (id === 'tidy'){ mt = phone ? (short ? 30 : 46) : 64; mb = phone ? (short ? 32 : 50) : 64; const tw0 = Math.min(pw - (phone ? 40 : 96), 620); mi = mo = Math.max(phone ? 20 : 40, Math.floor((pw - tw0) / 2)); }
+  else { mt = phone ? (short ? 30 : 48) : 66; mb = phone ? (short ? 32 : 48) : 62; mo = phone ? (short ? 16 : 22) : Math.max(36, Math.round(pw * .1)); mi = phone ? (short ? 16 : 22) : Math.max(30, Math.round(pw * .085)); }
+  /* A phone on its side fills the screen, but a 800px line is unreadable: cap the measure and
+     centre the text block, keeping the page itself full-bleed. */
+  if (short && id !== 'modern' && id !== 'tidy'){ const cap = id === 'manu' ? 660 : 700; if (pw - mi - mo > cap) mi = mo = Math.floor((pw - cap) / 2); }
   const tw = Math.floor(pw - mi - mo), cols = spread ? 2 : 1, gap = spread ? 2 * mi : mi + mo;
   return { sx:Math.round(s.l + (aw - sw) / 2), sy:Math.round(s.t + (ah - sh) / 2), sw, sh, pw, mt, mb, mi, mo, tw, cols, gap, step:tw + gap, vx:spread || RT.rtl ? mo : mi, vw:cols * tw + (cols - 1) * gap, th:Math.floor(sh - mt - mb), spread, phone, rtl:RT.rtl };
 }
@@ -6089,9 +6098,11 @@ function rtChrome(){
       if (id === 'book' && !RT.open.has(p)) h += '<div class="rt-rh" aria-hidden="true" style="' + W + 'top:' + Math.round(g.mt * .36) + 'px">' + esc(g.cols === 2 && i === 1 ? plain(RD.it.title) : rtChTitle(p)) + '</div>';
       if (id === 'manu') h += rtFrame(tl - 12, g.mt - 14, g.tw + 24, g.th + 28);
       if (bmp.has(p)) h += '<div class="rt-bmk" aria-hidden="true" style="' + (g.rtl ? 'left:' + Math.max(8, tl - 30) : 'left:' + Math.min(g.pw - 20, tl + g.tw + 18)) + 'px"></div>';
-      h += '<div class="rt-fo" aria-hidden="true" style="' + W + 'bottom:' + Math.round(g.mb * (id === 'manu' ? .16 : .3)) + 'px">' + (id === 'modern' ? (p + 1) + ' / ' + RT.pages : rtNum(p + 1)) + '</div>';
+      /* The page counter is two numbers around a slash: in an RTL line the slash resolves to the
+         right-to-left direction and the numbers swap on screen ("11 / 2"). Keep it isolated LTR. */
+      h += '<div class="rt-fo" aria-hidden="true" style="' + W + 'bottom:' + Math.round(g.mb * (id === 'manu' ? .16 : .3)) + 'px">' + (id === 'modern' ? '<span dir="ltr">' + (p + 1) + ' / ' + RT.pages + '</span>' : rtNum(p + 1)) + '</div>';
       const fs = RT.fnp[p]; if (fs && fs.length) h += '<div class="rt-fz" style="' + W + 'top:' + (g.mt + g.th - rtFnH(fs)) + 'px">' + rtFnHTML(fs) + '</div>';
-      if (id === 'manu' && p + 1 < RT.pages && i === g.cols - 1){ const w = rtCatch(p + 1); if (w) h += '<div class="rt-cw" aria-hidden="true" style="' + (g.rtl ? 'left:' + (tl - 4) : 'right:' + (g.pw - tl - g.tw - 4)) + 'px;top:' + (g.mt + g.th + 20) + 'px">' + esc(w) + '</div>'; }
+      if (id === 'manu' && p + 1 < RT.pages && i === g.cols - 1 && g.mb >= 40){ const w = rtCatch(p + 1); if (w) h += '<div class="rt-cw" aria-hidden="true" style="' + (g.rtl ? 'left:' + (tl - 4) : 'right:' + (g.pw - tl - g.tw - 4)) + 'px;top:' + (g.mt + g.th + 20) + 'px">' + esc(w) + '</div>'; }
     }
     h += '</div>';
   }
@@ -6101,11 +6112,18 @@ function rtChrome(){
 function rtCatch(p){
   if (p in RT.cw) return RT.cw[p];
   const fr = rtFlow().getBoundingClientRect(), rg = document.createRange(); let out = '';
+  /* A catchword is the first word of the body text on the next page. A box label ("مصطلح"), a
+     list number or a footnote marker is on the page first but is not a word of the text. */
+  const SKIP = 'sup.fn, .rt-glm, .rt-sp, .label, .box-head, .box-title, .hint, .sec-num, .rt-fz, .rt-rh, .rt-fo, .rt-cw, .qa .q, .qa .ans';
+  const WORD = /[^\s«»"“”()،,.:؛!؟]+/g, LET = /\p{L}/u;
   outer: for (const { el } of RT.leaves){
+    if (el.closest(SKIP)) continue;
     const rs = el.getClientRects(); if (!rs.length || rtPg(rs[rs.length - 1], fr) < p) continue;
-    const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT); let n, guard = 0;
-    while ((n = w.nextNode())){ if (n.parentElement.closest('sup.fn, .rt-glm, .rt-sp')) continue; const re = /[^\s«»"“”()،,.:؛!؟]+/g; let m;
-      while ((m = re.exec(n.nodeValue))){ if (++guard > 2000) break outer; rg.setStart(n, m.index); rg.setEnd(n, m.index + m[0].length); const r = rg.getClientRects()[0]; if (r && rtPg(r, fr) >= p){ out = m[0]; break outer; } } }
+    const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT); let n, m, guard = 0;
+    while ((n = w.nextNode())){ if (n.parentElement.closest(SKIP)) continue; WORD.lastIndex = 0;
+      while ((m = WORD.exec(n.nodeValue))){ if (++guard > 2000) break outer;
+        if (m[0].length < 2 || !LET.test(m[0])) continue;          // a number, a lone letter or punctuation
+        rg.setStart(n, m.index); rg.setEnd(n, m.index + m[0].length); const r = rg.getClientRects()[0]; if (r && rtPg(r, fr) >= p){ out = m[0]; break outer; } } }
     break;
   }
   RT.cw[p] = out; return out;
@@ -6156,7 +6174,7 @@ function rtPlaceAff(){
 function rtMenu(open){
   const m = $('#rtTools'), b = $('#rtUI .rt-rib, #rtUI .rt-pen, #rtUI .rt-fab'); if (!m || !b) return;
   if (open === undefined) open = m.hidden; if (!open && m.hidden) return;
-  if (open){ hideSel(); hideFn(); rtOv(false); rtHintSeen(); bmSync(); m.hidden = false; if (RT.id === 'modern') rtArc(m, b); else if (RT.id === 'manu') rtCasePos(m, b); }
+  if (open){ hideSel(); hideFn(); rtOv(false); rtHintSeen(); bmSync(); m.hidden = false; if (RT.id === 'manu') rtCasePos(m, b); else if (RT.id !== 'book') rtArc(m, b); }
   else m.hidden = true;
   b.setAttribute('aria-expanded', open);
   if (open){ const f = m.querySelector('button'); setTimeout(() => { if (f && !m.hidden) f.focus({ preventScroll:true }); }, 30); }
@@ -6253,7 +6271,7 @@ function renderTpl(){
   document.title = tx('معرض القوالب') + ' · ' + tx('مكتبتي');
   const bk = itemById('demo-experience') || allItems().find(i => i.type === 'book') || allItems()[0];
   const bl = bk ? itemBlocks(bk) : [], b = bl.find(x => (x.text || '').length > 140) || bl[0], par = esc(short(plain(b ? b.text : ''), 230)), dir = bk ? bdir(bk) : 'rtl', def = rtP().def;
-  $('#v-tpl').innerHTML = '<div class="tg-wrap"><h1 class="vh">معرض القوالب</h1><p class="tg-intro">ثلاثة قوالب للقراءة. كل كتاب يتذكّر قالبه، والافتراضي للكتب الجديدة من «الملف» ← «القراءة».</p>' +
+  $('#v-tpl').innerHTML = '<div class="tg-wrap"><h1 class="vh">معرض القوالب</h1><p class="tg-intro">قوالب للقراءة. كل كتاب يتذكّر قالبه، والافتراضي للكتب الجديدة من «الملف» ← «القراءة».</p>' +
     '<div class="tg-tests"><button type="button" class="linkbtn" id="tgHints">أعد التلميحات</button></div><div class="tg-grid">' +
     tplOn().map(T => '<article class="tg-card"><span class="rtp-prev" data-tpl="' + T.id + '" aria-hidden="true"><span class="rtp-p" dir="' + dir + '">' + par + '</span></span><div class="tg-cb"><h2>' + T.name + (T.id === def ? '<small class="tg-def">الافتراضي</small>' : '') + '</h2><p>' + T.idea + '</p><dl class="tg-dl"><dt>الخط</dt><dd>' + T.type + '</dd><dt>الأدوات</dt><dd>' + T.tools + '</dd></dl>' +
       '<button type="button" class="pbtn" data-tgtry="' + T.id + '"' + (bk ? ' data-book="' + esc(bk.id) + '"' : ' disabled') + '>جرّب القالب</button></div></article>').join('') + '</div></div>';

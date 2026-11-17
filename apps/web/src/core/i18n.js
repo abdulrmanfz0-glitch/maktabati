@@ -125,8 +125,8 @@ export const EN_PAT = [
   [/^صفحة (\d+) من (\d+)$/, 'Page $1 of $2'], [/^حاشية (\d+)$/, 'Footnote $1']
 ];
 /* reading-template strings */
-Object.entries({ 'معرض القوالب':'Template gallery','الكتاب':'The Book','حديث':'Modern','مخطوطة':'Manuscript','الأدوات':'Tools','الخط':'Type','جرّب القالب':'Try this template','أعد التلميحات':'Reset hints','رجعت التلميحات':'Hints reset',
-  'ثلاثة قوالب للقراءة. كل كتاب يتذكّر قالبه، والافتراضي للكتب الجديدة من «الملف» ← «القراءة».':'Three reading templates. Each book remembers its own; the default for new books is in Profile → Reading.',
+Object.entries({ 'معرض القوالب':'Template gallery','الكتاب':'The Book','حديث':'Modern','مخطوطة':'Manuscript','مرتب':'Tidy','الأدوات':'Tools','الخط':'Type','جرّب القالب':'Try this template','أعد التلميحات':'Reset hints','رجعت التلميحات':'Hints reset',
+  'قوالب للقراءة. كل كتاب يتذكّر قالبه، والافتراضي للكتب الجديدة من «الملف» ← «القراءة».':'Reading templates. Each book remembers its own; the default for new books is in Profile → Reading.',
   'الافتراضي':'Default','استخدم الافتراضي':'Use the default','كيف تحب تقرأ هذا الكتاب؟':'How would you like to read this book?','اختر قالبًا، وتقدر تغيّره بأي وقت من «العرض».':'Pick a template. You can change it any time from Display.',
   'القالب':'Template','القالب الافتراضي':'Default template','للكتب اللي تفتحها أول مرة. تقدر تغيّر قالب أي كتاب من «العرض» وأنت تقرأ.':'For books you open for the first time. You can change any book’s template from Display while reading.',
   'طريقة القراءة':'Reading mode','تمرير':'Scroll','صفحات':'Pages','إخفاء الأدوات أثناء التمرير':'Hide tools while scrolling','لا':'No','نعم':'Yes',
@@ -136,6 +136,10 @@ Object.entries({ 'معرض القوالب':'Template gallery','الكتاب':'Th
   'متن بالنسخ، وعناوين وأدوات بخط الواجهة، ومسافات واضحة بين الفقرات.':'Naskh body, headings and tools in the UI font, clear space between paragraphs.',
   'دائرة عائمة تفتح الأدوات حولها في قوس، وعلى الشاشة الضيقة في لوح قصير من الأسفل. ضغطة طويلة تفتح آخر أداة، وأيقونتها شارة صغيرة على الدائرة.':'A floating circle opens the tools in an arc around it, or in a short bottom sheet on narrow screens. Long-press opens the last tool, shown as a small badge on the circle.',
   'اضغط الدائرة لتفتح الأدوات. ضغطة طويلة تفتح آخر أداة استعملتها، وأيقونتها الصغيرة على الدائرة. حدّد أي نص لأدوات التظليل والشرح.':'Tap the circle to open the tools. Long-press opens the last tool you used; its icon is the small badge on the circle. Select any text for highlight and explain tools.',
+  'صفحة واحدة هادئة بعمود نص قصير: عنوان واضح، ومسافات مريحة، وأدوات في زر واحد. مصمّم للجوال أولاً.':'One calm page with a short measure: a clear title, comfortable space, and every tool behind one button. Built for the phone first.',
+  'متن بالنسخ بلا إزاحة أول السطر، وعناوين بخط الواجهة مع خط فاصل رفيع، ورقم صفحة صغير أسفل الصفحة.':'Naskh body with no first-line indent, headings in the UI font over a thin rule, and a small page number at the foot.',
+  'زر دائري أسفل الصفحة يفتح الأدوات في قوس على الشاشة الكبيرة ولوح قصير على الجوال. ضغطة طويلة تفتح آخر أداة.':'A round button at the foot of the page opens the tools in an arc on wide screens and in a short sheet on the phone. Long-press opens the last tool.',
+  'اضغط الزر الدائري لفتح الأدوات. ضغطة طويلة تفتح آخر أداة استعملتها. اضغط طرف الصفحة لتقلبها، ووسطها لترى مكانك. حدّد أي نص لأدوات التظليل والشرح.':'Tap the round button for the tools. Long-press opens the last tool you used. Tap the page edge to turn it, the middle to see where you are. Select any text for highlight and explain tools.',
   'كتاب مطبوع بعناية بين يديك: صفحتان متقابلتان على الشاشة الكبيرة، وصفحة واحدة على الجوال.':'A well-made printed book in your hands: a two-page spread on large screens, a single page on a phone.',
   'متن بالنسخ مضبوط من الطرفين بإزاحة أول السطر، وعناوين وترويسة بالأميري، وأرقام صفحات هندية، وحواشٍ أسفل الصفحة.':'Justified Naskh body with first-line indents, Amiri headings and running header, Arabic-Indic page numbers, footnotes at the foot of the page.',
   'شريط قراءة معلّق من أعلى الصفحة: اسحبه أو اضغطه فتنزل الأدوات كورقة مدسوسة.':'A ribbon bookmark hanging from the top edge: pull or tap it and the tools slide down like a page insert.',
