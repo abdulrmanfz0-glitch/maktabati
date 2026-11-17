@@ -305,6 +305,26 @@ export async function runSmoke(b, url, vp, extra = []) {
       assert(after > box.marks, 'the dock action did not add a highlight');
       return 'top ' + box.top + ' bottom ' + box.bottom + ' of ' + box.vh + ', selection released';
     });
+    await item('RT-03-phone', async () => {
+      /* The pager asks the flow for a column WIDTH, one page wide, and lets both engines create the
+         overflow columns it turns through. With `column-count:1` WebKit lays the whole chapter out
+         as one tall column that ignores the page height: only the first page is readable and the
+         rest of the chapter cannot be reached. */
+      await go('#/lib'); await go('#/read/' + BOOK + '/c0'); await settle(1200);
+      if (await has('#rtPick')){ await click('#rtPick [data-rtpick="book"]'); await settle(1000); }
+      if ((await rt()) && (await rt()).id !== 'book') await setTpl('book');
+      const s = await ev(`(() => { const f = document.querySelector('#v-read .rt-flow'); if (!f) return null;
+        const cs = getComputedStyle(f);
+        return { colWidth: parseFloat(cs.columnWidth) || 0, colCount: cs.columnCount, colFill: cs.columnFill,
+          sw: f.scrollWidth, cw: f.clientWidth, sh: f.scrollHeight, ch: f.clientHeight }; })()`);
+      assert(s, 'no paged flow');
+      assert(s.colWidth > 100, 'flow has no column width: ' + JSON.stringify(s));
+      assert(s.colCount === 'auto', 'flow still asks for a column count: ' + JSON.stringify(s));
+      assert(s.colFill === 'auto', 'flow does not fill columns in order: ' + JSON.stringify(s));
+      assert(s.sh <= s.ch + 2, 'content overflows the page height: ' + JSON.stringify(s));
+      assert(s.sw > s.cw, 'chapter has more than one page but the flow has one column: ' + JSON.stringify(s));
+      return 'column ' + s.colWidth + 'px, pages span ' + s.sw + 'px';
+    });
   }
 }
 

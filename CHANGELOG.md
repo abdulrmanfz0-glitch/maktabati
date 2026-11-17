@@ -18,6 +18,13 @@ All notable changes are recorded here. This project follows
 
 ### Fixed
 
+- Reader, iPhone/Safari (WebKit): the page templates (The Book, Manuscript, Tidy) laid a chapter out
+  as one tall column that ignored the page height, so only the first page was readable and the rest
+  of the chapter could not be reached by turning pages (a 3-4 page chapter showed one page). The
+  pager now asks the text for a column WIDTH of one page instead of a column count, which makes
+  both engines create the overflow columns it turns through; the same chapter now paginates in
+  WebKit exactly as it does in Chrome. Checked in WebKit (Playwright build 18.2) at 390x844 and
+  844x390 for every template with no text outside a page.
 - Reader, selection on a phone: the tools (highlight kinds, explain, term, meaning, quote) used to
   pop up under the selection, where they collided with the system's own copy/paste menu, which
   cannot be moved or dismissed, and the system selection stayed tinted after the tools closed. With

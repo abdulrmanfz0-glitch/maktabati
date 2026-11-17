@@ -5976,7 +5976,11 @@ function rtLayout(k, end, frac){
   sheet.style.cssText = 'left:' + g.sx + 'px;top:' + g.sy + 'px;width:' + g.sw + 'px;height:' + g.sh + 'px';
   sheet.classList.toggle('is-spread', g.spread); sheet.classList.toggle('is-phone', g.phone); sheet.dataset.bind = g.rtl ? 'r' : 'l';
   vp.style.cssText = 'left:' + g.vx + 'px;top:' + g.mt + 'px;width:' + g.vw + 'px;height:' + g.th + 'px';
-  flow.style.cssText = 'column-count:' + g.cols + ';column-gap:' + g.gap + 'px;width:' + g.vw + 'px;height:' + g.th + 'px;transform:none';
+  /* One page is one column. The flow asks for column WIDTH, not a count: WebKit lays out
+     `column-count:1` as a single tall column that ignores the fixed height (the text runs past the
+     bottom of the page and the rest of the screen is unreachable), while a column width of one page
+     makes both engines create the overflow columns the pager turns through. */
+  flow.style.cssText = 'column-width:' + g.tw + 'px;column-count:auto;column-gap:' + g.gap + 'px;width:' + g.vw + 'px;height:' + g.th + 'px;transform:none';
   B.style.setProperty('--rt-th', g.th + 'px'); B.style.setProperty('--rt-chpad', Math.round(g.th * (RT.id === 'modern' ? .08 : .2)) + 'px'); B.style.setProperty('--rt-sy', g.sy + 'px');
   RT.glInline = RT.id === 'manu' && g.mo < 84; rtGlossMarks();
   RT.leaves = rtLeaves(flow); RT.li = 0;
