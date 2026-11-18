@@ -917,7 +917,7 @@ body.reading.chat-open .snd-panel{ inset-inline-end:412px; }
 .qe-pv{ display:flex; flex-direction:column; align-items:center; gap:.5rem; background:var(--surface); border:1px solid var(--rule); border-radius:10px; padding:.75rem; margin-bottom:.5rem; }
 .qe-cw{ position:relative; line-height:0; }
 .qe-cw canvas{ display:block; width:100%; height:100%; box-shadow:0 2px 14px rgba(0,0,0,.2); }
-.qe-z{ position:absolute; inset-inline:0; pointer-events:none; background:repeating-linear-gradient(45deg,rgba(214,60,60,.32) 0 6px,rgba(214,60,60,.12) 6px 12px); }
+.qe-z{ position:absolute; inset-inline:0; pointer-events:none; background:repeating-linear-gradient(45deg,rgba(128,128,128,.30) 0 6px,rgba(128,128,128,.10) 6px 12px); border-block:1px dashed rgba(128,128,128,.55); }
 .qe-z.t{ top:0; height:12%; } .qe-z.b{ bottom:0; height:20%; }
 .qe-in{ display:block; width:100%; min-height:44px; padding:.55rem .7rem; border:1px solid var(--rule); border-radius:8px; background:var(--surface); color:var(--ink); font-size:16px; line-height:1.7; resize:vertical; }
 .qe-c{ font-weight:400; color:var(--soft); font-size:.8rem; margin-inline-start:.5rem; }
