@@ -46,7 +46,7 @@ try {
   await b.goto(page);
   await b.waitFor(`!!document.querySelector('#v-lib')`, 20000);
   await ev(`localStorage.setItem('reader:lang', '"en"')`);
-  await ev(`(() => { try{ const p = JSON.parse(localStorage.getItem('maktabati:profile') || '{}'); p.tpl = { def:'modern', books:{'demo-experience':'modern'} }; localStorage.setItem('maktabati:profile', JSON.stringify(p)); }catch(e){} })()`);
+  await ev(`(() => { try{ const p = JSON.parse(localStorage.getItem('maktabati:profile') || '{}'); p.tpl = { def:'modern', books:{'demo-guide':'modern'} }; localStorage.setItem('maktabati:profile', JSON.stringify(p)); }catch(e){} })()`);
   await b.reload();
   await b.waitFor(`document.documentElement.lang === 'en'`, 20000);
   await sleep(900);
@@ -56,7 +56,7 @@ try {
   check('document title is English', !/[\u0600-\u06FF]/.test(await ev('document.title')), await ev('document.title'));
   check('sidebar is English', await ev(`document.querySelector('#side .sd-nav').textContent.includes('Library')`));
 
-  const routes = ['#/lib', '#/', '#/quotes', '#/hlall', '#/review', '#/glossary', '#/map', '#/templates', '#/profile', '#/profile/read', '#/profile/ai', '#/profile/privacy', '#/profile/look', '#/profile/about', '#/book/demo-experience', '#/read/demo-experience', '#/read/demo-experience/c0', '#/hls/demo-experience'];
+  const routes = ['#/lib', '#/', '#/quotes', '#/hlall', '#/review', '#/glossary', '#/map', '#/templates', '#/profile', '#/profile/read', '#/profile/ai', '#/profile/privacy', '#/profile/look', '#/profile/about', '#/book/demo-guide', '#/read/demo-guide', '#/read/demo-guide/c0', '#/hls/demo-guide'];
   for (const route of routes) {
     await go(route, 800);
     const leaks = await englishLeaks();
@@ -64,9 +64,9 @@ try {
   }
 
   // Reader content stays in the author's language while its chrome is English.
-  await go('#/read/demo-experience/c0', 900);
-  check('reader chrome is English', (await ev(`document.querySelector('#v-read .label') ? document.querySelector('#v-read .label').textContent : ''`)).includes('Predict'));
-  check('book chapter title is untouched', await ev(`document.querySelector('#v-read .divider h2').textContent.trim() === 'الدماغ آلة توقّع'`));
+  await go('#/read/demo-guide/c0', 900);
+  check('reader chrome is English', (await ev(`document.querySelector('#v-read .label') ? document.querySelector('#v-read .label').textContent : ''`)).includes('Chapter map'));
+  check('book chapter title is untouched', await ev(`document.querySelector('#v-read .divider h2').textContent.trim() === 'حدّد واسأل'`));
   check('Arabic book keeps RTL direction', await ev(`document.querySelector('#v-read').dir === 'rtl'`));
 
   // Dialogs: book menu, delete confirm, quote editor, sounds, AI add.
@@ -87,7 +87,7 @@ try {
   check('quote editor has no Arabic UI', (await englishLeaks()).length === 0);
   await closeDialog();
 
-  await go('#/read/demo-experience', 900);
+  await go('#/read/demo-guide', 900);
   await click('#sndBtn'); await sleep(500);
   check('sound mixer is English', (await ev(`document.querySelector('#sndPanel').innerText`)).includes('Timer'));
   check('sound mixer has no Arabic UI', (await englishLeaks()).length === 0);
@@ -100,7 +100,7 @@ try {
   await closeDialog();
 
   // A toast follows the selected language (bookmark added/removed).
-  await go('#/read/demo-experience/c0', 900);
+  await go('#/read/demo-guide/c0', 900);
   await click('#bmBtn'); await sleep(500);
   const toast = await ev(`document.querySelector('#toast').textContent`);
   check('toast is English', toast.trim().length > 0 && !/[\u0600-\u06FF]/.test(toast), toast);
@@ -111,7 +111,7 @@ try {
   check('template gallery has no Arabic UI', (await englishLeaks()).length === 0);
 
   // Every reading template keeps English chrome over RTL book content.
-  await go('#/read/demo-experience/c0', 900);
+  await go('#/read/demo-guide/c0', 900);
   for (const tpl of ['book', 'manu', 'tidy', 'modern']) {
     await ev(`window.__rt && window.__rt.set(${JSON.stringify(tpl)})`); await sleep(900);
     const leaks = await englishLeaks();
@@ -128,8 +128,8 @@ try {
   check('Arabic dir is rtl', await ev(`document.documentElement.dir === 'rtl'`));
   check('Arabic sidebar is back', await ev(`document.querySelector('#side .sd-nav').textContent.includes('المكتبة')`));
   check('Arabic preference persisted', await ev(`localStorage.getItem('reader:lang') === '"ar"'`));
-  await go('#/read/demo-experience/c0', 900);
-  check('Arabic reader chrome is Arabic', (await ev(`document.querySelector('#v-read .label').textContent`)).includes('توقّعي'));
+  await go('#/read/demo-guide/c0', 900);
+  check('Arabic reader chrome is Arabic', (await ev(`document.querySelector('#v-read .label').textContent`)).includes('خريطة الفصل'));
 
   // Switch back to English and confirm persistence.
   await go('#/profile/look', 700);

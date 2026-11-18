@@ -1,4 +1,4 @@
-import { DEMO_BOOK, DEMO_MD } from './demo-data.js';
+import { DEMO_BOOK } from './demo-data.js';
 import { runIngest } from '../ingest/client.js';
 import { EXPORT_VERSION, planLibraryImport, validateItem } from '../core/library.js';
 import { FILTER_ALL, FILTER_UNFILED, collectionKey, cleanName, makeCollection, collectionsFromKv, sortCollections, hasBook, addBookToCollection, removeBookFromCollection, renameCollection, countCollectionBooks, filterByCollection, removeBookFromAll } from '../core/collections.js';
@@ -625,7 +625,7 @@ function renderLib(){
     : active ? 'ما فيه كتب في هذي المجموعة بعد.'
     : 'ما فيه عناصر من هالنوع.';
   const colHead = active ? '<div class="col-head"><span class="col-head-t"><bdi dir="auto">' + esc(active.name) + '</bdi> <span class="count">(' + countCollectionBooks(active, byId) + ')</span></span><button class="linkbtn" data-col-edit="' + esc(active.id) + '">' + tx('تعديل') + '</button></div>' : '';
-  const demoHint = kv.get('seeded', false) && !kv.get('demoHintSeen', false) ? '<div class="hint demo-hint" role="note" style="display:flex; align-items:center; gap:8px; justify-content:space-between; margin:.9rem 0 0"><span>' + tx('هذي كتب تجريبية عشان تجرب التطبيق. أضف كتبك من «أضف».') + '</span><button class="btn" id="demoHintX" aria-label="' + tx('إخفاء التلميح') + '">' + svg('close') + '</button></div>' : '';
+  const demoHint = kv.get('seeded', false) && !kv.get('demoHintSeen', false) ? '<div class="hint demo-hint" role="note" style="display:flex; align-items:center; gap:8px; justify-content:space-between; margin:.9rem 0 0"><span>' + tx('«دليل مكتبتي» يعلّمك المميزات وأنت تجرّبها. أضف كتبك من «أضف».') + '</span><button class="btn" id="demoHintX" aria-label="' + tx('إخفاء التلميح') + '">' + svg('close') + '</button></div>' : '';
   $('#v-lib').innerHTML = '<div class="wide" style="padding-top:1.25rem; padding-bottom:3rem"><div style="display:flex; align-items:center; gap:.5rem; margin-bottom:1rem"><h1 class="vh" style="flex:1">المكتبة</h1><button class="gbtn" data-add>+ أضف</button></div>' +
     '<label class="search"><span class="sr">بحث</span><input type="search" id="q" placeholder="ابحث في النصوص والتظليلات والملاحظات" autocomplete="off"></label>' +
     demoHint +
@@ -1037,7 +1037,6 @@ function chapterHTML(it, c, ci, solo){
       (c.minutes ? '<p class="meta">قراءة تقريبًا ' + esc(c.minutes) + ' دقيقة</p>' : '') + '</div></section>';
   }
   h += '<div class="wrap"' + (solo && !c.title ? ' id="' + cid + '"' : '') + '>' + trBar;
-  if (tools) h += '<section class="block" style="padding-bottom:0"><p class="label">' + svg('pen', ' width="18" height="18"') + 'توقّعي قبل القراءة</p><p class="hint">وش تتوقّع ' + (solo ? 'يقول هالنص' : 'يقول هالفصل') + '؟ جملة أو جملتين تكفي.</p>' + field(F + 'predict', 'أتوقّع أنّ…') + '</section>';
   if (arr(c.overview).length) h += '<section class="block" style="padding-bottom:0"><p class="label">خريطة الفصل</p><ol class="overview">' + arr(c.overview).map((o, i) => '<li><span>' + (i + 1) + '</span><div data-no-tr>' + md(o) + '</div></li>').join('') + '</ol></section>';
   let leadDone = false;
   h += arr(c.sections).map((s, si) => {
@@ -2498,20 +2497,24 @@ async function importLib(f){
 }
 
 /* ---------- seed ---------- */
-async function seed(){
-  const now = Date.now();
-  const book = Object.assign({}, DEMO_BOOK, { createdAt:now - 3 * DAY, progress:0 });
-  const ex = mdToItem(DEMO_MD.join('\n'), 'explainer', ''); ex.id = 'demo-forgetting'; ex.createdAt = now - DAY;
+async function seed(){ await batchWrite(guideSeed()); }
+/* The one sample in a new library: a short guide that teaches selecting, the three highlight kinds, asking, linking and the library by doing them. */
+function guideSeed(){
+  const now = Date.now(), book = Object.assign({}, DEMO_BOOK, { createdAt:now, progress:0 });
   const annos = [
-    { id:'a-seed1', kind:'hl', itemId:book.id, bk:'0-1-1', text:'وهو أثمن ما يصل إلى الدماغ', note:'', links:[], t:now },
-    { id:'a-seed2', kind:'hl', itemId:ex.id, bk:'0-2-0', text:'وهذا التعب هو ما يثبّتها', note:'نفس فكرة خطأ التنبّؤ: الجهد والمفاجأة يثبّتان المعلومة.', links:['a-seed1'], t:now },
-    { id:'a-seed3', kind:'hl', itemId:book.id, bk:'0-2-1', text:'خبرة العمر كلّه تقول إنّ الوجوه بارزة', note:'', links:[], t:now },
-    { id:'a-seed4', kind:'hl', itemId:ex.id, bk:'0-0-0', text:'ننسى أغلب ما تعلّمناه في الأيام الأولى', note:'', links:[], t:now },
-    { id:'a-seed5', kind:'term', itemId:ex.id, bk:'0-2-0', ar:'خطأ التنبّؤ', en:'Prediction error', def:'الفرق بين ما توقّعناه وما حدث فعلًا.', t:now },
-    { id:'a-seed6', kind:'term', itemId:ex.id, bk:'0-1-0', ar:'التكرار المتباعد', en:'Spaced repetition', def:'مراجعة على فترات تطول تدريجيًّا: يوم، ثم أسبوع، ثم شهر.', t:now }
+    { id:'g-hl1', kind:'hl', hk:'imp', itemId:book.id, bk:'0-0-0', text:'أول ما تحدّد نص', note:'', links:[], t:now },
+    { id:'g-hl2', kind:'hl', hk:'imp', itemId:book.id, bk:'1-0-0', text:'كذا تبني شبكة من أفكارك', note:'', links:['g-hl1'], t:now },
+    { id:'g-term1', kind:'term', itemId:book.id, bk:'0-2-1', ar:'رفيق القراءة', en:'Reading companion', def:'محادثة جنب الكتاب تشرح لك وتسألك.', t:now }
   ];
   const cards = {}; [0, 1, 2].forEach(si => cards[book.id + '|0|r' + si] = { stage:0, due:now - 1000 });
-  await batchWrite({ putItems:[book, ex], putAnnos:annos, putKv:[{ k:'cards', v:cards }, { k:'seeded', v:true }] });
+  return { putItems:[book], putAnnos:annos, putKv:[{ k:'cards', v:Object.assign({}, kv.get('cards', {}) || {}, cards) }, { k:'seeded', v:true }] };
+}
+/* Libraries seeded before the guide: the two old samples go, the guide takes their place (only when a sample was still there). */
+async function guideMigrate(){
+  const old = ['demo-experience', 'demo-forgetting'].filter(id => mem.items.has(id));
+  for (const id of old) await purgeBook(id);
+  if (old.length && !mem.items.has(DEMO_BOOK.id)) await batchWrite(guideSeed());
+  await kv.set('guideV1', true);
 }
 
 /* ---------- highlight kinds ---------- */
@@ -6495,6 +6498,7 @@ async function init(){
   storageDown = !dbOpened || !loaded;
   if (storageDown) storageNotice('unavailable');
   if (loaded && !mem.items.size && !kv.get('seeded', false)) await seed();
+  if (loaded && !storageDown && !kv.get('guideV1', false)){ if (kv.get('seeded', false)) await guideMigrate(); else await kv.set('guideV1', true); }
   if (!kv.get('hlCardsV1', false)){ await schedule(annosOf('hl').filter(a => hkOf(a) === 'imp').map(hlKey)); await kv.set('hlCardsV1', true); }
   if (idb && mem.items.size && !kv.get('orphansV1', false)){ const on = await cleanOrphans(); await kv.set('orphansV1', { t:Date.now(), n:on }); console.info('[maktabati] orphan sweep', JSON.stringify(on)); }
   /* Every startup (cheap): sweep files/ocrPages orphans and demote books left

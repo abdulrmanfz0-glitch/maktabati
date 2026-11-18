@@ -17,7 +17,7 @@ const page = args.find(a => !a.startsWith('--')) || 'dist/single/index.html';
 const only = (args[args.indexOf('--only') + 1] || '').split(',').filter(x => args.includes('--only') && x);
 const TMP = scratchDir('mk-smoke-');
 const KEY = 'sk-SMOKE-not-a-real-key-7731';
-const BOOK = 'demo-experience';
+const BOOK = 'demo-guide';
 const results = [];
 
 export async function runSmoke(b, url, vp, extra = []) {
@@ -75,7 +75,7 @@ export async function runSmoke(b, url, vp, extra = []) {
   await item('LIB-01', async () => {
     await go('#/lib');
     assert(await count('#v-lib .shelf-h') >= 1, 'no shelf heading');
-    assert(await count('#v-lib [data-href^="#/book/"]') >= 2, 'demo items missing');
+    assert(await count('#v-lib [data-href^="#/book/"]') >= 1, 'demo items missing');
     assert((await txt('#side')).includes('3'), 'review badge 3 missing');
   });
 
@@ -87,7 +87,7 @@ export async function runSmoke(b, url, vp, extra = []) {
 
   await item('BK-01', async () => {
     await go('#/book/' + BOOK);
-    assert((await txt('#v-book .bp-h')).includes('آلة التجربة'), 'title missing');
+    assert((await txt('#v-book .bp-h')).includes('دليل مكتبتي'), 'title missing');
     for (const a of ['chat', 'snd', 'more']) assert(await has(`#v-book [data-bpa="${a}"]`), 'button ' + a + ' missing');
     assert(await has(`#v-book [data-href="#/read/${BOOK}"]`), 'start reading missing');
   });
@@ -99,7 +99,7 @@ export async function runSmoke(b, url, vp, extra = []) {
       assert((await txt('#v-home')).includes('وش تبي تقرأ اليوم'), 'heading missing');
     });
     await item('HOME-06', async () => {
-      await go('#/'); await type('#v-home #chIn', 'وش الفكرة الأساسية في آلة التجربة؟'); await click('#v-home #chSend'); await settle(800);
+      await go('#/'); await type('#v-home #chIn', 'وش الفكرة الأساسية في دليل مكتبتي؟'); await click('#v-home #chSend'); await settle(800);
       assert(/^#\/c\//.test(await ev('location.hash')), 'URL did not become #/c/<id>');
       assert(await has('#v-home a[href*="#/profile/ai"], #v-home a[href*="#/settings"], #v-home [data-go*="profile"]'), 'no link to settings');
     });
@@ -144,7 +144,7 @@ export async function runSmoke(b, url, vp, extra = []) {
 
   await item('RD-01', async () => {
     const t = await txt('#v-read');
-    assert(t.includes('آلة التجربة') && t.includes('ليش أقرأه'), 'cover missing');
+    assert(t.includes('دليل مكتبتي') && t.includes('ليش أقرأه'), 'cover missing');
     assert(t.includes('الفصول'), 'chapter map missing');
   });
 

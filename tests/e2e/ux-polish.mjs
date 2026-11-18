@@ -28,7 +28,7 @@ try {
   // 1) first run: the demo-books hint shows, dismisses and stays dismissed
   await go('#/lib');
   await b.waitFor(`!!document.querySelector('#demoHintX')`, 8000);
-  assert(await ev(`document.querySelector('.demo-hint').textContent.includes('كتب تجريبية')`), 'hint text missing');
+  assert(await ev(`document.querySelector('.demo-hint').textContent.includes('دليل مكتبتي')`), 'hint text missing');
   await ev(`document.querySelector('#demoHintX').click()`); await settle(300);
   assert(!(await ev(`!!document.querySelector('#demoHintX')`)), 'hint did not dismiss');
   await go('#/'); await go('#/lib');
@@ -58,13 +58,13 @@ try {
     r.onsuccess = () => { try { const t = r.result.transaction('kv').objectStore('kv').get('cards'); t.onsuccess = () => { r.result.close(); res(t.result && t.result.v ? t.result.v : {}); }; t.onerror = () => { r.result.close(); res({}); }; } catch(e){ try{ r.result.close(); }catch(_){} res({}); } };
     r.onerror = () => res({});
   })`);
-  await go('#/read/demo-experience/0-1-1');
+  await go('#/read/demo-guide/0-1-1');
   await b.waitFor(`!!document.querySelector('#v-read mark.hl')`, 15000);
   const anno = await ev(`document.querySelector('#v-read mark.hl').dataset.anno`);
   assert(anno, 'no seeded highlight mark on this screen');
   await ev(`document.querySelector('#v-read mark.hl').click()`); await settle(400);
   await b.waitFor(`!!document.querySelector('#sheet [data-act="del"]')`, 5000);
-  const hlKey = 'demo-experience|h|' + anno;
+  const hlKey = 'demo-guide|h|' + anno;
   const cardsBefore = await readCards();
   const before = cardsBefore[hlKey] ? { stage: cardsBefore[hlKey].stage, due: cardsBefore[hlKey].due } : null;
   await ev(`document.querySelector('#sheet [data-act="del"]').click()`); await settle(400);
@@ -95,7 +95,7 @@ try {
   ok('dialog traps Tab and returns focus on close', 'tab wrapped, esc refocused');
 
   // 5) an empty library shows an inline add action
-  await ev(`(() => { window.__rt.rm('demo-experience'); window.__rt.rm('demo-forgetting'); location.hash = '#/'; setTimeout(() => location.hash = '#/lib', 60); })()`); await settle(900);
+  await ev(`(() => { window.__rt.rm('demo-guide'); window.__rt.rm('demo-forgetting'); location.hash = '#/'; setTimeout(() => location.hash = '#/lib', 60); })()`); await settle(900);
   await b.waitFor(`!!document.querySelector('#v-lib .empty-act [data-add]')`, 8000);
   await ev(`document.querySelector('#v-lib .empty-act [data-add]').click()`); await settle(500);
   assert(!(await ev(`document.querySelector('#modal').hidden`)), 'empty-state add did not open the upload modal');

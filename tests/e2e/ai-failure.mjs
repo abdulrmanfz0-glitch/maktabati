@@ -125,7 +125,7 @@ try {
     try{
       await b.waitFor(`!!(window.__other && window.__other.document && window.__other.document.querySelector('#v-home #chIn'))`, 20000);
       await b.sleep(500);
-      await go('#/read/demo-experience');
+      await go('#/read/demo-guide');
       await b.waitFor(`window.__other.document.querySelector('#toast').textContent.includes('تم تعديل المكتبة')`, 8000);
       ok('two tabs reload notice');
     } catch(e){ bad('two tabs reload notice', e); }
@@ -140,7 +140,7 @@ try {
     await c.evaluate(`location.hash = '#/lib'`); await c.sleep(500);
     const txt = await c.evaluate(`document.querySelector('#v-lib').textContent`);
     assert(txt.includes('التخزين غير متاح'), 'storage-unavailable state is missing');
-    assert(!/آلة التجربة/.test(txt), 'demo was seeded despite storage failure');
+    assert(!/دليل مكتبتي/.test(txt), 'demo was seeded despite storage failure');
     ok('forced IndexedDB failure', 'no demo seed');
   } finally { await c.close(); }
 } catch (e) {
