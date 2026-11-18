@@ -2543,10 +2543,11 @@ function copyText(t, msg){
 }
 /* A one-tap request (Explain, with no words typed) is written in the UI language, so it must not set the reply language: the quoted passage does. */
 const PRESET_LANG_NOTE = '(طلب جاهز من التطبيق: رد بلغة الفقرة المقتبسة.)';
+const latinText = t => (String(t || '').match(/[A-Za-z]/g) || []).length > (String(t || '').match(/[\u0600-\u06FF]/g) || []).length;
 function explainCopy(S, it){
   const b = blockOf(it, S.bk); const para = plain(b ? blockText(b) : S.el.innerText);
   const ch = chName(it, bkPos(S.bk)[0]) || it.title;
-  const en = (para.match(/[A-Za-z]/g) || []).length > (para.match(/[\u0600-\u06FF]/g) || []).length;
+  const en = latinText(para);
   copyText((en ? 'Explain this passage in simple words with a real-life example, without summarizing. Book: ' + it.title + ', chapter: ' + ch + ':\n\n' : 'اشرح لي هالفقرة بكلام بسيط ومثال من الحياة، بدون تلخيص. الكتاب: ' + it.title + '، الفصل: ' + ch + ':\n\n') + para, 'انسخت، الصقه في أي AI');
 }
 
@@ -4538,6 +4539,8 @@ async function chatSend(text, mode){
   const md0 = mode || C.mode;
   const preset = !text;
   if (!text) text = mode ? tx(MODES[mode].p) : C.attach ? tx('اشرح لي هالفقرة') : '';
+  /* a one-tap request on an English passage is sent in English, an Arabic one in Arabic, whatever the UI language */
+  if (preset && C.attach) text = latinText(C.attach.text) ? 'Explain' : 'اشرحها لي';
   if (!text) return;
   const um = { role:'user', content:text, t:Date.now() };
   if (preset) um.preset = true;
