@@ -16,7 +16,7 @@ import { serve } from '../../tools/lib/static-server.mjs';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/(\w:)/, '$1')), '../..');
 const page = process.argv[2] || 'dist/single/index.html';
-const BOOK = 'demo-experience';
+const BOOK = 'demo-guide';
 const results = [];
 const PARA = i => 'الفقرة ' + (i + 1) + ': الدماغ يصنع في كل لحظة تخمينًا عمّا يُفترض أن يصله، ثم يستعمل الحواس لفحص هذا التخمين وتصحيحه. ' + 'وهذا يفسّر لماذا نرى ما نتوقّعه أحيانًا. '.repeat(3);
 const LONG = { id:'bm-long', type:'book', title:'كتاب طويل للاختبار', author:'اختبار', createdAt:Date.now(),

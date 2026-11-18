@@ -30,7 +30,7 @@ async function run(b, url, vp) {
   }
 
   await b.goto(url); await b.waitFor(`!!document.querySelector('main .view:not([hidden])')`, 20000); await settle(1200);
-  await ev(`location.hash = '#/read/demo-experience'`); await settle(1200);
+  await ev(`location.hash = '#/read/demo-guide'`); await settle(1200);
   if (await ev(`!!document.querySelector('#rtPick')`)) await click('[data-rtpick="modern"]');
   await settle(800);
   await ev(`(() => { const h = document.querySelector('#rtUI [data-rthint]'); if (h) h.click(); })()`); await settle(300);

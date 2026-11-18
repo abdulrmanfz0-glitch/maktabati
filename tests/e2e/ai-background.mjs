@@ -52,7 +52,7 @@ try {
 
   // 2) expanding the panel mid-stream keeps the reply streaming
   await setModel('fake-slow');
-  await go('#/read/demo-experience');
+  await go('#/read/demo-guide');
   await b.waitFor(`!!document.querySelector('#v-read')`, 15000);
   await ev(`document.querySelectorAll('#rtPick [data-rtpick="modern"]').forEach(x => x.click())`);
   await settle(500);

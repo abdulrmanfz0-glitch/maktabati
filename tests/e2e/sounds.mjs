@@ -31,7 +31,7 @@ async function run(srv, page, label, { forceM4a = false } = {}) {
   const sounds = () => ev(`performance.getEntriesByType('resource').map(e => e.name).filter(n => n.includes('/sounds/')).map(n => n.split('/sounds/')[1])`);
   try {
     await b.goto(srv.url + '/' + page); await b.waitFor(`!!document.querySelector('main .view:not([hidden])')`, 20000); await settle(1200);
-    await ev(`location.hash = '#/book/demo-experience'`); await settle(900);
+    await ev(`location.hash = '#/book/demo-guide'`); await settle(900);
     await ev(`document.querySelector('#v-book [data-bpa="snd"]').click()`); await settle(400);
     const web = !page.includes('single');
 

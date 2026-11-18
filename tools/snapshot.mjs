@@ -19,7 +19,7 @@ const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace
 const OUT = path.join(ROOT, 'out', 'snapshots');
 const T0 = Date.UTC(2026, 9, 1, 9, 0, 0);
 const VIEWPORTS = { desktop: { width: 1280, height: 900, mobile: false }, phone: { width: 390, height: 844, mobile: true } };
-const BOOK = 'demo-experience', EXPL = 'demo-forgetting';
+const BOOK = 'demo-guide';
 
 const FREEZE = `(() => {
   const T0 = ${T0}, RD = Date;
@@ -34,7 +34,7 @@ const EXTRA = `new Promise((res, rej) => {
   q.onerror = () => rej(q.error);
   q.onsuccess = () => {
     const db = q.result, tx = db.transaction(['annos', 'kv'], 'readwrite'), t = ${T0};
-    tx.objectStore('annos').put({ id:'a-snapq', kind:'quote', itemId:'${BOOK}', bk:'0-1-1', text:'وهو أثمن ما يصل إلى الدماغ', t });
+    tx.objectStore('annos').put({ id:'a-snapq', kind:'quote', itemId:'${BOOK}', bk:'0-1-1', text:'أول ما تحدّد نص', t });
     const m = (role, content, dt) => ({ role, content, t: t - dt });
     tx.objectStore('kv').put({ k:'chat:lib', v:[{ id:'c-snaphome', t:t - 3600e3, msgs:[m('user', 'وش أبدأ أقرأ؟', 3600e3), m('assistant', 'ابدأ بـ**العقل المتنبّئ**، الفصل الأول قصير.', 3590e3)] }] });
     tx.objectStore('kv').put({ k:'chat:b:${BOOK}', v:[{ id:'c-snapbook', bookId:'${BOOK}', t:t - 7200e3, msgs:[m('user', 'وش يعني خطأ التنبّؤ؟', 7200e3), m('assistant', 'هو **الفرق** بين ما توقّعه الدماغ وما وصله فعلًا.', 7190e3)] }] });
@@ -57,7 +57,6 @@ const SCREENS = [
   ['home-chat', '#/c/c-snaphome'],
   ['library', '#/lib'],
   ['book-page', '#/book/' + BOOK],
-  ['book-page-explainer', '#/book/' + EXPL],
   ['templates', '#/templates'],
   ...['profile', 'read', 'ai', 'privacy', 'look', 'about'].map(t => ['profile-' + t, '#/profile/' + t]),
   ['idea-map', '#/map'],
@@ -68,7 +67,6 @@ const SCREENS = [
   ['highlights-all', '#/hlall'],
   ['quotes', '#/quotes'],
   ['quote-card-editor', '#/quotes', `document.querySelector('[data-qcard]').click()`],
-  ['reader-explainer', '#/read/' + EXPL]
 ];
 const TEMPLATES = { modern: 'حديث', book: 'الكتاب', manu: 'مخطوطة', tidy: 'مرتب' };
 
