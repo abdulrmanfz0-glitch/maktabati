@@ -1728,8 +1728,11 @@ async function qeDraw(){
   if (!ok || tk !== Q.tok) return;
   qeFit();
   await new Promise(r => cv.toBlob(b => { if (tk === Q.tok) Q.blob = b; r(); }, 'image/png'));
+  qeReady();
 }
-function qeSoon(){ const Q = QE; Q.blob = null; clearTimeout(Q.dt); Q.dt = setTimeout(qeDraw, 90); }
+/* the share sheet needs the tap itself (iOS drops it after an await), so the image is ready before the buttons are */
+function qeReady(){ const Q = QE; if (!Q) return; $$('[data-qa]').forEach(b => { if (b.dataset.qa !== 'copy') b.disabled = !Q.text.trim() || !Q.blob; b.setAttribute('aria-busy', String(!Q.blob)); }); }
+function qeSoon(){ const Q = QE; Q.blob = null; qeReady(); clearTimeout(Q.dt); Q.dt = setTimeout(qeDraw, 90); }
 async function qeBlobNow(){ const Q = QE; clearTimeout(Q.dt); if (!Q.blob) await qeDraw(); return Q.blob; }
 function qeCap(){
   const Q = QE, el = $('#qeCap'); if (!el) return;
@@ -1746,7 +1749,7 @@ function qeInfo(){
   c.textContent = n + ' / ' + QLIM; c.classList.toggle('warn', n > QLIM);
   $('#qeWarn').hidden = n <= QLIM;
   $('#qeDiW').hidden = !/[\u064B-\u0652\u0670]/.test(Q.text);
-  $$('[data-qa]').forEach(b => b.disabled = !Q.text.trim());
+  qeReady();
 }
 function qeSaveNote(){
   const Q = QE; clearTimeout(Q.nt);
@@ -1767,30 +1770,48 @@ function qeNoteShow(msg, btns){
 }
 const qeFile = blob => { try{ return new File([blob], 'maktabati-quote.png', { type:'image/png' }); }catch(e){ return null; } };
 const qeCanFiles = blob => { try{ const f = qeFile(blob || new Blob([''], { type:'image/png' })); return !!(f && navigator.canShare && navigator.canShare({ files:[f] })); }catch(e){ return false; } };
-async function qeShare(){
-  const Q = QE, blob = Q.blob || await qeBlobNow(); if (!blob) return;
-  const f = qeFile(blob);
-  if (f && qeCanFiles(blob)){
-    try{ await navigator.share({ files:[f], text:qeFull(), title:Q.it.title || '' }); return; }
-    catch(e){ if (e && e.name === 'AbortError') return; }
-  }
-  qeDownload(blob); const ok = await qeCopy(qeFull());
-  qeNoteShow(qt(ok ? 'المشاركة بالصورة غير متاحة هنا. نزّلت الصورة ونسخت النص.' : 'المشاركة بالصورة غير متاحة هنا. نزّلت الصورة، والنص انسخه بزر «انسخ النص».'), [['close', 'تم', 'pbtn']]);
+/* native share sheet with the image; text only where the target keeps it (TikTok drops it, so it is copied) */
+async function qeShareFile(withText){
+  const Q = QE, blob = Q.blob, f = blob && qeFile(blob);
+  if (!f || !qeCanFiles(blob)) return 'no';
+  const data = { files:[f] }; if (withText){ data.text = qeFull(); if (Q.it.title) data.title = Q.it.title; }
+  try{ await navigator.share(data); return 'ok'; }
+  catch(e){ return e && e.name === 'AbortError' ? 'abort' : 'no'; }
 }
-function qeXGo(blob){
-  const Q = QE, tags = qeTags(); qeDownload(blob);
+/* desktop: the image on the clipboard, so Ctrl+V in X's composer attaches it */
+async function qeCopyImg(blob){
+  try{ if (!window.ClipboardItem || !navigator.clipboard || !navigator.clipboard.write) return false; await navigator.clipboard.write([new ClipboardItem({ 'image/png':blob })]); return true; }catch(e){ return false; }
+}
+async function qeShare(){
+  const Q = QE; if (!Q.blob) return;
+  const r = await qeShareFile(true); if (r !== 'no') return;
+  qeDownload(Q.blob); const ok = await qeCopy(qeFull());
+  qeNoteShow(qt(ok ? 'المشاركة بالصورة غير متاحة هنا. نزّلت الصورة ونسخت النص.' : 'المشاركة بالصورة غير متاحة هنا. نزّلت الصورة، والنص انسخه بزر «انسخ النص».'), [['close', 'تم']]);
+}
+async function qeXGo(){
+  const Q = QE, blob = Q.blob, tags = qeTags(); if (!blob) return;
   Q.xurl = 'https://x.com/intent/tweet?text=' + encodeURIComponent(Q.cap) + (tags.length ? '&hashtags=' + encodeURIComponent(tags.join(',')) : '');
+  const over = cpLen(Q.cap) + tags.reduce((s, g) => s + 2 + cpLen(g), 0) > 280, overMsg = over ? ' ' + qt('النص أطول من 280، قصّه قبل النشر.') : '';
+  /* phone: the share sheet hands X the picture and the text together */
+  if (matchMedia('(pointer:coarse)').matches){ const r = await qeShareFile(true); if (r !== 'no') return; }
+  /* X's link can carry text only, never a picture: put the picture on the clipboard first */
+  const img = qeCopyImg(blob);
   const w = window.open(Q.xurl, '_blank'); if (w){ try{ w.opener = null; }catch(e){} }
-  const over = cpLen(Q.cap) + tags.reduce((s, g) => s + 2 + cpLen(g), 0) > 280;
-  qeNoteShow(qt('نزّلت الصورة، ارفقها في X') + (w ? '' : ' ' + qt('لو ما انفتح X اضغط «افتح X».')) + (over ? ' ' + qt('النص أطول من 280، قصّه قبل النشر.') : ''), [['openx', 'افتح X', 'pbtn'], ['close', 'تم']]);
+  if (await img){ qeNoteShow(qt('نسخت الصورة. في X اضغط Ctrl+V (أو ⌘V) داخل التغريدة وتنلصق.') + overMsg, [['openx', 'افتح X', 'pbtn'], ['dl', 'حمّل الصورة'], ['close', 'تم']]); return; }
+  qeDownload(blob);
+  qeNoteShow(qt('نزّلت الصورة، ارفقها في X') + (w ? '' : ' ' + qt('لو ما انفتح X اضغط «افتح X».')) + overMsg, [['openx', 'افتح X', 'pbtn'], ['close', 'تم']]);
 }
 async function qeAct(k){
   const Q = QE;
   if (k === 'share') return qeShare();
-  if (k === 'x'){ if (Q.blob) qeXGo(Q.blob); else { const b = await qeBlobNow(); if (b) qeXGo(b); } return; }
+  if (k === 'x') return qeXGo();
   if (k === 'tt'){
-    if (matchMedia('(pointer:coarse)').matches && qeCanFiles(Q.blob)) return qeShare();
-    qeNoteShow(qt('نزّل الصورة وارفعها من') + ' <a href="https://www.tiktok.com/upload" target="_blank" rel="noopener"><bdi dir="ltr">tiktok.com/upload</bdi></a>', [['dl', 'حمّل الصورة', 'pbtn'], ['close', 'تم']]); return;
+    if (!Q.blob) return;
+    const r = await qeShareFile(false);
+    if (r === 'ok'){ const ok = await qeCopy(qeFull()); if (ok) toast(qt('نسخت النص، الصقه في وصف تيك توك')); return; }
+    if (r === 'abort') return;
+    qeDownload(Q.blob); qeCopy(qeFull());
+    qeNoteShow(qt('تيك توك ما يستقبل صورة من المتصفح مباشرة. نزّلت الصورة ونسخت النص، ارفعها من تطبيق تيك توك كمنشور صور. مقاس 9:16 هو الأنسب.'), [['close', 'تم']]); return;
   }
   if (k === 'dl'){ const b = Q.blob || await qeBlobNow(); if (b){ qeDownload(b); toast(qt('نزّلت الصورة')); } return; }
   if (k === 'copy'){ toast(qt(await qeCopy(qeFull()) ? 'نسخت النص' : 'تعذّر النسخ')); }
