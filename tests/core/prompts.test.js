@@ -10,7 +10,9 @@ describe('companion chat system prompt', () => {
   });
 
   it('keeps the reading persona but allows any other request', () => {
-    expect(SYS).toContain('أنت رفيق قراءة لقارئ عربي');
+    expect(SYS).toContain('أنت رفيق قراءة.');
+    expect(SYS).toContain('رد بنفس لغة آخر رسالة كتبها القارئ');
+    expect(SYS).not.toContain('لقارئ عربي');
     expect(SYS).toContain('أي طلب ثاني');
     expect(SYS).toContain('جاوبه طبيعي وكامل');
     expect(SYS).not.toContain('شغلك مساعدة القارئ في القراءة فقط');
