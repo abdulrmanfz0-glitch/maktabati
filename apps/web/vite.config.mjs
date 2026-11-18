@@ -32,12 +32,15 @@ function cspPlugin(single) {
         if (/\btype\s*=\s*["']?(application\/(ld\+)?json|text\/template|importmap)/i.test(attrs)) continue;
         hashes.push("'sha256-" + createHash('sha256').update(body).digest('base64') + "'");
       }
-      /* No analytics, no tracking beacons, and no third-party script origins
-         in the CSP. 'wasm-unsafe-eval' is for the Tesseract core (PR3), which
-         instantiates embedded WASM; never add 'unsafe-eval'. */
+      /* The one third-party script origin: Cloudflare Web Analytics, enabled on the
+         hosted Pages project. Its cookieless beacon counts page views only and sees
+         no books, highlights, chats or keys. Nothing else may be added here.
+         'wasm-unsafe-eval' is for the Tesseract core, which instantiates embedded
+         WASM; never add 'unsafe-eval'. */
+      const CF_BEACON = 'https://static.cloudflareinsights.com';
       const script = single
         ? "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'"
-        : "script-src 'self'" + (hashes.length ? ' ' + [...new Set(hashes)].join(' ') : '') + " 'wasm-unsafe-eval'";
+        : "script-src 'self' " + CF_BEACON + (hashes.length ? ' ' + [...new Set(hashes)].join(' ') : '') + " 'wasm-unsafe-eval'";
       const csp = [
         "default-src 'self'",
         script,

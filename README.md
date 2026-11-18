@@ -175,8 +175,10 @@ the whole app is inlined by `vite-plugin-singlefile`.
   and chat messages are sent to the provider you configured. If you enable
   "allow the whole book", the whole book is sent. Review the provider's privacy
   and data-retention terms.
-- The app loads no analytics and no tracking beacons of any kind; there is
-  nothing to enable on self-hosted builds.
+- The hosted demo (maktabati-61y.pages.dev) uses Cloudflare Web Analytics, a
+  cookieless page-view counter (visits, pages, referrers, countries). It does
+  not see your books, highlights, chats, or API key, and does not track
+  individual visitors. Self-hosted builds load nothing unless you enable it.
 - OCR of scanned books runs fully on this device (Tesseract, self-hosted).
   The recognition files download once, from this site only, and book pages
   never leave the device.
