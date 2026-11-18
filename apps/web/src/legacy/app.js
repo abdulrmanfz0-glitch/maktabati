@@ -1577,15 +1577,15 @@ const qt = s => LANG === 'en' ? (EN_UI[s] || s) : s;
 const QLIM = 280;
 const QFMT = { '1:1':[1080, 1080], '4:5':[1080, 1350], '9:16':[1080, 1920] };
 const QTPL = {
-  paper:{ bg:'#F4EDE0', ink:'#2B2218', soft:'#5E5040', acc:'#8A5A1C', frame:'rgba(43,34,24,.24)' },
-  dark:{ bg:'#212121', ink:'#ECECEC', soft:'#B0B0B0', acc:'#D6D6D6', frame:null },
-  gold:{ bg:'#1B1610', ink:'#F4EDE0', soft:'#D2C9B8', acc:'#E7C98F', frame:'rgba(231,201,143,.30)' },
-  white:{ bg:'#FFFFFF', ink:'#0D0D0D', soft:'#555555', acc:'#0D0D0D', frame:null }
+  paper:{ bg:'#F4EDE0', ink:'#2B2218', soft:'#54473A', acc:'#8A5A1C', frame:'rgba(43,34,24,.34)' },
+  dark:{ bg:'#1E1E20', ink:'#F2F2F2', soft:'#C4C4C4', acc:'#9DB8D9', frame:'rgba(157,184,217,.28)' },
+  gold:{ bg:'#17120C', ink:'#E9CF98', soft:'#D8CBB0', acc:'#E7C98F', frame:'rgba(231,201,143,.42)' },
+  white:{ bg:'#FFFFFF', ink:'#111111', soft:'#4A4A4A', acc:'#B08A4A', frame:'rgba(17,17,17,.14)' }
 };
 const QFONT = {
   naskh:{ f:'"Noto Naskh Arabic"', w:600, lh:1.95, k:1 },
   amiri:{ f:'Amiri', w:400, lh:1.85, k:1.04 },
-  ruqaa:{ f:'"Aref Ruqaa"', w:700, lh:1.9, k:.9 }
+  ruqaa:{ f:'"Aref Ruqaa"', w:700, lh:2.15, k:.9 }
 };
 const qFont = (w, s, F) => w + ' ' + s + 'px ' + (F ? F.f + ', ' : '') + '"Noto Naskh Arabic", Amiri, Georgia, serif';
 const qDir = s => { s = String(s); const a = (s.match(/[\u0600-\u06FF]/g) || []).length, l = (s.match(/[A-Za-z]/g) || []).length, f = /[\u0600-\u06FFA-Za-z]/.exec(s); return (a && (a >= .4 * (a + l) || /[\u0600-\u06FF]/.test(f[0]))) ? 'rtl' : l ? 'ltr' : 'rtl'; };
@@ -1668,25 +1668,32 @@ async function quoteRender(cv, o, stale){
   x.fillStyle = T.bg; x.fillRect(0, 0, W, H);
   const z9 = o.fmt === '9:16';
   const zt = z9 ? Math.round(H * .12) : 44, zb = z9 ? Math.round(H * .8) : H - 44;
-  if (T.frame){ x.strokeStyle = T.frame; x.lineWidth = 2; x.strokeRect(40, zt, W - 80, zb - zt); }
+  if (T.frame){ x.strokeStyle = T.frame; x.lineWidth = 3; x.strokeRect(48, zt + 8, W - 96, zb - zt - 16); x.lineWidth = 1; x.strokeRect(60, zt + 20, W - 120, zb - zt - 40); }
   const ct = zt + 52, cb = zb - 52, tw = W - 240;
   x.textAlign = 'center'; x.textBaseline = 'middle';
   /* footer: rule + attribution + watermark, anchored to the bottom of the safe area */
   const FA = qFont(600, 34), FL = qLat(34);
   let al = attr ? mxWrap(x, attr, tw, FA, FL) : [];
   if (al.length > 3){ al = al.slice(0, 3); mxEll(al[2]); }
-  const alh = 56, wmH = o.wm ? 64 : 0, attrH = al.length * alh, footH = (attr ? 70 : 0) + attrH + wmH;
+  const alh = 56, wmH = o.wm ? 64 : 0, attrH = al.length * alh, footH = (attr ? 70 : 0) + attrH + wmH + (o.wm ? 16 : 0);
   const regBot = cb - footH - (footH ? 24 : 0), avail = regBot - ct, orn = 84;
   /* body: shrink until the quote (+ note) fits */
-  let size = Math.round(100 * F.k), ql = [], nl = [], nsz = 0, nh = 0, wide = 0;
+  const marks = /[\u064B-\u0652\u0670]/.test(q), LH = F.lh * (marks ? 1.1 : 1);
+  let size = Math.round((z9 ? 140 : 100) * F.k), ql = [], nl = [], nsz = 0, nh = 0, wide = 0;
   for (;; size -= 2){
     const fa = qFont(F.w, size, F), fl = qLat(size); ql = mxWrap(x, q, tw, fa, fl);
     wide = Math.max.apply(null, ql.map(l => mxW(x, mxRuns(l), fa, fl)));
     nh = 0; nl = [];
     if (note){ nsz = Math.max(26, Math.min(40, Math.round(size * .46))); nl = mxWrap(x, note, tw, qFont(400, nsz), qLat(nsz)); if (nl.length > 3){ nl = nl.slice(0, 3); mxEll(nl[2]); } nh = 44 + nl.length * nsz * 1.75; }
-    if ((orn + ql.length * size * F.lh + nh <= avail && wide <= tw + 2) || size <= 26) break;
+    if ((orn + ql.length * size * LH + nh <= avail && wide <= tw + 2) || size <= 26) break;
   }
-  const lh = size * F.lh, maxL = Math.max(1, Math.floor((avail - orn - nh) / lh));
+  /* balance: the narrowest width that keeps the same line count, so no word hangs alone on the last line */
+  if (ql.length > 1){
+    const fa = qFont(F.w, size, F), fl = qLat(size); let lo = tw * .5, hi = tw, best = ql;
+    for (let k = 0; k < 9; k++){ const mid = (lo + hi) / 2, t = mxWrap(x, q, mid, fa, fl); if (t.length <= ql.length && t.every(l => mxW(x, mxRuns(l), fa, fl) <= mid + 2)){ hi = mid; best = t; } else lo = mid; }
+    ql = best;
+  }
+  const lh = size * LH, maxL = Math.max(1, Math.floor((avail - orn - nh) / lh));
   if (ql.length > maxL){ ql = ql.slice(0, maxL); mxEll(ql[maxL - 1]); }
   const bodyH = orn + ql.length * lh + nh;
   let y = ct + (avail - bodyH) / 2;
@@ -1695,7 +1702,7 @@ async function quoteRender(cv, o, stale){
   ql.forEach((l, i) => mxDraw(x, l, W / 2, y + i * lh + lh / 2, dir, qFont(F.w, size, F), qLat(size))); y += ql.length * lh;
   if (nl.length){ y += 44; x.fillStyle = T.soft; nl.forEach((l, i) => mxDraw(x, l, W / 2, y + i * nsz * 1.75 + nsz * .875, ndir, qFont(400, nsz), qLat(nsz))); }
   let fy = cb;
-  if (o.wm){ x.direction = 'rtl'; x.font = qFont(600, 30); x.fillStyle = T.soft; x.globalAlpha = .75; x.fillText('مكتبتي', W / 2, fy - 22); x.globalAlpha = 1; fy -= wmH; }
+  if (o.wm){ x.direction = 'rtl'; x.font = qFont(700, 30); x.fillStyle = T.acc; const ww = x.measureText('مكتبتي').width; x.fillText('مكتبتي', W / 2, fy - 22); x.fillRect(W / 2 - ww / 2 - 46, fy - 23, 30, 2); x.fillRect(W / 2 + ww / 2 + 16, fy - 23, 30, 2); fy -= wmH + 16; }
   if (attr){
     x.fillStyle = T.soft;
     al.forEach((l, i) => mxDraw(x, l, W / 2, fy - attrH + i * alh + alh / 2, dir, FA, FL));
@@ -1802,7 +1809,7 @@ function quoteModal(a, it){
   const d = prof().qc || {};
   const RK = ['rights', 'rightsNote', 'rights_note'], hasR = RK.some(k => k in it), rnote = RK.map(k => String(it[k] || '').trim()).find(Boolean) || '';
   QE = { a, it, text:String(a.text || '').replace(/\s+/g, ' ').trim(), note:String(a.qnote || ''), tpl:QTPL[d.tpl] ? d.tpl : 'gold', fmt:QFMT[d.fmt] ? d.fmt : '4:5', font:QFONT[d.font] ? d.font : 'naskh',
-    diac:true, wm:hasR ? !rnote : false, tags:'', cap:'', capEdited:false, tok:0, blob:null, xurl:'', src:'user' };
+    diac:true, wm:!rnote, tags:'', cap:'', capEdited:false, tok:0, blob:null, xurl:'', src:'user' };
   const Q = QE; Q.src = Q.base0 = qSrc(a, it, Q.text);
   const seg = (nm, list, cur) => '<div class="seg" data-qs="' + nm + '" role="group">' + list.map(([v, l, st]) => '<button type="button" data-v="' + v + '" aria-pressed="' + (v === cur) + '"' + (st ? ' style="' + st + '"' : '') + '>' + qt(l) + '</button>').join('') + '</div>';
   const tps = '<div class="seg" data-qs="tpl" role="group">' + [['paper', 'ورقي'], ['dark', 'داكن'], ['gold', 'ذهبي على داكن'], ['white', 'أبيض بسيط']].map(([v, l]) =>
