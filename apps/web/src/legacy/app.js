@@ -1611,7 +1611,8 @@ const qWrap = (t, src, dir) => src === 'author' ? (dir === 'rtl' ? '«' + t + '�
 
 /* canvas text with Latin runs: words → script parts; Latin drawn in a regular-weight serif, one baseline per line */
 const qLat = s => '400 ' + s + 'px Amiri, Georgia, serif';
-const LATW = /[A-Za-z\u00C0-\u024F](?:[A-Za-z\u00C0-\u024F0-9'’.\-]*[A-Za-z\u00C0-\u024F0-9])?/g;
+/* a Latin word keeps the punctuation that ends it ('you.' 'Hello,'), so an RTL line does not move the period to the far side of the English run */
+const LATW = /[A-Za-z\u00C0-\u024F](?:[A-Za-z\u00C0-\u024F0-9'’.\-]*[A-Za-z\u00C0-\u024F0-9])?(?:[.,;:!?…)\]"”’]+(?=[»«]*$))?/g;
 function mxParts(w){
   const out = []; let i = 0, m; LATW.lastIndex = 0;
   while ((m = LATW.exec(w))){ if (m.index > i) out.push({ t:w.slice(i, m.index), l:false }); out.push({ t:m[0], l:true }); i = m.index + m[0].length; }
