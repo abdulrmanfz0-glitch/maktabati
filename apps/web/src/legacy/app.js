@@ -2541,10 +2541,13 @@ function copyText(t, msg){
   const fb = () => { const ta = document.createElement('textarea'); ta.value = t; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;top:0;opacity:0'; document.body.appendChild(ta); ta.select(); let done = false; try{ done = document.execCommand('copy'); }catch(e){} ta.remove(); done ? ok() : toast('ما قدرت أنسخ'); };
   if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(t).then(ok, fb); else fb();
 }
+/* A one-tap request (Explain, with no words typed) is written in the UI language, so it must not set the reply language: the quoted passage does. */
+const PRESET_LANG_NOTE = '(طلب جاهز من التطبيق: رد بلغة الفقرة المقتبسة.)';
 function explainCopy(S, it){
   const b = blockOf(it, S.bk); const para = plain(b ? blockText(b) : S.el.innerText);
   const ch = chName(it, bkPos(S.bk)[0]) || it.title;
-  copyText('اشرح لي هالفقرة بكلام بسيط ومثال من الحياة، بدون تلخيص. الكتاب: ' + it.title + '، الفصل: ' + ch + ':\n\n' + para, 'انسخت، الصقه في أي AI');
+  const en = (para.match(/[A-Za-z]/g) || []).length > (para.match(/[\u0600-\u06FF]/g) || []).length;
+  copyText((en ? 'Explain this passage in simple words with a real-life example, without summarizing. Book: ' + it.title + ', chapter: ' + ch + ':\n\n' : 'اشرح لي هالفقرة بكلام بسيط ومثال من الحياة، بدون تلخيص. الكتاب: ' + it.title + '، الفصل: ' + ch + ':\n\n') + para, 'انسخت، الصقه في أي AI');
 }
 
 /* ---------- my highlights page ---------- */
@@ -4134,9 +4137,9 @@ const searchPlanFor = (cfg, manual = false) => {
   return searchPlan({ provider:cfg.provider, model:cfg.model, autoSetting:prof().ai.autoSearch, manual });
 };
 function styleTxt(){
-  const a = prof().ai, L = { msa:'اكتب بالفصحى البسيطة.', gulf:'اكتب باللهجة الخليجية البسيطة.', mirror:'' }, N = { short:'اجعل الرد مختصراً (فقرة أو فقرتين).', normal:'', long:'فصّل الشرح مع أمثلة عند الحاجة.' };
+  const a = prof().ai, L = { msa:'إذا كان الرد بالعربي فاكتبه بالفصحى البسيطة.', gulf:'إذا كان الرد بالعربي فاكتبه باللهجة الخليجية البسيطة.', mirror:'' }, N = { short:'اجعل الرد مختصراً (فقرة أو فقرتين).', normal:'', long:'فصّل الشرح مع أمثلة عند الحاجة.' };
   const s = [L[a.lang], N[a.len]].filter(Boolean).join(' ');
-  return s ? '\n\nتفضيلات القارئ للرد (تُقدَّم على أي تعليمات لغة سابقة): ' + s : '';
+  return s ? '\n\nتفضيلات القارئ للرد (لا تغيّر لغة الرد نفسها): ' + s : '';
 }
 let CH = null, msgRaf = 0, lastHomeConv = null;
 /* one conversation record, two views (panel in the reader, page in the main chat) */
@@ -4519,7 +4522,7 @@ function buildMessages(conv, full, webSearch, noWebLine = true){
   }
   const base = sysText(!!webSearch, noWebLine !== false) + (last.mode && MODES[last.mode] ? '\n\n' + MODES[last.mode].sys : '') + styleTxt();
   const history = ms.slice(-16).map(m => {
-    const row = { role:m.role, content:m.role === 'user' && m.attach ? '<quoted_passage>\n' + m.attach + '\n</quoted_passage>' + (m.attachSrc ? '\n\n<source_text>\n' + m.attachSrc + '\n</source_text>' : '') + '\n\n' + m.content : m.content };
+    const row = { role:m.role, content:m.role === 'user' && m.attach ? '<quoted_passage>\n' + m.attach + '\n</quoted_passage>' + (m.attachSrc ? '\n\n<source_text>\n' + m.attachSrc + '\n</source_text>' : '') + '\n\n' + m.content + (m.preset ? '\n\n' + PRESET_LANG_NOTE : '') : m.content };
     return historyWithServerToolCalls(row, m, cfg.provider);
   });
   const max = Math.max(1, Math.min(8000, Number(cfg.max) || AI_DEFAULTS.maxTokens));
@@ -4533,9 +4536,11 @@ async function chatSend(text, mode){
   C.modelOpen = false;
   text = String(text || '').trim();
   const md0 = mode || C.mode;
+  const preset = !text;
   if (!text) text = mode ? tx(MODES[mode].p) : C.attach ? tx('اشرح لي هالفقرة') : '';
   if (!text) return;
   const um = { role:'user', content:text, t:Date.now() };
+  if (preset) um.preset = true;
   if (md0) um.mode = md0;
   if (C.attach){ um.attach = C.attach.text; um.where = C.attach.where; if (C.attach.bk) um.bk = C.attach.bk; if (C.attach.source) um.attachSrc = C.attach.source; C.attach = null; }
   if (conv.bookId && !conv.anchor){ const bi = itemById(conv.bookId); if (bi) conv.anchor = anchorNow(bi, um.bk); }
