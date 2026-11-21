@@ -2,9 +2,11 @@
 // main bundle stays untouched. Every OCR asset (worker, core wasm, traineddata)
 // is served from our own origin under /ocr/<version>/ — never from a CDN.
 //
-// The transcription is verbatim: no AI, no spelling fixes, no reordering.
-// The only normalization is the clearly-safe kind: whole-text trim and
-// trailing-space removal per line. Line breaks and RTL order are kept.
+// The transcription is verbatim: no AI, no spelling fixes, no word changes.
+// The only normalization is the clearly-safe kind: whole-text trim,
+// trailing-space removal per line, removal of invisible LRM/RLM marks, and
+// putting a line Tesseract emitted in visual order back into reading order
+// (fixBidiLine). Line breaks and every character Tesseract read are kept.
 import { createWorker } from 'tesseract.js';
 
 export const OCR_VERSION = '7.0.0';
@@ -25,9 +27,43 @@ export class OcrError extends Error {
 
 const abortError = () => new OcrError('aborted', 'OCR aborted');
 
+const LRM = '\u200E', RLM = '\u200F';
+const LTR_RUN = /[A-Za-z0-9\u0660-\u0669\u06F0-\u06F9](?:[A-Za-z0-9\u0660-\u0669\u06F0-\u06F9\/.,:'\- ]*[A-Za-z0-9\u0660-\u0669\u06F0-\u06F9])?|[\s\S]/g;
+
+/**
+ * Put one Tesseract line back into logical (reading) order.
+ * Tesseract marks direction runs with LRM/RLM. A normal Arabic line is already
+ * in logical order and only wraps its numbers as LRM…RLM. But when it lays a
+ * line out left-to-right (typically a line holding numbers or brackets, e.g.
+ * '(١) أي : ... (٢) أي : ...' footnotes), it emits the runs in VISUAL order
+ * with each Arabic run wrapped RLM…LRM: the phrases come out last-first. Such a
+ * line is recognised by its first mark being an RLM that opens Arabic text; its
+ * runs are then reversed (Arabic runs keep their own order, numbers and Latin
+ * words stay intact, neutral characters such as brackets are reversed one by
+ * one). The marks themselves are always removed. Nothing else is changed.
+ */
+export function fixBidiLine(line) {
+  const s = String(line == null ? '' : line);
+  const first = s.search(/[\u200E\u200F]/);
+  if (first < 0) return s;
+  const opensArabic = s[first] === RLM && /[\u0600-\u06FF]/.test(s.slice(first + 1).split(/[\u200E\u200F]/)[0]);
+  if (!opensArabic) return s.replace(/[\u200E\u200F]/g, '');
+  const segs = [];
+  let cur = { rtl: false, text: '' };
+  for (const ch of s) {
+    if (ch === RLM || ch === LRM) { segs.push(cur); cur = { rtl: ch === RLM, text: '' }; continue; }
+    cur.text += ch;
+  }
+  segs.push(cur);
+  const out = segs.filter(x => x.text).reverse()
+    .map(x => (x.rtl ? x.text : (x.text.match(LTR_RUN) || []).reverse().join('')))
+    .join('');
+  return out.replace(/[ \t]{2,}/g, ' ').trim();
+}
+
 /** Light, safe normalization only (see the module comment). */
 export function normalizeOcrText(text) {
-  return String(text == null ? '' : text).split('\n').map(l => l.trimEnd()).join('\n').trim();
+  return String(text == null ? '' : text).split('\n').map(l => fixBidiLine(l).trimEnd()).join('\n').trim();
 }
 
 /** Build paragraph-separated text from tesseract's blocks JSON (reading order):
@@ -40,8 +76,8 @@ export function blocksToText(blocks) {
     if (!b || !Array.isArray(b.paragraphs)) continue;
     for (const p of b.paragraphs) {
       const lines = (Array.isArray(p && p.lines) ? p.lines : [])
-        .map(l => String(l && l.text || '').trim()).filter(Boolean);
-      const t = lines.length ? lines.join('\n') : String(p && p.text || '').trim();
+        .map(l => fixBidiLine(String(l && l.text || '')).trim()).filter(Boolean);
+      const t = lines.length ? lines.join('\n') : normalizeOcrText(String(p && p.text || ''));
       if (t) out.push(t);
     }
   }

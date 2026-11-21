@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createOcrEngine, normalizeOcrText, blocksToText, isBlankRGBA, hasImageOps, TESS_PARAMS, OCR_BASE, OCR_VERSION, DEFAULT_IDLE_MS } from '../../apps/web/src/core/ocr-local.js';
+import { createOcrEngine, normalizeOcrText, blocksToText, isBlankRGBA, hasImageOps, TESS_PARAMS, fixBidiLine, OCR_BASE, OCR_VERSION, DEFAULT_IDLE_MS } from '../../apps/web/src/core/ocr-local.js';
 import { createWorker } from 'tesseract.js';
 import { encodePng } from '../../packages/ingest/src/png.js';
 
@@ -239,5 +239,36 @@ describe('tesseract parameters', () => {
     expect(seen).toEqual([TESS_PARAMS]);
     expect(TESS_PARAMS.preserve_interword_spaces).toBe('0');
     await engine.terminate();
+  });
+});
+
+describe('fixBidiLine (Tesseract visual-order lines)', () => {
+  const L = '\u200E', R = '\u200F';
+  it('leaves a plain Arabic line untouched', () => {
+    expect(fixBidiLine('قال رسول الله : من لا يرحم لا يرحم')).toBe('قال رسول الله : من لا يرحم لا يرحم');
+  });
+  it('logical line with an embedded number: only the marks go', () => {
+    expect(fixBidiLine('[ الحج : ' + L + '١' + R + ' ] وقال تعالى')).toBe('[ الحج : ١ ] وقال تعالى');
+    expect(fixBidiLine(L + '٢٢٧' + R + ' - وعن أبي موسى')).toBe('٢٢٧ - وعن أبي موسى');
+  });
+  it('footnote line emitted last-phrase-first is put back in reading order (real Tesseract output)', () => {
+    const raw = '. ' + R + 'أي : لن يدخل النار . (٢) أي : في حفظه' + L + ' )٣(  . ' + R + 'أي : ما لم تؤت الكبائر' + L + ' )١(';
+    expect(fixBidiLine(raw)).toBe('(١) أي : ما لم تؤت الكبائر . (٣) أي : لن يدخل النار . (٢) أي : في حفظه .');
+  });
+  it('numbers with separators and Latin words keep their own order', () => {
+    const raw = R + 'فانظر يا ابن آدم » وفي' + L + ' « : 1/454 ' + R + 'وليس في روايات مسلم' + L + ' )4(';
+    expect(fixBidiLine(raw)).toBe('(4) وليس في روايات مسلم 1/454 : « فانظر يا ابن آدم » وفي');
+    expect(fixBidiLine(R + 'انظر' + L + ' ISBN 977-02 ' + R + 'رقم')).toBe('رقم ISBN 977-02 انظر');
+  });
+  it('a line that only ends in an Arabic run (no closing mark)', () => {
+    expect(fixBidiLine('. » ' + R + 'روايات مسلم « فيدركه فيكبه في نار جهنم')).toBe('روايات مسلم « فيدركه فيكبه في نار جهنم » .');
+  });
+  it('English text with marks (eng model) is never reordered', () => {
+    expect(fixBidiLine('See note ' + L + '12' + R + ' here')).toBe('See note 12 here');
+  });
+  it('normalizeOcrText and blocksToText apply it per line', () => {
+    expect(normalizeOcrText('أ ' + L + '١' + R + ' ب\n' + R + 'ثاني' + L + ' )٢( ')).toBe('أ ١ ب\n(٢) ثاني');
+    const blocks = [{ paragraphs: [{ lines: [{ text: R + 'ثاني' + L + ' )٢(' }, { text: 'سطر' }] }] }];
+    expect(blocksToText(blocks)).toBe('(٢) ثاني\nسطر');
   });
 });
