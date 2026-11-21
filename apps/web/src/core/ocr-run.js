@@ -129,16 +129,24 @@ export function createOcrRunner({ store, engine = { openPdfDoc, ocrPage, setLang
             try {
               const first = await engine.ocrPage(rendered.canvas, { signal });
               if (scriptLetters(first.text) < PROBE_MIN_LETTERS) continue; // blank/cover page: try the next probe page
-              let next = chooseOcrLang(lang, first, null);
+              let next = chooseOcrLang(lang, first, null), kept = next === lang ? first : null;
               if (next === null) {
                 const other = lang === 'eng' ? 'ara' : 'eng';
                 if (engine.setLang) await engine.setLang(other);
                 const second = await engine.ocrPage(rendered.canvas, { signal });
                 next = chooseOcrLang(lang, first, second) || lang;
+                kept = next === lang ? first : second;
               }
               lang = next;
               if (engine.setLang) await engine.setLang(lang); // also switches back after reading with the other model
               book.ocr.lang = lang;
+              // The probe page was read with the chosen model: keep it as that
+              // page's record instead of reading it a second time later.
+              if (kept && !(await store.getOcrPage(scanPageId(bookId, pg)))) {
+                await store.putOcrPageAndBook({ id: scanPageId(bookId, pg), bookId, page: pg, text: kept.text, confidence: kept.confidence, ms: kept.ms, engine: opts.engineTag || ocrEngineTag(lang), status: 'done', at: now() }, bookId, 1);
+                book = await store.getBook(bookId);
+                book.ocr.lang = lang;
+              }
               break;
             } finally {
               if (rendered.canvas) { rendered.canvas.width = 0; rendered.canvas.height = 0; }

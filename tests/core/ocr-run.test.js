@@ -274,6 +274,22 @@ describe('runner: language', () => {
     const probed = engine.calls.filter(c => c.kind === 'render').slice(0, 2).map(c => c.page);
     expect(probed).toEqual([3, 10]); // 15% then 50% of the book
   }, 15000);
+  it('the probe page is kept as its record and not read again', async () => {
+    const db = fakeDb();
+    ensureStores(db, { items: 'id', files: 'id' });
+    ensureOcrPagesStore(db);
+    await putBook(db, book(10, { lang: 'en' }));
+    const { engine } = realisticEngine('ara');
+    const r = await createOcrRunner(deps(db, engine)).run('b1', new Uint8Array(1), { lang: 'eng', autoLang: true });
+    const renders = engine.calls.filter(c => c.kind === 'render').map(c => c.page);
+    expect(renders.filter(p => p === 2).length).toBe(1); // probe page (15% of 10) rendered once
+    expect(renders.length).toBe(10);
+    const recs = await getAllPages(db, 'b1');
+    expect(recs.length).toBe(10);
+    expect(recs.every(x => x.engine.includes('/ara-') && x.text === AR_TEXT)).toBe(true); // the kept reading is the Arabic one
+    expect(r.done).toBe(10);
+    expect((await getBook(db, 'b1')).ocr.done).toBe(10);
+  }, 15000);
   it('chooseOcrLang and probePages rules', () => {
     expect(probePages(0)).toEqual([]);
     expect(probePages(1)).toEqual([1]);
