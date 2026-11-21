@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createOcrEngine, normalizeOcrText, blocksToText, OCR_BASE, OCR_VERSION, DEFAULT_IDLE_MS } from '../../apps/web/src/core/ocr-local.js';
+import { createOcrEngine, normalizeOcrText, blocksToText, isBlankRGBA, hasImageOps, TESS_PARAMS, fixBidiLine, OCR_BASE, OCR_VERSION, DEFAULT_IDLE_MS } from '../../apps/web/src/core/ocr-local.js';
 import { createWorker } from 'tesseract.js';
 import { encodePng } from '../../packages/ingest/src/png.js';
 
@@ -210,4 +210,65 @@ describe('real tesseract (Node worker)', () => {
     expect(typeof r.confidence).toBe('number');
     await engine.terminate();
   }, 120000);
+});
+
+describe('empty-render detection', () => {
+  it('isBlankRGBA: white is blank, one dark pixel is not, near-white noise stays blank', () => {
+    const px = (n, v) => new Uint8ClampedArray(n * 4).fill(v);
+    expect(isBlankRGBA(px(100, 255))).toBe(true);
+    expect(isBlankRGBA(px(100, 252))).toBe(true);
+    const d = px(100, 255); d[40] = 200; expect(isBlankRGBA(d)).toBe(false);
+    const g = px(100, 255); g[41] = 10; expect(isBlankRGBA(g)).toBe(false); // any channel counts
+    expect(isBlankRGBA(new Uint8ClampedArray(0))).toBe(true);
+  });
+  it('hasImageOps finds raster-image operators only', () => {
+    const OPS = { paintImageXObject: 85, paintImageMaskXObject: 83, showText: 44, constructPath: 91 };
+    expect(hasImageOps([44, 91, 85], OPS)).toBe(true);
+    expect(hasImageOps(new Uint32Array([83]), OPS)).toBe(true);
+    expect(hasImageOps([44, 91], OPS)).toBe(false);
+    expect(hasImageOps(null, OPS)).toBe(false);
+    expect(hasImageOps([85], {})).toBe(false);
+  });
+});
+
+describe('tesseract parameters', () => {
+  it('every new worker gets the parameters, with interword-space preservation off (it glues Arabic line-final words)', async () => {
+    const seen = [];
+    const engine = createOcrEngine({ createWorkerFn: async () => ({ setParameters: async p => { seen.push(p); }, recognize: async () => ({ data: { text: 'نص', confidence: 90, blocks: [] } }), terminate: async () => {} }), paths: { workerPath: null, corePath: null, langPath: null } });
+    await engine.ocrPage({});
+    expect(seen).toEqual([TESS_PARAMS]);
+    expect(TESS_PARAMS.preserve_interword_spaces).toBe('0');
+    await engine.terminate();
+  });
+});
+
+describe('fixBidiLine (Tesseract visual-order lines)', () => {
+  const L = '\u200E', R = '\u200F';
+  it('leaves a plain Arabic line untouched', () => {
+    expect(fixBidiLine('قال رسول الله : من لا يرحم لا يرحم')).toBe('قال رسول الله : من لا يرحم لا يرحم');
+  });
+  it('logical line with an embedded number: only the marks go', () => {
+    expect(fixBidiLine('[ الحج : ' + L + '١' + R + ' ] وقال تعالى')).toBe('[ الحج : ١ ] وقال تعالى');
+    expect(fixBidiLine(L + '٢٢٧' + R + ' - وعن أبي موسى')).toBe('٢٢٧ - وعن أبي موسى');
+  });
+  it('footnote line emitted last-phrase-first is put back in reading order (real Tesseract output)', () => {
+    const raw = '. ' + R + 'أي : لن يدخل النار . (٢) أي : في حفظه' + L + ' )٣(  . ' + R + 'أي : ما لم تؤت الكبائر' + L + ' )١(';
+    expect(fixBidiLine(raw)).toBe('(١) أي : ما لم تؤت الكبائر . (٣) أي : لن يدخل النار . (٢) أي : في حفظه .');
+  });
+  it('numbers with separators and Latin words keep their own order', () => {
+    const raw = R + 'فانظر يا ابن آدم » وفي' + L + ' « : 1/454 ' + R + 'وليس في روايات مسلم' + L + ' )4(';
+    expect(fixBidiLine(raw)).toBe('(4) وليس في روايات مسلم 1/454 : « فانظر يا ابن آدم » وفي');
+    expect(fixBidiLine(R + 'انظر' + L + ' ISBN 977-02 ' + R + 'رقم')).toBe('رقم ISBN 977-02 انظر');
+  });
+  it('a line that only ends in an Arabic run (no closing mark)', () => {
+    expect(fixBidiLine('. » ' + R + 'روايات مسلم « فيدركه فيكبه في نار جهنم')).toBe('روايات مسلم « فيدركه فيكبه في نار جهنم » .');
+  });
+  it('English text with marks (eng model) is never reordered', () => {
+    expect(fixBidiLine('See note ' + L + '12' + R + ' here')).toBe('See note 12 here');
+  });
+  it('normalizeOcrText and blocksToText apply it per line', () => {
+    expect(normalizeOcrText('أ ' + L + '١' + R + ' ب\n' + R + 'ثاني' + L + ' )٢( ')).toBe('أ ١ ب\n(٢) ثاني');
+    const blocks = [{ paragraphs: [{ lines: [{ text: R + 'ثاني' + L + ' )٢(' }, { text: 'سطر' }] }] }];
+    expect(blocksToText(blocks)).toBe('(٢) ثاني\nسطر');
+  });
 });

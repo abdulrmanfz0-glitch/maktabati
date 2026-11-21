@@ -116,14 +116,21 @@ function ocrAssetsPlugin() {
   };
 }
 
-// pdf.js decodes JBIG2-compressed images (common in scanned books) with a WASM
-// module loaded from `wasmUrl` + 'jbig2.wasm', so both files are served at a
-// stable un-hashed URL in dev and copied into the web build.
+// pdf.js (v5+) has no built-in decoders for the image codecs scanned books use:
+// JBIG2 (jbig2.wasm), JPEG 2000 / JPX (openjpeg.wasm) and ICC colour profiles
+// (qcms_bg.wasm) are all loaded from `wasmUrl` at render time, each with a JS
+// fallback for browsers without WASM. A missing file is NOT an error in pdf.js:
+// it logs a warning and paints the image as nothing, so a scan whose pages use a
+// missing codec renders as blank pages. Every decoder is therefore served at a
+// stable un-hashed URL in dev and copied into the web build (fetched only when a
+// page actually needs it).
 const pdfjsDir = require2('node:path').dirname(require2.resolve('pdfjs-dist/package.json'));
-const PDFJS_WASM_FILES = [
-  ['jbig2.wasm', require2('node:path').join(pdfjsDir, 'wasm', 'jbig2.wasm')],
-  ['jbig2_nowasm_fallback.js', require2('node:path').join(pdfjsDir, 'wasm', 'jbig2_nowasm_fallback.js')]
+const PDFJS_WASM_NAMES = [
+  'jbig2.wasm', 'jbig2_nowasm_fallback.js',
+  'openjpeg.wasm', 'openjpeg_nowasm_fallback.js',
+  'qcms_bg.wasm'
 ];
+const PDFJS_WASM_FILES = PDFJS_WASM_NAMES.map(n => [n, require2('node:path').join(pdfjsDir, 'wasm', n)]);
 function pdfjsWasmPlugin() {
   let webOut = null;
   return {

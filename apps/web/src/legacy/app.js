@@ -1405,7 +1405,7 @@ async function startOcr(it, opts = {}){
     const isCloud = !!(it.ocr && it.ocr.mode === 'cloud');
     const deps = { store: makeOcrStore(idb), locks: (typeof navigator.locks !== 'undefined' && navigator.locks) ? navigator.locks : null };
     if (isCloud) deps.engine = await cloudOcrEngine();
-    await m.runBookOcr(deps, it.id, bytes, {
+    const res = await m.runBookOcr(deps, it.id, bytes, {
       signal: ctrl.signal,
       onlyFailed: !!opts.onlyFailed,
       lang: ocrLangFor(it),
@@ -1419,7 +1419,9 @@ async function startOcr(it, opts = {}){
         if (cur.view === 'lib' || cur.view === 'book') refreshView();
       }
     });
-    toast('انتهت قراءة النص.');
+    /* a stopped run is not a finished one: say why it stopped (pause by the user needs no toast) */
+    if (!(res && res.stopped)) toast('انتهت قراءة النص.');
+    else if (res.reason !== 'cancel') toast(tx(OCR_STOP_REASON[res.reason] || 'متوقف مؤقتًا'));
   } catch (e) {
     const aborted = e && (e.name === 'AbortError' || (e.code && e.code === 'aborted'));
     if (!aborted) toast(e && e.code === 'busy' ? 'كتاب آخر يعالج الكتاب نفسه الآن.' : 'ما قدرت أقرأ النص: ' + ((e && e.code) || 'خطأ غير معروف.'));
@@ -5674,6 +5676,7 @@ async function autoCover(it, file){
     const doc = await openPdfDoc(new Uint8Array(await file.arrayBuffer()));
     let r;
     try{ r = await doc.renderPage(1, { dpi:72, maxPixels:600000 }); } finally { await doc.close().catch(() => {}); }
+    if (r.blank) return; /* an empty first page is no cover */
     const w = Math.min(400, r.width), h = Math.round(r.height * w / r.width);
     if (!w || !h || h / w > 2.2 || h / w < .9) return; /* not a portrait page: keep the drawn cover */
     const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
