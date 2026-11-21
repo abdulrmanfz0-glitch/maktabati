@@ -128,6 +128,7 @@ export function classifyGeminiSearchError({ status = 0, body = '', retryAfter = 
   const retryAfterMs = retryAfterFromHeader(retryAfter, now) ?? retryAfterFromBody(text);
   let kind = 'other';
   if ([400, 402, 403, 429].includes(code) && GROUNDING_WORD.test(text) && GROUNDING_REASON.test(text)) kind = 'grounding';
+  else if (QUOTA_EXHAUSTED.test(text) && /limit:\s*0\b|"quotaValue"\s*:\s*"0"/i.test(text)) kind = 'grounding';
   else if (QUOTA_EXHAUSTED.test(text)) kind = 'quota';
   else if (code === 429) kind = 'rate-limit';
   return { kind, status:code, retryAfterMs };

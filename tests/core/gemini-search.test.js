@@ -221,3 +221,10 @@ describe('search failure diagnostics', () => {
       .toEqual({ kind:'other', status:400, retryAfterMs:null });
   });
 });
+
+describe('free keys without search quota', () => {
+  it('treats a zero search quota as a key that cannot search', () => {
+    const body = JSON.stringify({ error:{ code:429, message:'You exceeded your current quota. Quota exceeded for metric: generate_content_free_tier_requests, limit: 0, model: gemini-3-flash', status:'RESOURCE_EXHAUSTED' } });
+    expect(classifyGeminiSearchError({ status:429, body }).kind).toBe('grounding');
+  });
+});

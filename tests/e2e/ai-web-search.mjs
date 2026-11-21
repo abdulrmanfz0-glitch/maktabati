@@ -266,14 +266,7 @@ try {
   assert(!fake.stats.last.tools, 'DeepSeek unsupported model was not remembered');
   ok('DeepSeek tool 400', 'one no-tool retry + session memory');
 
-  // 6) Gemini paid-key error stays.
   await choosePin('c2', 'gemini-3.8-flash');
-  fake.control.searchGroundingBlocked = true;
-  await sendAndWait('سؤال مدفوع', 'مفتاح Gemini مدفوع');
-  await clickAndWait('#v-home [data-nosearch]', 'تم');
-  fake.control.searchGroundingBlocked = false;
-  ok('Gemini grounding error', 'paid-key copy + no-search retry');
-
   // 6b) Gemini tool 400 retries once on the OpenAI path and is remembered.
   fake.control.geminiTool400 = true;
   const beforeGeminiTool400 = fake.stats.searchRequests;
@@ -285,6 +278,19 @@ try {
   await sendAndWait('سؤال بعد الحفظ Gemini', 'تم');
   assert(fake.stats.searchRequests === beforeGeminiMemory, 'Gemini unsupported model was not remembered');
   ok('Gemini tool 400', 'one no-tool retry + session memory');
+
+  // 6) A Gemini key that can't search (free tier) answers without search, says so once,
+  //    and stops trying search for the rest of the session. Runs after 6b: it marks the model unsupported.
+  await choosePin('c2', 'gemini-3.1-flash-lite');
+  fake.control.searchGroundingBlocked = true;
+  await sendAndWait('سؤال مدفوع', 'تم');
+  const note = await ev(`(() => { const a = [...document.querySelectorAll('#v-home .cm-a')]; const l = a[a.length - 1]; return l ? l.textContent : ''; })()`);
+  assert(note.includes('جاوبت بدون بحث'), 'grounding fallback note missing: ' + note.slice(0, 120));
+  const beforeGroundingMemory = fake.stats.searchRequests;
+  await sendAndWait('سؤال بعد مفتاح مجاني', 'تم');
+  assert(fake.stats.searchRequests === beforeGroundingMemory, 'grounding failure was not remembered');
+  fake.control.searchGroundingBlocked = false;
+  ok('Gemini grounding error', 'automatic no-search answer + note + session memory');
 
   // 8) Diagnostics and request origins.
   const warns = await ev('window.__warns');
