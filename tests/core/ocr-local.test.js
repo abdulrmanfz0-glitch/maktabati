@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createOcrEngine, normalizeOcrText, blocksToText, isBlankRGBA, hasImageOps, OCR_BASE, OCR_VERSION, DEFAULT_IDLE_MS } from '../../apps/web/src/core/ocr-local.js';
+import { createOcrEngine, normalizeOcrText, blocksToText, isBlankRGBA, hasImageOps, TESS_PARAMS, OCR_BASE, OCR_VERSION, DEFAULT_IDLE_MS } from '../../apps/web/src/core/ocr-local.js';
 import { createWorker } from 'tesseract.js';
 import { encodePng } from '../../packages/ingest/src/png.js';
 
@@ -228,5 +228,16 @@ describe('empty-render detection', () => {
     expect(hasImageOps([44, 91], OPS)).toBe(false);
     expect(hasImageOps(null, OPS)).toBe(false);
     expect(hasImageOps([85], {})).toBe(false);
+  });
+});
+
+describe('tesseract parameters', () => {
+  it('every new worker gets the parameters, with interword-space preservation off (it glues Arabic line-final words)', async () => {
+    const seen = [];
+    const engine = createOcrEngine({ createWorkerFn: async () => ({ setParameters: async p => { seen.push(p); }, recognize: async () => ({ data: { text: 'نص', confidence: 90, blocks: [] } }), terminate: async () => {} }), paths: { workerPath: null, corePath: null, langPath: null } });
+    await engine.ocrPage({});
+    expect(seen).toEqual([TESS_PARAMS]);
+    expect(TESS_PARAMS.preserve_interword_spaces).toBe('0');
+    await engine.terminate();
   });
 });

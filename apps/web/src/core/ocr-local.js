@@ -15,6 +15,9 @@ export const DEFAULT_RENDER_DPI = 300;
 /** A4 at 300 DPI (~8.7 MP): the pixel cap that keeps phones from running out of memory. */
 export const MAX_RENDER_PIXELS = 8.7e6;
 
+/** Tesseract parameters set on every worker (see ensureWorker). */
+export const TESS_PARAMS = Object.freeze({ preserve_interword_spaces: '0' });
+
 /** Typed OCR errors: code is 'assets' | 'oom' | 'aborted' | 'engine' | 'decode'. */
 export class OcrError extends Error {
   constructor(code, message) { super(message); this.name = 'OcrError'; this.code = code; }
@@ -118,7 +121,12 @@ export function createOcrEngine({ createWorkerFn = createWorker, idleMs = DEFAUL
           if (paths.langPath !== null) opts.langPath = paths.langPath || OCR_BASE;
           if (paths.cacheMethod !== null && paths.cacheMethod !== undefined) opts.cacheMethod = paths.cacheMethod;
           const w = await createWorkerFn(currentLang, 1, opts);
-          await w.setParameters({ preserve_interword_spaces: '1' });
+          // preserve_interword_spaces must stay off for Arabic: with it on,
+          // Tesseract drops the space before the last (leftmost) word of most
+          // RTL lines, gluing two words together ("الفهملأنه"). Measured on the
+          // scanned-book benchmark: word error 45.8% -> 40.8%, modern print
+          // 20% -> 7%, no speed cost.
+          await w.setParameters(TESS_PARAMS);
           if (gen !== generation) { // aborted while the worker was starting: discard it
             creating = null;
             try { await w.terminate(); } catch (e) {}
