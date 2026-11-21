@@ -1,7 +1,7 @@
 // PR4 OCR runner unit tests: resume, idempotency, locking, retries, error stops,
 // oom scale-down, quota pause, deterministic merge, delete, and the v2->v3 upgrade.
 import { describe, it, expect } from 'vitest';
-import { createOcrRunner, mergeOcrBook, OcrRunError, chooseOcrLang, probePages } from '../../apps/web/src/core/ocr-run.js';
+import { createOcrRunner, mergeOcrBook, OcrRunError, chooseOcrLang, probePages, DECODE_FAILS_TO_STOP } from '../../apps/web/src/core/ocr-run.js';
 import { scanPageId, scanBookFields } from '../../apps/web/src/core/scan-save.js';
 import { ensureStores } from '../../apps/web/src/core/scan-save.js';
 import { ensureOcrPagesStore, putOcrPageAndBook, delOcrPagesForBook, getOcrPage, getAllPages, putBook, getBook } from '../../apps/web/src/core/ocr-store.js';
@@ -399,5 +399,47 @@ describe('storage and upgrade', () => {
     db.createObjectStore = (n, spec) => { created.push(n); orig(n, spec); };
     ensureOcrPagesStore(db);
     expect(created).toEqual([]); // no recreation
+  }, 15000);
+});
+
+describe('runner: undecodable and empty pages', () => {
+  const setup = async pages => { const db = fakeDb(); ensureStores(db, { items: 'id', files: 'id' }); ensureOcrPagesStore(db); await putBook(db, book(pages)); return db; };
+  it('stops early with reason assets when page images never decode', async () => {
+    const db = await setup(50);
+    const engine = fakeEngine({ fail: kind => (kind === 'render' ? { code: 'decode', msg: 'page image could not be decoded' } : null) });
+    const r = await createOcrRunner(deps(db, engine)).run('b1', new Uint8Array(1));
+    expect(r).toMatchObject({ stopped: true, reason: 'assets' });
+    const recs = await getAllPages(db, 'b1');
+    expect(recs.length).toBe(DECODE_FAILS_TO_STOP);
+    expect(recs.every(x => x.status === 'failed' && x.error === 'decode')).toBe(true);
+    expect(engine.calls.filter(c => c.kind === 'render').length).toBe(DECODE_FAILS_TO_STOP); // no retries of a deterministic failure
+    const b = await getBook(db, 'b1');
+    expect(b.ocr).toMatchObject({ status: 'paused', reason: 'assets' });
+  }, 15000);
+  it('one broken page image among readable pages fails that page only', async () => {
+    const db = await setup(6);
+    const engine = fakeEngine({ fail: (kind, page) => (kind === 'render' && page === 4 ? { code: 'decode' } : null) });
+    const r = await createOcrRunner(deps(db, engine)).run('b1', new Uint8Array(1));
+    expect(r.stopped).toBe(false);
+    const p4 = await getOcrPage(db, scanPageId('b1', 4));
+    expect(p4).toMatchObject({ status: 'failed', error: 'decode' });
+    expect((await getAllPages(db, 'b1')).filter(x => x.status === 'done').length).toBe(5);
+  }, 15000);
+  it('blank leading pages do not hide an all-pages decode failure', async () => {
+    const db = await setup(40);
+    const engine = fakeEngine({ fail: (kind, page) => (kind === 'render' && page > 2 ? { code: 'decode' } : null) });
+    const render = engine.renderPage;
+    engine.renderPage = async (b, page, o) => { const r = await render(b, page, o); if (page <= 2) r.blank = true; return r; };
+    const r = await createOcrRunner(deps(db, engine)).run('b1', new Uint8Array(1));
+    expect(r).toMatchObject({ stopped: true, reason: 'assets' });
+  }, 15000);
+  it('an empty page is recorded done without running OCR', async () => {
+    const db = await setup(2);
+    const engine = fakeEngine();
+    const render = engine.renderPage;
+    engine.renderPage = async (b, page, o) => { const r = await render(b, page, o); if (page === 1) r.blank = true; return r; };
+    await createOcrRunner(deps(db, engine)).run('b1', new Uint8Array(1));
+    expect(engine.calls.filter(c => c.kind === 'ocr').length).toBe(1);
+    expect(await getOcrPage(db, scanPageId('b1', 1))).toMatchObject({ status: 'done', text: '', blank: true });
   }, 15000);
 });

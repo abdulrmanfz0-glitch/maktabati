@@ -11,6 +11,8 @@ export const PROBE_TRUST_CONFIDENCE = 60;
 /** The other model must beat the chosen one by this margin to switch. */
 export const PROBE_SWITCH_MARGIN = 8;
 const PROBE_MIN_LETTERS = 30;
+/** Undecodable pages in a row, with nothing read yet in this run, before the run stops. */
+export const DECODE_FAILS_TO_STOP = 3;
 const scriptLetters = t => (String(t || '').match(/[A-Za-z\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/g) || []).length;
 
 /** Probe pages: body pages rather than page 1 (usually a cover, a blank or a library stamp). */
@@ -104,7 +106,7 @@ export function createOcrRunner({ store, engine = { openPdfDoc, ocrPage, setLang
     book.ocr.status = 'running'; delete book.ocr.reason;
     await store.putBook(book);
     const total = book.ocr.pages || 0;
-    let doneCount = 0;
+    let doneCount = 0, readOk = 0, decodeFails = 0;
 
     // One PDF document per run (released at the end or on abort).
     let doc = null;
@@ -167,11 +169,17 @@ export function createOcrRunner({ store, engine = { openPdfDoc, ocrPage, setLang
             rendered = doc
               ? await doc.renderPage(p, { dpi: dpi * scale, signal })
               : await engine.renderPage(pdfBytes, p, { dpi: dpi * scale, signal });
-            const r = await engine.ocrPage(rendered.canvas, { signal });
+            // An empty page (no ink, no images) needs no OCR.
+            const r = rendered.blank ? { text: '', confidence: 0, ms: 0 } : await engine.ocrPage(rendered.canvas, { signal });
             rec = { id, bookId, page: p, text: r.text, confidence: r.confidence, ms: r.ms, engine: opts.engineTag || ocrEngineTag(lang), status: 'done', at: now() };
+            if (rendered.blank) rec.blank = true;
           } catch (e) {
             if (signal && signal.aborted) { await pause(bookId, 'cancel'); return { stopped: true, reason: 'cancel', done: doneCount, total }; }
             if (e && e.code === 'assets') { await pause(bookId, 'assets'); return { stopped: true, reason: 'assets', done: doneCount, total }; }
+            if (e && e.code === 'decode') { // deterministic: retrying the same render cannot help
+              rec = { id, bookId, page: p, text: '', confidence: 0, ms: 0, engine: opts.engineTag || ocrEngineTag(lang), status: 'failed', error: 'decode', at: now() };
+              break;
+            }
             if (e && e.code === 'oom' && scale === 1) { scale = 0.75; continue; } // retry once at a lower render scale
             if (attempt === 3) rec = { id, bookId, page: p, text: '', confidence: 0, ms: 0, engine: opts.engineTag || ocrEngineTag(lang), status: 'failed', error: (e && e.code) || 'engine', at: now() };
           } finally {
@@ -187,6 +195,14 @@ export function createOcrRunner({ store, engine = { openPdfDoc, ocrPage, setLang
           throw e;
         }
         if (onProgress) onProgress({ page: p, done: doneCount, total });
+        // Page images that never decode on this device (decoder files missing or
+        // blocked) fail every page alike: stop early and say so, instead of
+        // grinding through the whole book.
+        if (rec.status === 'done' && !rec.blank) readOk++;
+        else if (rec.error === 'decode' && ++decodeFails >= DECODE_FAILS_TO_STOP && !readOk) {
+          await pause(bookId, 'assets');
+          return { stopped: true, reason: 'assets', done: doneCount, total };
+        }
       }
 
       book = await store.getBook(bookId);

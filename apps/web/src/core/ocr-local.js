@@ -15,7 +15,7 @@ export const DEFAULT_RENDER_DPI = 300;
 /** A4 at 300 DPI (~8.7 MP): the pixel cap that keeps phones from running out of memory. */
 export const MAX_RENDER_PIXELS = 8.7e6;
 
-/** Typed OCR errors: code is 'assets' | 'oom' | 'aborted' | 'engine'. */
+/** Typed OCR errors: code is 'assets' | 'oom' | 'aborted' | 'engine' | 'decode'. */
 export class OcrError extends Error {
   constructor(code, message) { super(message); this.name = 'OcrError'; this.code = code; }
 }
@@ -43,6 +43,33 @@ export function blocksToText(blocks) {
     }
   }
   return out.length ? normalizeOcrText(out.join('\n\n')) : null;
+}
+
+/** Darkest-pixel test on an RGBA buffer: true when no pixel is darker than `threshold`. */
+export function isBlankRGBA(data, threshold = 250) {
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i] < threshold || data[i + 1] < threshold || data[i + 2] < threshold) return false;
+  }
+  return true;
+}
+
+/** pdf.js operators that paint a raster image (what a scanned page is made of). */
+const IMAGE_OP_NAMES = ['paintImageXObject', 'paintInlineImageXObject', 'paintImageMaskXObject', 'paintImageXObjectRepeat',
+  'paintInlineImageXObjectGroup', 'paintImageMaskXObjectGroup', 'paintImageMaskXObjectRepeat', 'paintSolidColorImageMask'];
+export function hasImageOps(fnArray, OPS) {
+  const want = new Set(IMAGE_OP_NAMES.map(n => OPS && OPS[n]).filter(v => typeof v === 'number'));
+  return Array.from(fnArray || []).some(f => want.has(f));
+}
+
+/** Downscaled copy of the rendered page, read back once to tell an empty render. */
+function renderedBlank(canvas) {
+  const w = Math.min(256, canvas.width), h = Math.max(1, Math.round(canvas.height * w / Math.max(1, canvas.width)));
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const x = c.getContext('2d', { willReadFrequently: true });
+  x.drawImage(canvas, 0, 0, w, h);
+  const blank = isBlankRGBA(x.getImageData(0, 0, w, h).data);
+  c.width = 0; c.height = 0;
+  return blank;
 }
 
 function mapError(e) {
@@ -154,7 +181,7 @@ export function createOcrEngine({ createWorkerFn = createWorker, idleMs = DEFAUL
    * @returns {Promise<{ renderPage:(pageIndex, opts)=>Promise<{canvas,width,height,scale}>, close:()=>Promise<void> }>}
    */
   async function openPdfDoc(pdfBytes) {
-    const [{ getDocument, GlobalWorkerOptions }, workerUrl] = await Promise.all([
+    const [{ getDocument, GlobalWorkerOptions, OPS }, workerUrl] = await Promise.all([
       import('pdfjs-dist/legacy/build/pdf.mjs'),
       import('pdfjs-dist/legacy/build/pdf.worker.mjs?url').then(m => m.default)
     ]);
@@ -180,10 +207,21 @@ export function createOcrEngine({ createWorkerFn = createWorker, idleMs = DEFAUL
         if (signal) signal.addEventListener('abort', () => { try { task.cancel(new DOMException('Aborted', 'AbortError')); } catch (e) {} }, { once: true });
         await task.promise;
         if (signal && signal.aborted) throw abortError();
+        // pdf.js paints an image it cannot decode (missing codec file, broken
+        // stream) as nothing and only logs a warning. An all-white render of a
+        // page that draws images is that case: report it instead of OCRing a
+        // blank canvas and calling the page done. A truly empty page is flagged
+        // `blank` so the caller can skip OCR for it.
+        if (renderedBlank(canvas)) {
+          const ops = await page.getOperatorList();
+          if (hasImageOps(ops && ops.fnArray, OPS)) { canvas.width = 0; canvas.height = 0; throw new OcrError('decode', 'page image could not be decoded'); }
+          return { canvas, width: canvas.width, height: canvas.height, scale: s, blank: true };
+        }
         return { canvas, width: canvas.width, height: canvas.height, scale: s };
       } catch (e) {
         if (signal && signal.aborted) throw abortError();
         if (e && e.name === 'RenderingCancelledException') throw abortError();
+        if (e && e.name === 'OcrError') throw e;
         throw mapError(e);
       } finally {
         try { if (page) page.cleanup(); } catch (e) {}

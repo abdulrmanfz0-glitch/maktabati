@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createOcrEngine, normalizeOcrText, blocksToText, OCR_BASE, OCR_VERSION, DEFAULT_IDLE_MS } from '../../apps/web/src/core/ocr-local.js';
+import { createOcrEngine, normalizeOcrText, blocksToText, isBlankRGBA, hasImageOps, OCR_BASE, OCR_VERSION, DEFAULT_IDLE_MS } from '../../apps/web/src/core/ocr-local.js';
 import { createWorker } from 'tesseract.js';
 import { encodePng } from '../../packages/ingest/src/png.js';
 
@@ -210,4 +210,23 @@ describe('real tesseract (Node worker)', () => {
     expect(typeof r.confidence).toBe('number');
     await engine.terminate();
   }, 120000);
+});
+
+describe('empty-render detection', () => {
+  it('isBlankRGBA: white is blank, one dark pixel is not, near-white noise stays blank', () => {
+    const px = (n, v) => new Uint8ClampedArray(n * 4).fill(v);
+    expect(isBlankRGBA(px(100, 255))).toBe(true);
+    expect(isBlankRGBA(px(100, 252))).toBe(true);
+    const d = px(100, 255); d[40] = 200; expect(isBlankRGBA(d)).toBe(false);
+    const g = px(100, 255); g[41] = 10; expect(isBlankRGBA(g)).toBe(false); // any channel counts
+    expect(isBlankRGBA(new Uint8ClampedArray(0))).toBe(true);
+  });
+  it('hasImageOps finds raster-image operators only', () => {
+    const OPS = { paintImageXObject: 85, paintImageMaskXObject: 83, showText: 44, constructPath: 91 };
+    expect(hasImageOps([44, 91, 85], OPS)).toBe(true);
+    expect(hasImageOps(new Uint32Array([83]), OPS)).toBe(true);
+    expect(hasImageOps([44, 91], OPS)).toBe(false);
+    expect(hasImageOps(null, OPS)).toBe(false);
+    expect(hasImageOps([85], {})).toBe(false);
+  });
 });
