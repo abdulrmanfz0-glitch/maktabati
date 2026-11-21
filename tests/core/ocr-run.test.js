@@ -1,7 +1,7 @@
 // PR4 OCR runner unit tests: resume, idempotency, locking, retries, error stops,
 // oom scale-down, quota pause, deterministic merge, delete, and the v2->v3 upgrade.
 import { describe, it, expect } from 'vitest';
-import { createOcrRunner, mergeOcrBook, OcrRunError } from '../../apps/web/src/core/ocr-run.js';
+import { createOcrRunner, mergeOcrBook, OcrRunError, chooseOcrLang, probePages } from '../../apps/web/src/core/ocr-run.js';
 import { scanPageId, scanBookFields } from '../../apps/web/src/core/scan-save.js';
 import { ensureStores } from '../../apps/web/src/core/scan-save.js';
 import { ensureOcrPagesStore, putOcrPageAndBook, delOcrPagesForBook, getOcrPage, getAllPages, putBook, getBook } from '../../apps/web/src/core/ocr-store.js';
@@ -204,6 +204,87 @@ describe('runner: language', () => {
     const recs = await getAllPages(db, 'b1');
     expect(recs.map(r => r.engine)).toEqual(['tesseract.js-7.0.0/eng-fast', 'tesseract.js-7.0.0/eng-fast']);
   }, 15000);
+  // Real Tesseract models only ever emit their own script: on an Arabic page the
+  // English model returns Latin garbage at low confidence and vice versa.
+  const AR_TEXT = 'قال رسول الله صلى الله عليه وسلم المؤمن للمؤمن كالبنيان يشد بعضه بعضا';
+  const EN_GARBAGE = 'Se EP all Ble ple Se dls Jy DY etl Spel gill eal tle ce gb oda';
+  const realisticEngine = (pageScript, conf = { ara: 68, eng: 30 }) => {
+    const engine = fakeEngine(); const langs = []; let cur = null;
+    engine.setLang = async l => { langs.push(l); cur = l; };
+    engine.ocrPage = async () => (cur === 'ara'
+      ? { text: pageScript === 'ara' ? AR_TEXT : 'عطنا 11755 ر5ع 122 عطنا عطنا عطنا عطنا عطنا عطنا', confidence: conf.ara, ms: 5 }
+      : { text: pageScript === 'eng' ? 'It was the best of times, it was the worst of times.' : EN_GARBAGE, confidence: conf.eng, ms: 5 });
+    return { engine, langs, cur: () => cur };
+  };
+  it('autoLang corrects a wrong English guess on an Arabic scan (Latin file name)', async () => {
+    const db = fakeDb();
+    ensureStores(db, { items: 'id', files: 'id' });
+    ensureOcrPagesStore(db);
+    await putBook(db, book(4, { lang: 'en' }));
+    const { engine, langs } = realisticEngine('ara');
+    await createOcrRunner(deps(db, engine)).run('b1', new Uint8Array(1), { lang: 'eng', autoLang: true });
+    expect(langs[0]).toBe('eng');
+    expect(langs[langs.length - 1]).toBe('ara');
+    const recs = await getAllPages(db, 'b1');
+    expect(recs.every(r => r.engine === 'tesseract.js-7.0.0/ara-fast' && r.text === AR_TEXT)).toBe(true);
+    const b = await getBook(db, 'b1');
+    expect(b.ocr.lang).toBe('ara');
+    expect(b.lang).toBe('ar'); // reader direction follows the OCR language
+  }, 15000);
+  it('autoLang keeps Arabic on a hard Arabic page (low confidence in both models)', async () => {
+    const db = fakeDb();
+    ensureStores(db, { items: 'id', files: 'id' });
+    ensureOcrPagesStore(db);
+    await putBook(db, book(3));
+    const { engine, langs } = realisticEngine('ara', { ara: 44, eng: 31 });
+    await createOcrRunner(deps(db, engine)).run('b1', new Uint8Array(1), { lang: 'ara', autoLang: true });
+    expect(langs[langs.length - 1]).toBe('ara');
+    expect((await getAllPages(db, 'b1')).every(r => r.engine.includes('/ara-'))).toBe(true);
+  }, 15000);
+  it('autoLang keeps a confident reading without trying the other model', async () => {
+    const db = fakeDb();
+    ensureStores(db, { items: 'id', files: 'id' });
+    ensureOcrPagesStore(db);
+    await putBook(db, book(3));
+    const { engine, langs } = realisticEngine('ara');
+    await createOcrRunner(deps(db, engine)).run('b1', new Uint8Array(1), { lang: 'ara', autoLang: true });
+    expect(langs.includes('eng')).toBe(false);
+  }, 15000);
+  it('a resumed run keeps the language the probe chose, even if the book still says English', async () => {
+    const db = fakeDb();
+    ensureStores(db, { items: 'id', files: 'id' });
+    ensureOcrPagesStore(db);
+    await putBook(db, book(3, { lang: 'en', ocr: Object.assign(scanBookFields(3).ocr, { lang: 'ara', done: 1, status: 'paused' }) }));
+    await putOcrPageAndBook(db, rec(1), 'b1', 1);
+    const { engine, langs } = realisticEngine('ara');
+    await createOcrRunner(deps(db, engine)).run('b1', new Uint8Array(1), { lang: 'eng', autoLang: true });
+    expect(langs).toEqual(['eng', 'ara']); // no probe: straight to the stored language
+    expect((await getAllPages(db, 'b1')).every(r => r.engine.includes('/ara-'))).toBe(true);
+  }, 15000);
+  it('probe skips blank probe pages', async () => {
+    const db = fakeDb();
+    ensureStores(db, { items: 'id', files: 'id' });
+    ensureOcrPagesStore(db);
+    await putBook(db, book(20, { lang: 'en' }));
+    const { engine, langs } = realisticEngine('ara');
+    const real = engine.ocrPage; let n = 0;
+    engine.ocrPage = async (c, o) => (++n === 1 ? { text: '', confidence: 0, ms: 1 } : real(c, o));
+    await createOcrRunner(deps(db, engine)).run('b1', new Uint8Array(1), { lang: 'eng', autoLang: true });
+    expect(langs[langs.length - 1]).toBe('ara');
+    const probed = engine.calls.filter(c => c.kind === 'render').slice(0, 2).map(c => c.page);
+    expect(probed).toEqual([3, 10]); // 15% then 50% of the book
+  }, 15000);
+  it('chooseOcrLang and probePages rules', () => {
+    expect(probePages(0)).toEqual([]);
+    expect(probePages(1)).toEqual([1]);
+    expect(probePages(5)).toEqual([1, 3]);
+    expect(probePages(678)).toEqual([102, 339, 1]);
+    expect(chooseOcrLang('ara', { text: AR_TEXT, confidence: 75 }, null)).toBe('ara');
+    expect(chooseOcrLang('ara', { text: AR_TEXT, confidence: 40 }, null)).toBe(null); // needs the other reading
+    expect(chooseOcrLang('eng', { text: EN_GARBAGE, confidence: 30 }, { text: AR_TEXT, confidence: 68 })).toBe('ara');
+    expect(chooseOcrLang('eng', { text: EN_GARBAGE, confidence: 30 }, { text: AR_TEXT, confidence: 35 })).toBe('eng'); // within margin: keep
+    expect(chooseOcrLang('ara', { text: 'This is clearly English text read by some model here.', confidence: 80 }, null)).toBe('eng');
+  });
   it('uses a custom engineTag when provided', async () => {
     const db = fakeDb();
     ensureStores(db, { items: 'id', files: 'id' });

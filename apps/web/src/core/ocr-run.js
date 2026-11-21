@@ -6,6 +6,39 @@ import { scanPageId } from './scan-save.js';
 import { ocrEngineTag, OCR_FAILED_LINE, detectTextScript } from './ocr-store.js';
 import { ocrPage, openPdfDoc, setOcrLang } from './ocr-local.js';
 
+/** Below this confidence the chosen model's reading is double-checked with the other model. */
+export const PROBE_TRUST_CONFIDENCE = 60;
+/** The other model must beat the chosen one by this margin to switch. */
+export const PROBE_SWITCH_MARGIN = 8;
+const PROBE_MIN_LETTERS = 30;
+const scriptLetters = t => (String(t || '').match(/[A-Za-z\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/g) || []).length;
+
+/** Probe pages: body pages rather than page 1 (usually a cover, a blank or a library stamp). */
+export function probePages(total) {
+  const n = Math.max(0, Math.floor(total || 0));
+  if (!n) return [];
+  const out = [];
+  for (const f of [0.15, 0.5]) { const p = Math.min(n, Math.max(1, Math.round(n * f))); if (!out.includes(p)) out.push(p); }
+  if (!out.includes(1)) out.push(1);
+  return out;
+}
+
+/**
+ * Decide the OCR language from a probe page.
+ * first: the chosen model's result; second: the other model's result on the same page (or null).
+ * Returns 'ara' | 'eng', or null when `second` is needed and was not given.
+ */
+export function chooseOcrLang(lang, first, second) {
+  const other = lang === 'eng' ? 'ara' : 'eng';
+  const guess = detectTextScript(first && first.text);
+  if (guess && guess !== lang) return guess; // the chosen model itself read the other script
+  if ((first && first.confidence || 0) >= PROBE_TRUST_CONFIDENCE) return lang;
+  if (!second) return null;
+  const g2 = detectTextScript(second.text);
+  if (g2 === other && (second.confidence || 0) >= (first.confidence || 0) + PROBE_SWITCH_MARGIN) return other;
+  return lang;
+}
+
 export class OcrRunError extends Error {
   constructor(code, message) { super(message); this.name = 'OcrRunError'; this.code = code; }
 }
@@ -32,6 +65,10 @@ export function mergeOcrBook(book, records) {
     sections.push({ title: 'صفحة ' + p, blocks });
   }
   const out = Object.assign({}, book, { chapters: [{ title: book.title || 'كتاب ممسوح ضوئيًا', sections }] });
+  // A scan's language is first guessed from its title (often a Latin file name);
+  // once the probe decided the OCR language, the reader's direction follows it.
+  if (book.ocr && book.ocr.lang === 'ara') out.lang = 'ar';
+  else if (book.ocr && book.ocr.lang === 'eng') out.lang = 'en';
   out.ocr = Object.assign({}, book.ocr, { status: 'done' });
   return out;
 }
@@ -59,6 +96,10 @@ export function createOcrRunner({ store, engine = { openPdfDoc, ocrPage, setLang
     if (engine.setLang) await engine.setLang(lang);
     let book = await store.getBook(bookId);
     if (!book || !book.ocr) throw new OcrRunError('no-book', 'الكتاب ليس كتابًا ممسوحًا ضوئيًا.');
+    if ((book.ocr.lang === 'ara' || book.ocr.lang === 'eng') && book.ocr.lang !== lang) { // decided by an earlier probe
+      lang = book.ocr.lang;
+      if (engine.setLang) await engine.setLang(lang);
+    }
     if (book.ocr.status === 'done' && !onlyFailed) return { stopped: false, done: book.ocr.done, total: book.ocr.pages };
     book.ocr.status = 'running'; delete book.ocr.reason;
     await store.putBook(book);
@@ -72,17 +113,37 @@ export function createOcrRunner({ store, engine = { openPdfDoc, ocrPage, setLang
       catch (e) { await pause(bookId, 'assets'); throw e; }
     }
     try {
-      // Best-effort script probe on a fresh run: OCR page 1 and, when its script
-      // contradicts the chosen language, switch before processing the rest.
-      if (opts.autoLang && total >= 1 && (book.ocr.done || 0) === 0) {
+      // Best-effort language probe, once per book (the result is kept on
+      // book.ocr.lang so a resumed run never switches language mid-book). A
+      // Tesseract model only emits its own script, so the probe cannot trust the
+      // script of the chosen model's output alone: when that page reads poorly,
+      // the same page is read with the other model and the more confident wins.
+      if (opts.autoLang && total >= 1 && !book.ocr.lang && (book.ocr.done || 0) === 0) {
         try {
-          const rendered = doc
-            ? await doc.renderPage(1, { dpi, signal })
-            : await engine.renderPage(pdfBytes, 1, { dpi, signal });
-          const guess = detectTextScript((await engine.ocrPage(rendered.canvas, { signal })).text);
-          if (rendered.canvas) { rendered.canvas.width = 0; rendered.canvas.height = 0; }
-          if (guess && guess !== lang) { lang = guess; if (engine.setLang) await engine.setLang(lang); }
-        } catch (e) { /* probe is best-effort: keep the chosen language */ }
+          for (const pg of probePages(total)) {
+            const rendered = doc
+              ? await doc.renderPage(pg, { dpi, signal })
+              : await engine.renderPage(pdfBytes, pg, { dpi, signal });
+            try {
+              const first = await engine.ocrPage(rendered.canvas, { signal });
+              if (scriptLetters(first.text) < PROBE_MIN_LETTERS) continue; // blank/cover page: try the next probe page
+              let next = chooseOcrLang(lang, first, null);
+              if (next === null) {
+                const other = lang === 'eng' ? 'ara' : 'eng';
+                if (engine.setLang) await engine.setLang(other);
+                const second = await engine.ocrPage(rendered.canvas, { signal });
+                next = chooseOcrLang(lang, first, second) || lang;
+              }
+              lang = next;
+              if (engine.setLang) await engine.setLang(lang); // also switches back after reading with the other model
+              book.ocr.lang = lang;
+              break;
+            } finally {
+              if (rendered.canvas) { rendered.canvas.width = 0; rendered.canvas.height = 0; }
+            }
+          }
+        } catch (e) { if (engine.setLang) await engine.setLang(lang).catch(() => {}); /* probe is best-effort: keep the chosen language */ }
+        if (book.ocr.lang) { await store.putBook(book); book = await store.getBook(bookId); }
       }
       for (let p = 1; p <= total; p++) {
         if (signal && signal.aborted) { await pause(bookId, 'cancel'); return { stopped: true, reason: 'cancel', done: doneCount, total }; }
