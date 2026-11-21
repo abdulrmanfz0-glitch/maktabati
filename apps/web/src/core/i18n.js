@@ -7,6 +7,8 @@
 // call tx()/use the DOM translator rather than branching on LANG.
 
 export const EN_UI = {
+  'غيّر الغلاف':'Change cover','رأيي في الكتاب':'My review','تقييمي':'My rating','اكتب رأيك في الكتاب: وش عجبك ووش ما عجبك…':'Write what you thought of the book: what you liked and what you didn’t…','ينحفظ على جهازك بس.':'Saved on your device only.',
+  'إحصائياتي':'My stats','وقت القراءة كله':'Total reading time','هالأسبوع':'This week','أيام متتالية':'Day streak','كتب خلّصتها':'Books finished','آخر 14 يوم':'Last 14 days','دقائق القراءة في آخر 14 يوم':'Reading minutes over the last 14 days','وين وصلت':'Where you are','افتح كتاب واقرأ شوي، وبتطلع أرقامك هنا.':'Open a book and read a little; your numbers will show up here.','الوقت يُحسب وأنت تقرأ فعليًا (الصفحة مفتوحة وتتفاعل معها)، وكل الأرقام على جهازك بس.':'Time counts only while you’re actually reading (page open and active), and every number stays on your device.',
   'مكتبتي':'My Library','القائمة':'Menu','الأقسام':'Sections','اطوِ الشريط':'Collapse sidebar','افتح القائمة':'Open menu',
   'محادثة جديدة':'New chat','المكتبة':'Library','أضف كتاب':'Add book','اقتباساتي':'My quotes','تظليلاتي':'My highlights','مراجعة اليوم':"Today's review",'قاموسي':'My glossary','خريطة أفكاري':'Idea map','الإعدادات':'Settings','أقرأ حالياً':'Currently reading','المحادثات':'Chats',
   'وش تبي تقرأ اليوم؟':'What do you want to read today?','أكمل':'Continue','الفصل':'Chapter','اسأل مكتبتك…':'Ask your library…','أرسل':'Send','أوقف':'Stop','انسخ':'Copy','انسخت':'Copied','يكتب…':'Typing…','شيل الفقرة':'Remove passage','ارفع كتاب: PDF أو EPUB أو نص':'Upload a book: PDF, EPUB or text',
@@ -117,7 +119,7 @@ Object.entries({ 'تحويل الملف':'Converting the file','أجهّز مح�
 export const EN_PAT = [
   [/^أقرأ الصفحات… (\d+) من (\d+)$/, 'Reading pages… $1 of $2'],
   [/^يجمع بين (\d+) كتب$/, 'Joins $1 books'], [/^يجمع بين (\d+) كتابًا$/, 'Joins $1 books'],
-  [/^(\d+) دقيقة$/, '$1 min'], [/^(\d+) نتيجة$/, '$1 results'], [/^(\d+) تظليل$/, '$1 highlights'], [/^بطاقة (\d+) من (\d+)$/, 'Card $1 of $2'],
+  [/^(\d+) دقيقة$/, '$1 min'], [/^الفصل (\d+) من (\d+)$/, 'Chapter $1 of $2'], [/^(\d+) نتيجة$/, '$1 results'], [/^(\d+) تظليل$/, '$1 highlights'], [/^بطاقة (\d+) من (\d+)$/, 'Card $1 of $2'],
   [/^قبل (\d+) أيام$/, '$1 days ago'], [/^قبل يومين$/, '2 days ago'], [/^قبل أسبوع$/, 'a week ago'], [/^قبل أسبوعين$/, '2 weeks ago'], [/^قبل (\d+) أسابيع$/, '$1 weeks ago'],
   [/^قراءة تقريبًا (\d+) دقيقة$/, 'About $1 min read'], [/^باقي (\d+) دقيقة من (\d+)\.$/, '$1 of $2 min left.'], [/^الفصل (\d+)$/, 'Chapter $1'], [/^باقي (\d+) دقيقة$/, '$1 min left'], [/^(\d+) من (\d+) فصل جاهز$/, '$1 of $2 chapters ready'], [/^لون (\d)$/, 'Color $1'],
   [/^التكلفة التقريبية: (\d+) فصل(?: في \d+ كتب)? = (\d+) طلب، قرابة (\d+) ألف توكن\.$/, 'Estimate: $1 chapters = $2 requests, about $3k tokens.'],

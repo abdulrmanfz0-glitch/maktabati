@@ -9,7 +9,7 @@ import { AI_DEFAULTS, basePolicy, keylessAllowed, estimateMessagesTokens, fitReq
   PROVIDERS, providerForBase, detectProvider, parseModels, modelsEndpoint } from '../core/ai.js';
 import { companionSystem, withoutWebSearchInstruction, WEB_SEARCH_FAILED_NOTE, MODES } from '../core/prompts.js';
 import { geminiNativeEndpoint, buildGeminiSearchRequest, geminiSearchHeaders, parseGeminiSearchSSE, normalizeGroundingMetadata, uniqueCitationSources, searchFailureCode, classifyGeminiSearchError } from '../core/gemini-search.js';
-import { searchPlan, deepSeekSearchFields, deepSeekSearchSources, deepSeekSearchQueries, classifyDeepSeekSearchError, searchErrorText, isSearchErrorKind, historyWithServerToolCalls, toolUnsupportedError, isSearchUnsupported, rememberUnsupported } from '../core/web-search.js';
+import { SEARCH_SKIPPED_NOTE_PREFIX, searchSkippedText, searchPlan, deepSeekSearchFields, deepSeekSearchSources, deepSeekSearchQueries, classifyDeepSeekSearchError, searchErrorText, isSearchErrorKind, historyWithServerToolCalls, toolUnsupportedError, isSearchUnsupported, rememberUnsupported } from '../core/web-search.js';
 import { buildInlineCitations } from '../core/citations.js';
 import {
   AI_TASKS, migrateAiConfig, normalizeAiState, isAiState,
@@ -408,6 +408,41 @@ function rel(t){
   if (n < 30){ const w = Math.round(n / 7); return w === 1 ? 'قبل أسبوع' : w === 2 ? 'قبل أسبوعين' : 'قبل ' + w + ' أسابيع'; }
   return new Date(t).toLocaleDateString('ar-u-nu-latn', { day:'numeric', month:'long' });
 }
+function fmtDur(sec){
+  const m = Math.round((sec || 0) / 60);
+  if (LANG === 'en'){ if (m < 1) return '0 min'; if (m < 60) return m + ' min'; const h = Math.floor(m / 60), r = m % 60; return h + ' h' + (r ? ' ' + r + ' min' : ''); }
+  if (m < 1) return '0 دقيقة'; if (m < 60) return m + ' دقيقة';
+  const h = Math.floor(m / 60), r = m % 60;
+  return (h === 1 ? 'ساعة' : h === 2 ? 'ساعتين' : h + ' ساعات') + (r ? ' و' + r + ' دقيقة' : '');
+}
+function readStreak(log){
+  let n = 0, t = Date.now();
+  if (!((log[dayKey(t)] || 0) >= 60)) t -= DAY; /* today not read yet: the streak can still end yesterday */
+  while ((log[dayKey(t)] || 0) >= 60){ n++; t -= DAY; }
+  return n;
+}
+function renderStats(){
+  const items = allItems(), log = kv.get('log', {}), bt = kv.get('bookTime', {});
+  const total = Object.values(log).reduce((a, s) => a + (+s || 0), 0);
+  let week = 0; for (let i = 0; i < 7; i++) week += log[dayKey(Date.now() - i * DAY)] || 0;
+  const done = items.filter(it => (it.progress || 0) >= .98).length;
+  const tiles = [[fmtDur(total), tx('وقت القراءة كله')], [fmtDur(week), tx('هالأسبوع')], [readStreak(log), tx('أيام متتالية')], [done, tx('كتب خلّصتها')]];
+  const days = []; for (let i = 13; i >= 0; i--){ const t = Date.now() - i * DAY; days.push([t, log[dayKey(t)] || 0]); }
+  const max = Math.max(60, ...days.map(d => d[1]));
+  const dl = t => new Date(t).toLocaleDateString(LANG === 'en' ? 'en' : 'ar-u-nu-latn', { weekday:'narrow' });
+  const chart = '<div class="st-ch" role="img" aria-label="' + esc(tx('دقائق القراءة في آخر 14 يوم')) + '">' + days.map(d => '<div class="st-d" title="' + esc(dayKey(d[0]) + ' · ' + fmtDur(d[1])) + '"><span style="height:' + Math.round(d[1] / max * 100) + '%"></span><i>' + esc(dl(d[0])) + '</i></div>').join('') + '</div>';
+  const rows = items.filter(it => bt[it.id] || it.lastOpened).sort((a, b) => (b.lastOpened || 0) - (a.lastOpened || 0)).map(it => {
+    const n = arr(it.chapters).length, ci = curChap(it), pr = Math.round((it.progress || 0) * 100), rv = bookReview(it);
+    const where = [n > 1 && ci >= 0 ? (LANG === 'en' ? 'Chapter ' + (ci + 1) + ' of ' + n : 'الفصل ' + (ci + 1) + ' من ' + n) : '', pr + '%'].filter(Boolean).join(' · ');
+    const title = n > 1 && ci >= 0 ? (arr(it.chapters)[ci] || {}).title : '';
+    return '<button class="st-row" data-href="#/read/' + enc(it.id) + '"><span class="lr-cv">' + bkCover(it, { mini:true }) + '</span><span class="st-b"><b dir="auto" data-no-tr>' + esc(it.title) + '</b><small>' + esc(where) + (title ? ' · <bdi dir="auto" data-no-tr>' + esc(short(plain(title), 40)) + '</bdi>' : '') + '</small>' + (rv.rating ? '<span class="stars sm">' + starsHTML(rv.rating) + '</span>' : '') + '</span><span class="st-r"><b>' + esc(fmtDur(bt[it.id] || 0)) + '</b><small>' + (it.lastOpened ? rel(it.lastOpened) : '') + '</small></span></button>';
+  }).join('');
+  $('#v-stats').innerHTML = '<div class="wide" style="padding-top:1.25rem; padding-bottom:3rem"><h1 class="vh">' + tx('إحصائياتي') + '</h1>' +
+    '<div class="stats">' + tiles.map(c => '<div class="stat"><b>' + esc(String(c[0])) + '</b><span>' + c[1] + '</span></div>').join('') + '</div>' +
+    '<h2 class="shelf-h">' + tx('آخر 14 يوم') + '</h2>' + chart +
+    '<h2 class="shelf-h">' + tx('وين وصلت') + '</h2>' + (rows || '<p class="empty">' + tx('افتح كتاب واقرأ شوي، وبتطلع أرقامك هنا.') + '</p>') +
+    '<p class="hint" style="margin-top:1.5rem">' + tx('الوقت يُحسب وأنت تقرأ فعليًا (الصفحة مفتوحة وتتفاعل معها)، وكل الأرقام على جهازك بس.') + '</p></div>';
+}
 function weekText(){
   const log = kv.get('log', {}); let sec = 0, days = 0;
   for (let i = 0; i < 7; i++){ const s = log[dayKey(Date.now() - i * DAY)] || 0; sec += s; if (s >= 60) days++; }
@@ -479,6 +514,7 @@ function parseHash(){
   if (p[0] === 'settings') return { view:'profile', tab:'ai' };
   if (['map','glossary','review','quotes','hlall'].includes(p[0])) return { view:p[0] };
   if (p[0] === 'templates') return { view:'tpl' };
+  if (p[0] === 'stats') return { view:'stats' };
   return { view:'home' };
 }
 function route(){
@@ -498,7 +534,7 @@ function route(){
   } else {
     RD = null; document.title = tx('مكتبتي');
     if (r.view === 'profile' && /^#\/settings/.test(location.hash)) history.replaceState(null, '', '#/profile/ai');
-    if (r.view === 'home') mountHome(r.conv, r.book, r.fresh); else if (r.view === 'quotes') renderQuotes(); else if (r.view === 'hlall') renderHlAll(); else if (r.view === 'hls'){ const it = itemById(r.id); if (!it){ location.hash = '#/'; return; } renderHls(it); } else if (r.view === 'book'){ const it = itemById(r.id); if (!it){ location.hash = '#/lib'; return; } renderBook(it); } else if (r.view === 'profile') renderProfile(r.tab); else if (r.view === 'map') renderMap(); else if (r.view === 'glossary') renderGlossary(); else if (r.view === 'review') renderReview(); else if (r.view === 'tpl') renderTpl(); else renderLib();
+    if (r.view === 'home') mountHome(r.conv, r.book, r.fresh); else if (r.view === 'quotes') renderQuotes(); else if (r.view === 'hlall') renderHlAll(); else if (r.view === 'hls'){ const it = itemById(r.id); if (!it){ location.hash = '#/'; return; } renderHls(it); } else if (r.view === 'book'){ const it = itemById(r.id); if (!it){ location.hash = '#/lib'; return; } renderBook(it); } else if (r.view === 'profile') renderProfile(r.tab); else if (r.view === 'map') renderMap(); else if (r.view === 'glossary') renderGlossary(); else if (r.view === 'review') renderReview(); else if (r.view === 'tpl') renderTpl(); else if (r.view === 'stats') renderStats(); else renderLib();
     if (!(prev.view === r.view)) window.scrollTo(0, 0);
     fitSoon($('#v-' + r.view));
   }
@@ -518,9 +554,10 @@ function patSVG(id){
   else { for (let y = -10; y < 150; y += 14) s += '<path d="M0 ' + y + 'L50 ' + (y + 22) + 'L100 ' + y + '"/>'; }
   return '<svg class="bcv-pat" viewBox="0 0 100 150" preserveAspectRatio="xMidYMid slice" fill="none" stroke="currentColor" stroke-width=".7" aria-hidden="true">' + s + '</svg>';
 }
+const isCh = s => typeof s === 'string' && /^c\d+$/.test(s);
 function curChap(it){
   const chs = arr(it.chapters), loc = kv.get(it.id + ':loc', null);
-  if (loc && loc.s){ if (loc.s[0] === 'c') return Math.min(chs.length - 1, +loc.s.slice(1)); if (loc.s === 'end') return chs.length - 1; return -1; }
+  if (loc && loc.s){ if (isCh(loc.s)) return Math.min(chs.length - 1, +loc.s.slice(1)); if (loc.s === 'end') return chs.length - 1; return -1; }
   if (it.type !== 'book' && (it.progress || 0) > .02) return Math.min(chs.length - 1, Math.floor(it.progress * chs.length));
   return -1;
 }
@@ -771,6 +808,22 @@ function readyCard(it){
     '<div class="pbar" aria-hidden="true"><span style="width:' + pct + '%"></span></div>' +
     (all ? '' : '<p>' + estText(need.length, 1, chars) + '</p><button class="' + (ok ? 'pbtn' : 'gbtn') + '" data-prep="' + esc(it.id) + '"' + (ok ? '' : ' style="margin-top:14px; min-height:44px; border-radius:999px"') + '>' + (ok ? 'جهّز الكتاب' : 'اضبط الاتصال أولاً') + '</button>') + '</section>';
 }
+/* ---- the reader's own rating and review of a book: on device, kv '<id>:review' ---- */
+const bookReview = it => { const r = kv.get(it.id + ':review', null); return r && typeof r === 'object' ? { rating:Math.max(0, Math.min(5, r.rating | 0)), text:String(r.text || ''), t:r.t || 0 } : { rating:0, text:'', t:0 }; };
+function saveReview(it, patch){
+  const r = Object.assign(bookReview(it), patch, { t:Date.now() });
+  r.text = String(r.text || '').slice(0, 5000);
+  kv.set(it.id + ':review', !r.rating && !r.text.trim() ? null : r);
+}
+const starsHTML = (n, btn) => [1, 2, 3, 4, 5].map(i => btn
+  ? '<button type="button" class="star' + (i <= n ? ' on' : '') + '" data-star="' + i + '" aria-pressed="' + (i <= n) + '" aria-label="' + esc(LANG === 'en' ? i + ' of 5' : i + ' من 5') + '">★</button>'
+  : '<span class="star' + (i <= n ? ' on' : '') + '" aria-hidden="true">★</span>').join('');
+function paintStars(n){ $$('#v-book [data-star]').forEach(b => { const on = +b.dataset.star <= n; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); }); }
+function reviewBox(it){
+  const r = bookReview(it);
+  return '<section class="bp-rv" aria-labelledby="rvH"><h2 class="bp-h2" id="rvH">' + tx('رأيي في الكتاب') + '</h2><div class="stars" role="group" aria-label="' + esc(tx('تقييمي')) + '">' + starsHTML(r.rating, true) + '</div>' +
+    '<textarea class="inp bp-rvt" id="bpReview" dir="auto" rows="3" maxlength="5000" placeholder="' + esc(tx('اكتب رأيك في الكتاب: وش عجبك ووش ما عجبك…')) + '">' + esc(r.text) + '</textarea><p class="hint" style="margin:.3rem 0 0">' + tx('ينحفظ على جهازك بس.') + '</p></section>';
+}
 function renderBook(it){
   document.title = it.title + ' · ' + tx('مكتبتي'); $('#pageTitle').textContent = it.title;
   const chs = arr(it.chapters).filter(c => c && typeof c === 'object'), n = chs.length, ci = curChap(it), st = kv.get(it.id + ':status', {}), started = (it.progress || 0) > .01 || ci >= 0;
@@ -778,7 +831,7 @@ function renderBook(it){
   const cnt = [[annosOf('hl', it.id).length, 'تظليلات'], [noteCount(it), 'ملاحظات'], [annosOf('quote', it.id).length, 'اقتباسات'], [due, 'مراجعات مستحقة']];
   const go = started ? 'أكمل القراءة' + (n > 1 ? ' · الفصل ' + (Math.max(0, ci) + 1) : '') : 'ابدأ القراءة';
   const snd = !!(window.MaktabatiSounds && window.MaktabatiSounds.open);
-  $('#v-book').innerHTML = '<div class="wide bpg"><a class="linkbtn nu bk-back" href="#/lib">' + svg('arrow') + 'ارجع للمكتبة</a><div class="bp"><div class="bp-cv">' + bkCover(it) + '</div><div class="bp-main">' +
+  $('#v-book').innerHTML = '<div class="wide bpg"><a class="linkbtn nu bk-back" href="#/lib">' + svg('arrow') + 'ارجع للمكتبة</a><div class="bp"><div class="bp-cv"><button type="button" class="bp-cvbtn" data-bpa="cover" aria-label="' + esc(tx('غيّر الغلاف')) + '">' + bkCover(it) + '<span class="bp-cvhint">' + tx('غيّر الغلاف') + '</span></button></div><div class="bp-main">' +
     '<h1 class="bp-h" dir="auto">' + esc(it.title) + '</h1>' + (it.subtitle ? '<p class="bp-sub" dir="auto">' + esc(it.subtitle) + '</p>' : '') + (it.author ? '<p class="bp-au" dir="auto">' + esc(it.author) + '</p>' : '') +
     (it.translator ? '<p class="bp-m"><span>المترجم</span><bdi dir="auto">' + esc(it.translator) + '</bdi></p>' : '') + (it.originalTitle ? '<p class="bp-m"><span>العنوان الأصلي</span><bdi dir="ltr">' + esc(it.originalTitle) + '</bdi></p>' : '') +
     (it.whyRead ? '<div class="bp-why"><b>ليش أقرأه</b><p dir="auto">' + md(it.whyRead) + '</p></div>' : '') +
@@ -786,11 +839,15 @@ function renderBook(it){
     ingWarn(it) +
     (isScanDone(it) ? '<p class="hint" style="margin:.4rem 0 0">' + esc(OCR_BOOK_DISCLOSURE) + '</p>' : '') +
     '<div class="stats">' + cnt.map(c => '<div class="stat"><b>' + c[0] + '</b><span>' + c[1] + '</span></div>').join('') + '</div>' +
+    reviewBox(it) +
     (!n ? '<p class="empty" style="margin:1.25rem 0 0">' + (isPendingScan(it) ? 'هالكتاب ممسوح ضوئيًا: نصه غير متاح بعد. الكتاب وملفه الأصلي محفوظان على جهازك، وبمجرد ما نضيف خاصية التعرف على الصور بيتكوّن النص.' : 'هذا الكتاب ما فيه فصول محفوظة. جرّب استيراده مرة ثانية أو احذفه من المكتبة.') + '</p>' : '') +
     (n > 1 ? '<h2 class="bp-h2">الفصول</h2><div>' + chs.map((c, i) => { const raw = st['c' + i] || 'none', s = BK_ST[raw] ? raw : 'none', b = BK_ST[s]; return '<button class="bp-ch" data-href="' + R + '/c' + i + '"><span class="n">' + (i + 1) + '</span><span class="t" dir="auto">' + md(c.title || '') + (c.title ? '' : 'الفصل ' + (i + 1)) + '</span><span class="r"><span class="bp-st" data-s="' + s + '"><i aria-hidden="true" style="font-style:normal">' + b[1] + '</i>' + b[0] + '</span>' + (c.minutes ? '<span>' + esc(c.minutes) + ' دقيقة</span>' : '') + '</span></button>'; }).join('') + '</div>' : '') +
     (n ? readyCard(it) : '') + '</div></div></div>';
   $('#v-book').onclick = e => {
+    const star = e.target.closest('[data-star]');
+    if (star){ const r = bookReview(it), v = +star.dataset.star; saveReview(it, { rating:r.rating === v ? 0 : v }); paintStars(v === r.rating ? 0 : v); return; }
     const b = e.target.closest('[data-bpa]'); if (!b) { if (e.target.closest('#ocrRetry')){ retryFailed(it); return; } return; } const a = b.dataset.bpa;
+    if (a === 'cover'){ pickCover(it); return; }
     if (a === 'chat') location.hash = '#/bchat/' + enc(it.id);
     else if (a === 'cols') collectionSheet(it);
     else if (a === 'snd' && snd) window.MaktabatiSounds.open(it.id);
@@ -799,6 +856,8 @@ function renderBook(it){
       $('#sheet').onclick = ev => { const x = ev.target.closest('[data-bpa]'); if (!x) return; closeSheet(); const y = x.dataset.bpa; if (y === 'cover') pickCover(it); else if (y === 'uncover'){ delete it.cover; put('items', it); toast('انأزل الغلاف'); renderBook(it); } else if (y === 'del') confirmDelete(it); };
     }
   };
+  const rv = $('#bpReview');
+  if (rv){ let rvT = 0; rv.addEventListener('input', () => { clearTimeout(rvT); rvT = setTimeout(() => saveReview(it, { text:rv.value }), 500); }); rv.addEventListener('blur', () => { clearTimeout(rvT); saveReview(it, { text:rv.value }); }); }
   /* retry button appears only when pages actually failed, labeled with the count */
   if (isScanDone(it) && idb) makeOcrStore(idb).getAllPages(it.id).then(recs => {
     const n = recs.filter(r => r.status === 'failed').length;
@@ -1113,19 +1172,19 @@ function screenName(it, s){
 function screenHTML(it, sc){
   const chs = arr(it.chapters), solo = chs.length === 1, list = screensOf(it), i = list.indexOf(sc), prev = list[i - 1], next = list[i + 1];
   let h = '';
-  if (prev) h += '<div class="wrap pager-top no-print"><button class="pager prev" data-screen="' + prev + '"><span>→ السابق</span><b' + (prev[0] === 'c' ? ' data-no-tr' : '') + '>' + md(screenName(it, prev)) + '</b></button></div>';
+  if (prev) h += '<div class="wrap pager-top no-print"><button class="pager prev" data-screen="' + prev + '"><span>→ السابق</span><b' + (isCh(prev) ? ' data-no-tr' : '') + '>' + md(screenName(it, prev)) + '</b></button></div>';
   if (sc === 'cover') h += coverHTML(it) + (solo ? '' : mapHTML(it, '3rem'));
   else if (sc === 'intro') h += introHTML(it);
   else if (sc === 'end') h += conclusionHTML(it);
   else { const ci = +sc.slice(1); h += chapterHTML(it, chs[ci], ci, solo); }
-  if (next) h += '<div class="wrap no-print" style="padding:1.5rem 20px 4rem"><button class="pager next" data-screen="' + next + '"><span>' + (next[0] === 'c' && sc[0] === 'c' ? 'الفصل التالي' : 'التالي') + ' ←</span><b' + (next[0] === 'c' ? ' data-no-tr' : '') + '>' + md(screenName(it, next)) + '</b></button></div>';
+  if (next) h += '<div class="wrap no-print" style="padding:1.5rem 20px 4rem"><button class="pager next" data-screen="' + next + '"><span>' + (isCh(next) && isCh(sc) ? 'الفصل التالي' : 'التالي') + ' ←</span><b' + (isCh(next) ? ' data-no-tr' : '') + '>' + md(screenName(it, next)) + '</b></button></div>';
   else h += '<footer class="no-print"><button class="top-btn" data-go="top">↑ ارجع للبداية</button></footer>';
   return h;
 }
 function drawerNav(it){
   const chs = arr(it.chapters), solo = chs.length === 1;
   const hn = annosOf('hl', it.id).length;
-  const tr = RD && RD.trTitles, curCi = RD && RD.screen && RD.screen[0] === 'c' ? +RD.screen.slice(1) : -1;
+  const tr = RD && RD.trTitles, curCi = RD && RD.screen && isCh(RD.screen) ? +RD.screen.slice(1) : -1;
   let n = '<button class="nav plain" data-href="#/hls/' + encodeURIComponent(it.id) + '"><span>تظليلاتي' + (hn ? ' <span class="count">' + hn + '</span>' : '') + '</span></button>' + (it.intro ? '<button class="nav plain" data-go="intro">المقدّمة</button>' : '') + (!solo ? '<button class="nav plain" data-go="map">خريطة ' + (it.type === 'book' ? 'الكتاب' : 'النص') + '</button>' : '');
   chs.forEach((c, ci) => {
     const ct = tr && ci === curCi && tr.chapter ? tr.chapter : c.title;
@@ -1231,7 +1290,7 @@ function renderReader(it, target, o){
   if (paged){ screen = o.screen || (target && screenOf(target)) || (loc && loc.s) || 'cover'; if (!list.includes(screen)) screen = 'cover'; }
   const q = RD && RD.it === it ? RD.q : '';
   RD = { it, paged, screen, list, q };
-  if (!tr && TR_VIEW && !TR_VIEW.whole && screen && screen[0] === 'c' && TR_VIEW.ci === +screen.slice(1)) TR_VIEW = null;
+  if (!tr && TR_VIEW && !TR_VIEW.whole && screen && isCh(screen) && TR_VIEW.ci === +screen.slice(1)) TR_VIEW = null;
   it.lastOpened = Date.now(); put('items', it);
   $('#tbTitle').textContent = it.title; document.title = it.title + ' · ' + tx('مكتبتي');
   const bd = bookDir(it); $('#v-read').dir = bd; $('#v-read').lang = bd === 'rtl' ? 'ar' : 'en';
@@ -1264,14 +1323,14 @@ function renderReader(it, target, o){
   }
   $('#v-read').innerHTML = paged ? screenHTML(it, screen) : readerHTML(it);
   if (pref.get('diac', 'show') === 'hide') stripShown($('#v-read'));
-  if (tr && screen && screen[0] === 'c') trApply(it, tr, +screen.slice(1));
+  if (tr && screen && isCh(screen)) trApply(it, tr, +screen.slice(1));
   else { applyAnnos(it); document.body.classList.remove('tr-view'); }
   if (LANG === 'en') trNode($('#v-read'));
   bindFields(it); drawerNav(it); if (LANG === 'en') trNode($('#navList')); updateSess();
   trRefreshButton();
   observe(it); showBar(); quietUntil = Date.now() + 600;
   rtMount(it, target, o, loc);
-  if (!tr && TR_VIEW && TR_VIEW.bookId === it.id && TR_VIEW.whole && screen && screen[0] === 'c' && !o.trLoading){
+  if (!tr && TR_VIEW && TR_VIEW.bookId === it.id && TR_VIEW.whole && screen && isCh(screen) && !o.trLoading){
     const ci = +screen.slice(1);
     trLoad(it.id, ci, true).then(data => {
       if (data && RD && RD.it === it && RD.screen === screen) renderReader(it, target, Object.assign({}, o, { tr:data, trLoading:true }));
@@ -1414,7 +1473,7 @@ function onSel(){
   const r = s.getRangeAt(0); const sb = closestBk(r.startContainer), eb = closestBk(r.endContainer);
   if (!sb || !$('#v-read').contains(sb)){ hideSel(); return; }
   const q = s.toString().replace(/\s+/g, ' ').trim(); if (q.length < 2){ hideSel(); return; }
-  const ci = RD && RD.screen && RD.screen[0] === 'c' ? +RD.screen.slice(1) : -1;
+  const ci = RD && RD.screen && isCh(RD.screen) ? +RD.screen.slice(1) : -1;
   const arView = !!(RD && ci >= 0 && trIsArabic(RD.it, ci));
   SEL = { bk:sb.dataset.bk, el:sb, quote:q, multi:sb !== eb, ar:arView, trFp:arView ? (RD.trFp || '') : '' };
   const nw = q.split(' ').length;
@@ -2938,11 +2997,12 @@ async function aiCall(o){
         return await aiCall(Object.assign({}, o, { messages:withoutWebSearchInstruction(messages), search:{ attach:false, mode:'none' }, onNote:undefined }));
       }
       logGeminiSearchFailure(e, c.key, requestedModel);
-      /* Classified search failures need a clear message and a no-search action,
-         not a silent fallback. */
-      if (e && isSearchErrorKind(e.searchKind)) throw tag(e);
+      /* A key that can't search (free tier, quota used up) shouldn't block the
+         answer: note it once, answer without search, and skip search for this
+         connection+model for the rest of the session. */
+      if (e && (e.searchKind === 'grounding' || e.searchKind === 'quota')) rememberUnsupportedFor(c);
       const code = searchFailureCode(e);
-      if (o.onNote) { try{ o.onNote(WEB_SEARCH_FAILED_NOTE + (code ? ' (' + code + ')' : '')); }catch(ignore){} }
+      if (o.onNote) { try{ o.onNote(e && isSearchErrorKind(e.searchKind) ? SEARCH_SKIPPED_NOTE_PREFIX + e.searchKind : WEB_SEARCH_FAILED_NOTE + (code ? ' (' + code + ')' : '')); }catch(ignore){} }
       /* One automatic no-search retry for unclassified/transport failures. */
       return await aiCall(Object.assign({}, o, { messages:withoutWebSearchInstruction(messages), search:{ attach:false, mode:'none' }, onNote:undefined }));
     }
@@ -3697,7 +3757,7 @@ async function trOpenBookSetup(it){
   const last = chs.length - 1;
   if (last < 0) return;
   let curCi = 0;
-  if (RD && RD.it === it && RD.screen && RD.screen[0] === 'c') curCi = +RD.screen.slice(1);
+  if (RD && RD.it === it && RD.screen && isCh(RD.screen)) curCi = +RD.screen.slice(1);
   else if (cur.view === 'book' && cur.id === it.id) curCi = Math.max(0, curChap(it));
   let conc = Number(localStorage.getItem('maktabati:trConc')) || 3;
   conc = Math.max(1, Math.min(3, conc));
@@ -4047,7 +4107,7 @@ function trOpenBookProgress(){
 function trShowWholeBook(it){
   if (!it) return;
   closeModal(true);
-  if (RD && RD.it === it && RD.screen && RD.screen[0] === 'c'){ trShowArabic(true); return; }
+  if (RD && RD.it === it && RD.screen && isCh(RD.screen)){ trShowArabic(true); return; }
   TR_VIEW = { bookId:it.id, ci:0, whole:true };
   location.hash = '#/read/' + encodeURIComponent(it.id) + '/c0';
 }
@@ -4114,10 +4174,10 @@ function libraryMap(q, knownHits){
 }
 function currentCi(it){
   if (RD && RD.it === it){
-    if (RD.paged) return RD.screen && RD.screen[0] === 'c' ? +RD.screen.slice(1) : -1;
+    if (RD.paged) return RD.screen && isCh(RD.screen) ? +RD.screen.slice(1) : -1;
     const el = topBlock(); return Math.max(0, el ? keyCh(el.dataset.bk) : 0);
   }
-  const loc = kv.get(it.id + ':loc', null); return loc && loc.s && loc.s[0] === 'c' ? +loc.s.slice(1) : (it.type === 'book' ? -1 : 0);
+  const loc = kv.get(it.id + ':loc', null); return loc && loc.s && isCh(loc.s) ? +loc.s.slice(1) : (it.type === 'book' ? -1 : 0);
 }
 function bookContext(it, full){
   if (!it) return { memory:'', chapter:'', label:'' };
@@ -4363,7 +4423,7 @@ function modesHTML(C){
 function suggestHTML(){
   const S = [];
   const c = allItems().filter(i => i.lastOpened && (i.progress || 0) > .01 && (i.progress || 0) < .98).sort((a, b) => b.lastOpened - a.lastOpened)[0];
-  if (c){ const loc = kv.get(c.id + ':loc', null); const w = loc && loc.s && loc.s[0] === 'c' ? ' (' + tx('الفصل') + ' ' + (+loc.s.slice(1) + 1) + ')' : ''; S.push('<button class="sug" data-href="#/read/' + encodeURIComponent(c.id) + '"><bdi dir="auto">' + tx('أكمل') + ' ' + esc(short(c.title, 28)) + w + '</bdi></button>'); }
+  if (c){ const loc = kv.get(c.id + ':loc', null); const w = loc && loc.s && isCh(loc.s) ? ' (' + tx('الفصل') + ' ' + (+loc.s.slice(1) + 1) + ')' : ''; S.push('<button class="sug" data-href="#/read/' + encodeURIComponent(c.id) + '"><bdi dir="auto">' + tx('أكمل') + ' ' + esc(short(c.title, 28)) + w + '</bdi></button>'); }
   const n = dueN(); if (n) S.push('<button class="sug" data-href="#/review">' + tx('مراجعة اليوم') + ' (' + n + ')</button>');
   S.push('<button class="sug" data-add>' + tx('أضف كتاب') + '</button>');
   return '<div class="sugs">' + S.join('') + '</div><button class="read-btn" data-href="#/lib">' + svg('openbook') + (LANG === 'en' ? 'Read' : 'أقرأ') + '</button>';
@@ -4653,7 +4713,9 @@ async function runStream(run){
       onDelta:t => { am.content = t; if (open()) schedMsgs(); scheduleSave(conv); },
       onNote:t => {
         let note = t;
-        if (t && t.startsWith(WEB_SEARCH_FAILED_NOTE)){
+        if (t && t.startsWith(SEARCH_SKIPPED_NOTE_PREFIX)){
+          note = searchSkippedText(t.slice(SEARCH_SKIPPED_NOTE_PREFIX.length), LANG);
+        } else if (t && t.startsWith(WEB_SEARCH_FAILED_NOTE)){
           const code = /\((\d+)\)/.exec(t);
           note = tx(WEB_SEARCH_FAILED_NOTE) + (code ? ' (' + code[1] + ')' : '');
         }
@@ -4696,7 +4758,7 @@ async function runStream(run){
 }
 
 /* ---------- sidebar ---------- */
-const PAGE_T = { tpl:'معرض القوالب', lib:'المكتبة', map:'خريطة أفكاري', glossary:'قاموسي', review:'مراجعة اليوم', profile:'الملف', quotes:'اقتباساتي', hlall:'تظليلاتي', hls:'تظليلاتي' };
+const PAGE_T = { stats:'إحصائياتي', tpl:'معرض القوالب', lib:'المكتبة', map:'خريطة أفكاري', glossary:'قاموسي', review:'مراجعة اليوم', profile:'الملف', quotes:'اقتباساتي', hlall:'تظليلاتي', hls:'تظليلاتي' };
 const isMobile = () => !matchMedia('(min-width:900px)').matches;
 function side(open){ document.body.classList.toggle('side-open', !!open); }
 function backHash(){ return /^#\/?$/.test(lastNonRead || '') && lastHomeConv ? '#/c/' + lastHomeConv : (lastNonRead || '#/lib'); }
@@ -5602,7 +5664,24 @@ function showPreview(P){
     previewDone();
     if (scanOk && P.src){ Object.assign(x, scanBookFields(P.report.pages, P.ocrMode)); saveScannedFlow(x, P.src, P.ctx.stay, start); }
     else saveNew(x, P.ctx.stay);
+    if (!x.cover && P.src && !IS_SINGLE && (/pdf/i.test(P.src.type || '') || /\.pdf$/i.test(P.src.name || ''))) autoCover(x, P.src);
   }
+}
+/* first PDF page as the book's cover, made once at import; skipped quietly on any failure */
+async function autoCover(it, file){
+  try{
+    const { openPdfDoc } = await import('../core/ocr-local.js');
+    const doc = await openPdfDoc(new Uint8Array(await file.arrayBuffer()));
+    let r;
+    try{ r = await doc.renderPage(1, { dpi:72, maxPixels:600000 }); } finally { await doc.close().catch(() => {}); }
+    const w = Math.min(400, r.width), h = Math.round(r.height * w / r.width);
+    if (!w || !h || h / w > 2.2 || h / w < .9) return; /* not a portrait page: keep the drawn cover */
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+    const x = cv.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, w, h); x.drawImage(r.canvas, 0, 0, w, h);
+    const live = itemById(it.id); if (!live || live.cover) return;
+    live.cover = cv.toDataURL('image/jpeg', .8); put('items', live);
+    if (cur.view === 'lib') renderLib(); else if (cur.view === 'book' && cur.id === live.id) renderBook(live);
+  }catch(e){ console.warn('[cover]', e && e.message); }
 }
 function previewDone(){ FIG_PREVIEW = null; figRelease(); }
 
@@ -6160,7 +6239,7 @@ const rtSlotX = (g, i) => !g.spread ? 0 : (g.rtl ? (i === 0 ? g.pw : 0) : (i ===
 const rtTextX = (g, i) => g.rtl ? g.vx + g.vw - (i + 1) * g.tw - i * g.gap : g.vx + i * (g.tw + g.gap);
 const rtOuterL = (g, i) => !g.spread ? g.rtl : rtSlotX(g, i) === 0;
 function rtChTitle(p){
-  if (RD.paged && RD.screen && RD.screen[0] === 'c') return plain(RD.trTitle || screenName(RD.it, RD.screen));
+  if (RD.paged && RD.screen && isCh(RD.screen)) return plain(RD.trTitle || screenName(RD.it, RD.screen));
   let t = ''; RT.chp.forEach(([a, ti]) => { if (a <= p) t = ti; }); return t || plain(RD.it.title);
 }
 const rtFrame = (x, y, w, h) => '<svg class="rt-frame" aria-hidden="true" style="left:' + x + 'px;top:' + y + 'px;width:' + w + 'px;height:' + h + 'px" viewBox="0 0 ' + w + ' ' + h + '"><rect x=".75" y=".75" width="' + (w - 1.5) + '" height="' + (h - 1.5) + '" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".8"/><rect x="5" y="5" width="' + (w - 10) + '" height="' + (h - 10) + '" fill="none" stroke="currentColor" stroke-width=".7" opacity=".6"/></svg>';
@@ -6621,7 +6700,7 @@ async function init(){
 
   let lastAct = Date.now();
   ['scroll', 'pointerdown', 'keydown'].forEach(ev => addEventListener(ev, () => lastAct = Date.now(), { passive:true }));
-  setInterval(() => { if (cur.view === 'read' && document.visibilityState === 'visible' && Date.now() - lastAct < 90000){ const log = kv.get('log', {}); const k = dayKey(Date.now()); log[k] = (log[k] || 0) + 15; kv.set('log', log); } }, 15000);
+  setInterval(() => { if (cur.view === 'read' && document.visibilityState === 'visible' && Date.now() - lastAct < 90000){ const log = kv.get('log', {}); const k = dayKey(Date.now()); log[k] = (log[k] || 0) + 15; kv.set('log', log); if (RD && RD.it && RD.it.id){ const bt = kv.get('bookTime', {}); bt[RD.it.id] = (bt[RD.it.id] || 0) + 15; kv.set('bookTime', bt); } } }, 15000);
 
   let opened = [];
   addEventListener('beforeprint', () => { opened = $$('details:not([open])'); opened.forEach(d => d.open = true); $$('textarea.field').forEach(autosize); });

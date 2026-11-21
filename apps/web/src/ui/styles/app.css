@@ -1286,3 +1286,28 @@ body[data-rt="tidy"] .selbar{ background:var(--rt-ink); color:var(--rt-paper); b
   .ai-default{ align-items:flex-start; }
   .ai-def{ width:100%; }
 }
+
+/* book page: tap the cover to change it */
+.bp-cvbtn{ position:relative; display:block; width:100%; padding:0; border:0; background:none; cursor:pointer; border-radius:inherit; }
+.bp-cvhint{ position:absolute; inset-inline:8px; bottom:8px; padding:4px 8px; border-radius:99px; background:rgba(0,0,0,.55); color:#fff; font-size:12px; text-align:center; opacity:0; transition:opacity .15s; pointer-events:none; }
+.bp-cvbtn:hover .bp-cvhint, .bp-cvbtn:focus-visible .bp-cvhint{ opacity:1; }
+@media (hover:none){ .bp-cvhint{ opacity:.85; } }
+/* rating + review */
+.bp-rv{ margin-block-start:22px; }
+.stars{ display:flex; gap:2px; justify-content:flex-start; }
+.star{ font-size:26px; line-height:1; color:var(--rule); background:none; border:0; padding:6px 4px; min-width:40px; min-height:44px; cursor:pointer; }
+.star.on{ color:var(--gold); }
+.stars.sm{ justify-content:flex-start; margin-top:2px; }
+.stars.sm .star{ font-size:13px; padding:0; min-width:0; min-height:0; }
+.bp-rvt{ width:100%; margin-block-start:8px; resize:vertical; min-height:84px; line-height:1.7; }
+/* stats page */
+.st-ch{ display:grid; grid-template-columns:repeat(14,1fr); gap:6px; align-items:end; height:140px; padding:10px 12px 4px; border:1px solid var(--rule); border-radius:14px; }
+.st-d{ display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%; gap:4px; }
+.st-d span{ display:block; width:100%; max-width:22px; min-height:2px; border-radius:4px 4px 2px 2px; background:var(--accent, #c8935a); }
+.st-d i{ font-style:normal; font-size:10px; color:var(--soft); }
+.st-row{ display:flex; align-items:center; gap:12px; width:100%; padding:10px 4px; border:0; border-bottom:1px solid var(--rule); background:none; color:inherit; text-align:start; cursor:pointer; font:inherit; }
+.st-row .lr-cv{ flex:0 0 auto; width:40px; }
+.st-b{ flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.st-b b{ font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.st-b small, .st-r small{ color:var(--soft); font-size:12.5px; }
+.st-r{ display:flex; flex-direction:column; align-items:flex-end; gap:2px; font-variant-numeric:tabular-nums; white-space:nowrap; }

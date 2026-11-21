@@ -171,3 +171,18 @@ export function searchErrorText(kind, retryAfterMs = 0, lang = 'ar') {
     : 'تعذّر البحث في DeepSeek.';
   return en ? 'Web search failed.' : 'تعذّر البحث في الإنترنت.';
 }
+
+/** onNote prefix used when a Gemini search failure falls back to a plain answer. */
+export const SEARCH_SKIPPED_NOTE_PREFIX = '\u0000search-skipped:';
+
+/** Short note shown above an answer that was given without search. */
+export function searchSkippedText(kind, lang = 'ar') {
+  const en = lang === 'en';
+  if (kind === 'grounding' || kind === 'quota') return en
+    ? 'Answered without web search: this Gemini key can’t search (free keys usually can’t).'
+    : 'جاوبت بدون بحث: مفتاح Gemini هذا ما يدعم البحث في الإنترنت (المفاتيح المجانية غالبًا ما تدعمه).';
+  if (kind === 'rate-limit') return en
+    ? 'Answered without web search: Gemini search is busy right now.'
+    : 'جاوبت بدون بحث: بحث Gemini مشغول الحين.';
+  return en ? 'Answered without web search.' : 'جاوبت بدون بحث.';
+}
