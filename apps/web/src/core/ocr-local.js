@@ -8,6 +8,7 @@
 // putting a line Tesseract emitted in visual order back into reading order
 // (fixBidiLine). Line breaks and every character Tesseract read are kept.
 import { createWorker } from 'tesseract.js';
+import { segmentLines, rgbaToGray } from './ocr-lines.js';
 
 export const OCR_VERSION = '7.0.0';
 export const OCR_BASE = '/ocr/' + OCR_VERSION;
@@ -118,13 +119,86 @@ function mapError(e) {
   return new OcrError('engine', m);
 }
 
+/** Segmentation runs on a copy scaled by this factor (cheaper; measured as good as full size). */
+export const SEGMENT_SCALE = 0.5;
+const PSM_BLOCK = '6', PSM_LINE = '7', PSM_RAW_LINE = '13';
+
+/** DOM helpers for the line path (replaced by fakes in unit tests). */
+export const domLineIO = {
+  /** Grayscale copy of the page at `scale`, or null when the image is not a canvas we can read. */
+  gray(image, scale) {
+    if (typeof document === 'undefined' || !image || typeof image.getContext !== 'function' || !image.width || !image.height) return null;
+    const w = Math.max(1, Math.round(image.width * scale)), h = Math.max(1, Math.round(image.height * scale));
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const x = c.getContext('2d', { willReadFrequently: true });
+    x.fillStyle = '#fff'; x.fillRect(0, 0, w, h); x.drawImage(image, 0, 0, w, h);
+    const g = rgbaToGray(x.getImageData(0, 0, w, h).data, w, h);
+    c.width = 0; c.height = 0;
+    return { w, h, g };
+  },
+  /** One line of the page as its own small canvas. */
+  crop(image, l) {
+    const c = document.createElement('canvas'); c.width = l.x1 - l.x0; c.height = l.y1 - l.y0;
+    const x = c.getContext('2d', { alpha: false });
+    x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);
+    x.drawImage(image, l.x0, l.y0, c.width, c.height, 0, 0, c.width, c.height);
+    return c;
+  },
+  release(c) { if (c) { c.width = 0; c.height = 0; } }
+};
+
+/** Page lines in full-size page coordinates, or null (then the whole page is read at once). */
+export function pageLines(image, io = domLineIO, scale = SEGMENT_SCALE) {
+  const small = io.gray(image, scale);
+  if (!small) return null;
+  const lines = segmentLines(small);
+  if (!lines) return null;
+  const W = image.width, H = image.height;
+  return lines.map(l => ({
+    x0: Math.max(0, Math.floor(l.x0 / scale)), x1: Math.min(W, Math.ceil(l.x1 / scale)),
+    y0: Math.max(0, Math.floor(l.y0 / scale)), y1: Math.min(H, Math.ceil(l.y1 / scale)),
+    parBreak: l.parBreak
+  })).filter(l => l.x1 - l.x0 > 1 && l.y1 - l.y0 > 1);
+}
+
+/** A line reading looks lost when it has fewer letters than the line is wide (in line heights). */
+export const lineLooksEmpty = (text, w, h) => String(text || '').replace(/\s/g, '').length < w / Math.max(1, h);
+
+/**
+ * Read a page line by line (see ocr-lines.js for why). `recognize(img, psm)`
+ * reads one line image; a line that comes back (nearly) empty in single-line
+ * mode is read again in raw-line mode, which skips Tesseract's own layout step
+ * that drops some clean lines. Lines join with \n, paragraphs with \n\n.
+ */
+export async function readLines(image, lines, { recognize, io = domLineIO, signal } = {}) {
+  const paras = []; let cur = [], confSum = 0, confW = 0, retried = 0;
+  for (const l of lines) {
+    if (signal && signal.aborted) throw abortError();
+    const c = io.crop(image, l);
+    try {
+      const w = l.x1 - l.x0, h = l.y1 - l.y0;
+      let r = await recognize(c, PSM_LINE);
+      if (lineLooksEmpty(r.text, w, h)) {
+        const r2 = await recognize(c, PSM_RAW_LINE);
+        if (String(r2.text || '').trim().length > String(r.text || '').trim().length) { r = r2; retried++; }
+      }
+      const t = String(r.text || '').replace(/\s*\n\s*/g, ' ').trim();
+      if (l.parBreak && cur.length) { paras.push(cur); cur = []; }
+      if (t) { cur.push(t); confSum += (r.confidence || 0) * t.length; confW += t.length; }
+    } finally { io.release(c); }
+  }
+  if (cur.length) paras.push(cur);
+  return { text: paras.map(p => p.join('\n')).join('\n\n'), confidence: confW ? Math.round(confSum / confW) : 0, lines: lines.length, retried };
+}
+
 /**
  * One engine = one shared Tesseract worker, created lazily on the first page,
  * reused for every page, and terminated after an idle timeout or on abort.
  * `paths` overrides workerPath/corePath/langPath; null means "Tesseract default"
  * (used by the Node tests, which must not point at browser assets).
  */
-export function createOcrEngine({ createWorkerFn = createWorker, idleMs = DEFAULT_IDLE_MS, paths = {}, lang = 'ara' } = {}) {
+export function createOcrEngine({ createWorkerFn = createWorker, idleMs = DEFAULT_IDLE_MS, paths = {}, lang = 'ara', lineMode = true, lineIO = domLineIO } = {}) {
+  let psm = PSM_BLOCK;
   let worker = null, creating = null, busy = 0, idleTimer = null, progressCb = null, generation = 0, currentLang = lang;
   const clearIdle = () => { if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; } };
   const armIdle = () => { clearIdle(); idleTimer = setTimeout(() => { if (!busy && worker) terminate(); }, idleMs); };
@@ -168,7 +242,7 @@ export function createOcrEngine({ createWorkerFn = createWorker, idleMs = DEFAUL
             try { await w.terminate(); } catch (e) {}
             throw abortError();
           }
-          worker = w;
+          worker = w; psm = PSM_BLOCK; // tesseract.js starts every worker in single-block mode
           return w;
         } catch (e) { throw mapError(e); }
       })();
@@ -194,16 +268,27 @@ export function createOcrEngine({ createWorkerFn = createWorker, idleMs = DEFAUL
       const t0 = performance.now();
       // Race with the abort signal: terminating the worker does not reliably
       // reject an in-flight recognize() promise, so reject it ourselves.
-      let result;
-      if (signal) {
-        result = await Promise.race([
-          w.recognize(image, {}, { blocks: true }),
-          new Promise((_, rej) => signal.addEventListener('abort', () => rej(abortError()), { once: true }))
-        ]);
-      } else {
-        result = await w.recognize(image, {}, { blocks: true });
+      const aborted = signal ? new Promise((_, rej) => signal.addEventListener('abort', () => rej(abortError()), { once: true })) : null;
+      if (aborted) aborted.catch(() => {});
+      const race = p => (aborted ? Promise.race([p, aborted]) : p);
+      const setPsm = async m => { if (psm !== m) { await race(w.setParameters({ tessedit_pageseg_mode: m })); psm = m; } };
+
+      // Arabic pages are read line by line (see ocr-lines.js); anything the
+      // segmenter is unsure about is read as a whole page, as before.
+      const lines = lineMode && currentLang === 'ara' ? pageLines(image, lineIO) : null;
+      if (lines && lines.length) {
+        const r = await readLines(image, lines, {
+          io: lineIO, signal,
+          recognize: async (img, mode) => {
+            await setPsm(mode);
+            const { data } = await race(w.recognize(img, {}, { blocks: true }));
+            return { text: blocksToText(data.blocks) || normalizeOcrText(data.text), confidence: data.confidence };
+          }
+        });
+        return { text: r.text, confidence: r.confidence, ms: Math.max(1, Math.round(performance.now() - t0)), lines: r.lines };
       }
-      const { data } = result;
+      await setPsm(PSM_BLOCK);
+      const { data } = await race(w.recognize(image, {}, { blocks: true }));
       const ms = Math.max(1, Math.round(performance.now() - t0));
       const text = blocksToText(data.blocks) || normalizeOcrText(data.text);
       return { text, confidence: Math.round(data.confidence || 0), ms };
